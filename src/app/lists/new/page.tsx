@@ -8,65 +8,97 @@ import { deleteItems } from "@/lib/db/items"
 import { addListItems, createList } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
+import { Check } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
 
-type Step = "tags" | "items"
-
 export default function NewListPage() {
   const router = useRouter()
-  const [step, setStep] = useState<Step>("tags")
   const [listName, setListName] = useState("")
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
-  const [excludedItemIds, setExcludedItemIds] = useState<string[]>([])
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [isCreating, setIsCreating] = useState(false)
 
-  const items = useLiveQuery(() => db.items.orderBy("createdAt").reverse().toArray(), [])
+  const items = useLiveQuery(
+    () => db.items.orderBy("createdAt").reverse().toArray(),
+    []
+  )
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
 
   const isLoading = items === undefined || tags === undefined
 
-  // タグでフィルタされたアイテム
-  const filteredItems =
-    selectedTagIds.length === 0
-      ? items ?? []
-      : (items ?? []).filter((item) =>
-          item.tagIds.some((tagId) => selectedTagIds.includes(tagId))
-        )
+  // タグごとのアイテムIDをマッピング
+  const tagItemIds = new Map<string, string[]>()
+  if (items && tags) {
+    for (const tag of tags) {
+      const ids = items
+        .filter((item) => item.tagIds.includes(tag.id))
+        .map((item) => item.id)
+      tagItemIds.set(tag.id, ids)
+    }
+  }
 
-  // 選択されたアイテム（除外されていないもの）
-  const selectedItems = filteredItems.filter(
-    (item) => !excludedItemIds.includes(item.id)
-  )
+  // タグが選択されているかどうか（そのタグの全アイテムが選択されている）
+  const isTagSelected = (tagId: string): boolean => {
+    const ids = tagItemIds.get(tagId) ?? []
+    if (ids.length === 0) return false
+    return ids.every((id) => selectedItemIds.includes(id))
+  }
+
+  // タグが部分的に選択されているか
+  const isTagPartiallySelected = (tagId: string): boolean => {
+    const ids = tagItemIds.get(tagId) ?? []
+    if (ids.length === 0) return false
+    const selectedCount = ids.filter((id) => selectedItemIds.includes(id)).length
+    return selectedCount > 0 && selectedCount < ids.length
+  }
 
   const handleTagToggle = (tagId: string) => {
-    setSelectedTagIds((prev) =>
-      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
-    )
-    // タグを変更したら除外リストをリセット
-    setExcludedItemIds([])
+    const ids = tagItemIds.get(tagId) ?? []
+    if (ids.length === 0) return
+
+    if (isTagSelected(tagId)) {
+      // すべて選択されている → すべて解除
+      setSelectedItemIds((prev) => prev.filter((id) => !ids.includes(id)))
+    } else {
+      // 一部または未選択 → すべて選択
+      setSelectedItemIds((prev) => {
+        const newIds = new Set(prev)
+        for (const id of ids) {
+          newIds.add(id)
+        }
+        return Array.from(newIds)
+      })
+    }
   }
 
   const handleItemToggle = (itemId: string) => {
-    setExcludedItemIds((prev) =>
+    setSelectedItemIds((prev) =>
       prev.includes(itemId)
         ? prev.filter((id) => id !== itemId)
         : [...prev, itemId]
     )
   }
 
-  const handleNextStep = () => {
-    if (step === "tags") {
-      setStep("items")
+  const handleSelectAll = () => {
+    if (items) {
+      setSelectedItemIds(items.map((item) => item.id))
     }
   }
 
+  const handleDeselectAll = () => {
+    setSelectedItemIds([])
+  }
+
   const handleCreateList = async () => {
-    if (selectedItems.length === 0) return
+    if (selectedItemIds.length === 0) return
 
     setIsCreating(true)
 
     try {
+      const selectedItems = (items ?? []).filter((item) =>
+        selectedItemIds.includes(item.id)
+      )
+
       // リストを作成
       const list = await createList(listName || undefined)
 
@@ -80,7 +112,7 @@ export default function NewListPage() {
       )
 
       // 買いたいものから選択されたアイテムを削除
-      await deleteItems(selectedItems.map((item) => item.id))
+      await deleteItems(selectedItemIds)
 
       router.push(`/lists/${list.id}`)
     } catch (error) {
@@ -109,9 +141,7 @@ export default function NewListPage() {
         <Header title="リスト作成" showBackButton backHref="/lists" />
         <PageContainer>
           <div className="py-8 text-center">
-            <p className="text-base text-gray-500">
-              買いたいものがありません
-            </p>
+            <p className="text-base text-gray-500">買いたいものがありません</p>
             <p className="mt-2 text-sm text-gray-400">
               まずはアイテムを追加してください
             </p>
@@ -121,101 +151,123 @@ export default function NewListPage() {
     )
   }
 
+  const allSelected = selectedItemIds.length === items?.length
+
   return (
     <AppLayout showBottomNav={false}>
-      <Header
-        title={step === "tags" ? "リスト作成" : "アイテム選択"}
-        showBackButton
-        backHref={step === "tags" ? "/lists" : undefined}
-      />
+      <Header title="リスト作成" showBackButton backHref="/lists" />
       <PageContainer>
-        {step === "tags" ? (
-          <div className="space-y-6">
-            {/* リスト名 */}
-            <Input
-              label="リスト名（任意）"
-              name="listName"
-              value={listName}
-              onChange={(e) => setListName(e.target.value)}
-              placeholder="例: スーパーで買い物"
-            />
+        <div className="space-y-6">
+          {/* リスト名 */}
+          <Input
+            label="リスト名（任意）"
+            name="listName"
+            value={listName}
+            onChange={(e) => setListName(e.target.value)}
+            placeholder="例: スーパーで買い物"
+          />
 
-            {/* タグ選択 */}
-            {(tags?.length ?? 0) > 0 && (
-              <div>
-                <label className="mb-2 block text-base font-semibold text-gray-900">
-                  含めるタグを選択
-                </label>
-                <p className="mb-3 text-sm text-gray-600">
-                  選択したタグのアイテムがリストに追加されます
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {tags?.map((tag) => {
-                    const isSelected = selectedTagIds.includes(tag.id)
-                    const itemCount = (items ?? []).filter((item) =>
-                      item.tagIds.includes(tag.id)
-                    ).length
-                    return (
-                      <button
-                        key={tag.id}
-                        type="button"
-                        onClick={() => handleTagToggle(tag.id)}
-                        className={cn(
-                          "rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                          "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
-                          isSelected
-                            ? "bg-blue-600 text-white"
+          {/* タグ選択 */}
+          {(tags?.length ?? 0) > 0 && (
+            <div>
+              <label className="mb-2 block text-base font-semibold text-gray-900">
+                タグで一括選択
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {tags?.map((tag) => {
+                  const selected = isTagSelected(tag.id)
+                  const partial = isTagPartiallySelected(tag.id)
+                  const itemCount = tagItemIds.get(tag.id)?.length ?? 0
+
+                  return (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() => handleTagToggle(tag.id)}
+                      disabled={itemCount === 0}
+                      className={cn(
+                        "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                        "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+                        "disabled:cursor-not-allowed disabled:opacity-50",
+                        selected
+                          ? "bg-blue-600 text-white"
+                          : partial
+                            ? "bg-blue-100 text-blue-700"
                             : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "flex h-5 w-5 items-center justify-center rounded border-2",
+                          selected
+                            ? "border-white bg-white"
+                            : partial
+                              ? "border-blue-600 bg-blue-600"
+                              : "border-gray-400 bg-white"
                         )}
                       >
-                        {tag.name}
-                        <span className="ml-1 opacity-70">({itemCount})</span>
-                      </button>
-                    )
-                  })}
-                </div>
+                        {(selected || partial) && (
+                          <Check
+                            className={cn(
+                              "h-3.5 w-3.5",
+                              selected ? "text-blue-600" : "text-white"
+                            )}
+                            strokeWidth={3}
+                          />
+                        )}
+                      </span>
+                      {tag.name}
+                      <span className="opacity-70">({itemCount})</span>
+                    </button>
+                  )
+                })}
               </div>
-            )}
-
-            {/* プレビュー */}
-            <div className="rounded-lg bg-gray-50 p-4">
-              <p className="text-sm text-gray-600">
-                {selectedTagIds.length === 0
-                  ? `すべてのアイテム（${items?.length ?? 0}件）がリストに追加されます`
-                  : `${filteredItems.length}件のアイテムがリストに追加されます`}
-              </p>
             </div>
+          )}
 
-            {/* 次へボタン */}
+          {/* 一括選択ボタン */}
+          <div className="flex gap-2">
             <Button
-              className="w-full"
-              onClick={handleNextStep}
-              disabled={filteredItems.length === 0}
+              variant="secondary"
+              size="sm"
+              className="flex-1"
+              onClick={handleSelectAll}
+              disabled={allSelected}
             >
-              次へ：アイテムを確認
+              すべて選択
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="flex-1"
+              onClick={handleDeselectAll}
+              disabled={selectedItemIds.length === 0}
+            >
+              すべて解除
             </Button>
           </div>
-        ) : (
-          <div className="space-y-6">
-            {/* 説明 */}
-            <p className="text-sm text-gray-600">
-              リストに含めないアイテムのチェックを外してください
-            </p>
 
-            {/* アイテム一覧 */}
+          {/* アイテム一覧 */}
+          <div>
+            <label className="mb-2 block text-base font-semibold text-gray-900">
+              アイテムを選択
+              <span className="ml-2 font-normal text-gray-500">
+                ({selectedItemIds.length}/{items?.length ?? 0}件)
+              </span>
+            </label>
             <ul className="space-y-2">
-              {filteredItems.map((item) => {
-                const isIncluded = !excludedItemIds.includes(item.id)
+              {items?.map((item) => {
+                const isSelected = selectedItemIds.includes(item.id)
                 return (
                   <li
                     key={item.id}
                     className={cn(
                       "rounded-lg bg-white p-3 shadow-sm",
-                      !isIncluded && "opacity-50"
+                      !isSelected && "opacity-50"
                     )}
                   >
                     <Checkbox
-                      checked={isIncluded}
+                      checked={isSelected}
                       onChange={() => handleItemToggle(item.id)}
                       label={
                         item.quantity > 1
@@ -227,29 +279,23 @@ export default function NewListPage() {
                 )
               })}
             </ul>
-
-            {/* 作成ボタン */}
-            <div className="space-y-3">
-              <p className="text-center text-sm text-gray-600">
-                {selectedItems.length}件のアイテムでリストを作成
-              </p>
-              <Button
-                className="w-full"
-                onClick={handleCreateList}
-                disabled={selectedItems.length === 0 || isCreating}
-              >
-                {isCreating ? "作成中..." : "リストを作成して買い物開始"}
-              </Button>
-              <Button
-                variant="ghost"
-                className="w-full"
-                onClick={() => setStep("tags")}
-              >
-                戻る
-              </Button>
-            </div>
           </div>
-        )}
+
+          {/* 作成ボタン */}
+          <div className="space-y-3 pt-2">
+            <Button
+              className="w-full"
+              onClick={handleCreateList}
+              disabled={selectedItemIds.length === 0 || isCreating}
+            >
+              {isCreating
+                ? "作成中..."
+                : selectedItemIds.length === 0
+                  ? "アイテムを選択してください"
+                  : `${selectedItemIds.length}件でリストを作成`}
+            </Button>
+          </div>
+        </div>
       </PageContainer>
     </AppLayout>
   )
