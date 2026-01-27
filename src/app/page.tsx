@@ -1,65 +1,180 @@
-import Image from "next/image";
+"use client"
 
-export default function Home() {
+import { AppLayout } from "@/components/layouts/AppLayout"
+import { Header } from "@/components/layouts/Header"
+import { Badge, EmptyState, PageContainer } from "@/components/ui"
+import { cn } from "@/lib/utils"
+import { Plus, Search, ShoppingCart, X } from "lucide-react"
+import Link from "next/link"
+import { useState } from "react"
+
+// モックデータ（後でAPIから取得）
+const mockItems = [
+  { id: "1", name: "牛乳", quantity: 1, tags: ["食品"] },
+  { id: "2", name: "食パン", quantity: 2, tags: ["食品"] },
+  { id: "3", name: "卵", quantity: 1, tags: ["食品"] },
+  { id: "4", name: "トマト", quantity: 3, tags: ["食品"] },
+  { id: "5", name: "洗剤", quantity: 1, tags: ["日用品"] },
+  { id: "6", name: "ティッシュ", quantity: 2, tags: ["日用品"] },
+  { id: "7", name: "Netflix", quantity: 1, tags: ["エンタメ"] },
+]
+
+// タグ一覧を抽出
+const allTags = Array.from(new Set(mockItems.flatMap((item) => item.tags)))
+
+interface ShoppingItem {
+  id: string
+  name: string
+  quantity: number
+  tags: string[]
+}
+
+export default function HomePage() {
+  const [searchQuery, setSearchQuery] = useState("")
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+
+  const items: ShoppingItem[] = mockItems
+
+  // フィルタリング
+  const filteredItems = items.filter((item) => {
+    const matchesSearch =
+      searchQuery === "" ||
+      item.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesTag =
+      selectedTag === null || item.tags.includes(selectedTag)
+    return matchesSearch && matchesTag
+  })
+
+  const hasItems = items.length > 0
+  const hasFilteredItems = filteredItems.length > 0
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+    <AppLayout>
+      <Header title="買いたいもの" />
+      <PageContainer>
+        {!hasItems ? (
+          <EmptyState
+            icon={<ShoppingCart className="h-16 w-16" />}
+            title="買いたいものがありません"
+            description="右下の+ボタンから追加しましょう"
+          />
+        ) : (
+          <div className="space-y-4">
+            {/* 検索バー */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="検索..."
+                className={cn(
+                  "w-full rounded-lg border-2 border-gray-200 bg-white py-3 pl-10 pr-10",
+                  "text-base font-medium text-gray-900",
+                  "placeholder:text-gray-400",
+                  "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                )}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  aria-label="検索をクリア"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {/* タグフィルター */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedTag(null)}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
+                  selectedTag === null
+                    ? "bg-gray-900 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                )}
+              >
+                すべて
+              </button>
+              {allTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => setSelectedTag(tag === selectedTag ? null : tag)}
+                  className={cn(
+                    "rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
+                    selectedTag === tag
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  )}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+
+            {/* アイテム一覧 */}
+            {!hasFilteredItems ? (
+              <div className="py-8 text-center">
+                <p className="text-base text-gray-500">
+                  該当するアイテムがありません
+                </p>
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                {filteredItems.map((item) => (
+                  <li
+                    key={item.id}
+                    className="rounded-xl bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <p className="text-lg font-semibold text-gray-900">
+                          {item.name}
+                        </p>
+                        {item.tags.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {item.tags.map((tag) => (
+                              <Badge key={tag} variant="default">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {item.quantity > 1 && (
+                        <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-bold text-gray-700">
+                          x{item.quantity}
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </PageContainer>
+
+      {/* FAB（追加ボタン） */}
+      <Link
+        href="/items/new"
+        className={cn(
+          "fixed bottom-20 right-4 z-20",
+          "flex h-14 w-14 items-center justify-center",
+          "rounded-full bg-blue-600 text-white shadow-lg",
+          "transition-transform hover:scale-105 active:scale-95",
+          "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        )}
+        aria-label="アイテムを追加"
+      >
+        <Plus className="h-6 w-6" strokeWidth={2.5} />
+      </Link>
+    </AppLayout>
+  )
 }

@@ -1,0 +1,147 @@
+"use client"
+
+import { AppLayout } from "@/components/layouts/AppLayout"
+import { Header } from "@/components/layouts/Header"
+import { Button, EmptyState, PageContainer } from "@/components/ui"
+import { cn } from "@/lib/utils"
+import { Plus, Tag, Trash2, X } from "lucide-react"
+import { useState } from "react"
+
+// モックデータ
+const defaultTags = ["食品", "日用品", "エンタメ"]
+
+export default function TagsPage() {
+  const [tags, setTags] = useState<string[]>(defaultTags)
+  const [isAdding, setIsAdding] = useState(false)
+  const [newTagName, setNewTagName] = useState("")
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+
+  const handleAddTag = () => {
+    const trimmed = newTagName.trim()
+    if (trimmed && !tags.includes(trimmed)) {
+      setTags((prev) => [...prev, trimmed])
+    }
+    setNewTagName("")
+    setIsAdding(false)
+  }
+
+  const handleDeleteTag = (tag: string) => {
+    setTags((prev) => prev.filter((t) => t !== tag))
+    setDeleteTarget(null)
+  }
+
+  const hasTags = tags.length > 0
+
+  return (
+    <AppLayout showBottomNav={false}>
+      <Header title="タグ管理" showBackButton backHref="/settings" />
+      <PageContainer>
+        <div className="space-y-4">
+          {/* 追加ボタン */}
+          {!isAdding ? (
+            <Button
+              variant="secondary"
+              className="w-full"
+              onClick={() => setIsAdding(true)}
+            >
+              <Plus className="mr-2 h-5 w-5" />
+              タグを追加
+            </Button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newTagName}
+                onChange={(e) => setNewTagName(e.target.value)}
+                placeholder="新しいタグ名"
+                autoFocus
+                className={cn(
+                  "flex-1 rounded-lg border-2 border-gray-300 px-4 py-3",
+                  "text-base font-medium",
+                  "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                )}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    handleAddTag()
+                  }
+                  if (e.key === "Escape") {
+                    setIsAdding(false)
+                    setNewTagName("")
+                  }
+                }}
+              />
+              <Button onClick={handleAddTag} disabled={!newTagName.trim()}>
+                追加
+              </Button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAdding(false)
+                  setNewTagName("")
+                }}
+                className="flex h-11 w-11 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100"
+                aria-label="キャンセル"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          )}
+
+          {/* タグ一覧 */}
+          {!hasTags ? (
+            <EmptyState
+              icon={<Tag className="h-16 w-16" />}
+              title="タグがありません"
+              description="タグを作ると買い物が便利になります"
+            />
+          ) : (
+            <ul className="space-y-2">
+              {tags.map((tag) => (
+                <li
+                  key={tag}
+                  className="flex items-center justify-between rounded-xl bg-white p-4 shadow-sm"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
+                      <Tag className="h-5 w-5 text-gray-600" />
+                    </div>
+                    <span className="font-semibold text-gray-900">{tag}</span>
+                  </div>
+
+                  {deleteTarget === tag ? (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => handleDeleteTag(tag)}
+                      >
+                        削除
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDeleteTarget(null)}
+                      >
+                        キャンセル
+                      </Button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(tag)}
+                      className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-red-500"
+                      aria-label={`${tag}を削除`}
+                    >
+                      <Trash2 className="h-5 w-5" />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </PageContainer>
+    </AppLayout>
+  )
+}
