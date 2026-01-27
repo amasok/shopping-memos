@@ -69,6 +69,27 @@ export async function toggleListItem(id: string, checked: boolean): Promise<void
   await db.listItems.update(id, { checked })
 }
 
+export async function addListItem(
+  listId: string,
+  name: string,
+  quantity: number = 1
+): Promise<ListItem> {
+  const listItem: ListItem = {
+    id: generateId(),
+    listId,
+    name,
+    quantity,
+    checked: false,
+    createdAt: new Date(),
+  }
+  await db.listItems.add(listItem)
+  return listItem
+}
+
+export async function deleteListItem(id: string): Promise<void> {
+  await db.listItems.delete(id)
+}
+
 // Purchase History
 export async function getHistory(): Promise<PurchaseHistory[]> {
   return db.history.orderBy("purchasedAt").reverse().toArray()
