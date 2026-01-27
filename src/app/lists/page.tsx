@@ -3,35 +3,46 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Button, EmptyState, PageContainer } from "@/components/ui"
+import { db } from "@/lib/db"
 import { cn } from "@/lib/utils"
+import { useLiveQuery } from "dexie-react-hooks"
 import { ChevronRight, ClipboardList, Plus, ShoppingBag } from "lucide-react"
 import Link from "next/link"
 
-// モックデータ
-const mockLists = [
-  {
-    id: "1",
-    name: "スーパーで買い物",
-    itemCount: 5,
-    checkedCount: 2,
-    status: "in_progress" as const,
-    createdAt: "2024-01-28",
-  },
-]
-
-interface ShoppingList {
-  id: string
-  name: string
-  itemCount: number
-  checkedCount: number
-  status: "in_progress" | "completed"
-  createdAt: string
-}
-
 export default function ListsPage() {
-  const lists: ShoppingList[] = mockLists
-  const activeLists = lists.filter((list) => list.status === "in_progress")
-  const hasActiveLists = activeLists.length > 0
+  const lists = useLiveQuery(
+    () => db.lists.where("status").equals("in_progress").toArray(),
+    []
+  )
+  const listItems = useLiveQuery(() => db.listItems.toArray(), [])
+
+  const isLoading = lists === undefined || listItems === undefined
+
+  // 各リストのアイテム数とチェック済み数を計算
+  const listStats = new Map<string, { total: number; checked: number }>()
+  if (listItems) {
+    for (const item of listItems) {
+      const stat = listStats.get(item.listId) ?? { total: 0, checked: 0 }
+      stat.total++
+      if (item.checked) stat.checked++
+      listStats.set(item.listId, stat)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <AppLayout>
+        <Header title="買い物リスト" />
+        <PageContainer>
+          <div className="flex items-center justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+          </div>
+        </PageContainer>
+      </AppLayout>
+    )
+  }
+
+  const hasActiveLists = (lists?.length ?? 0) > 0
 
   return (
     <AppLayout>
@@ -67,32 +78,35 @@ export default function ListsPage() {
                 進行中
               </h2>
               <ul className="space-y-3">
-                {activeLists.map((list) => (
-                  <li key={list.id}>
-                    <Link
-                      href={`/lists/${list.id}`}
-                      className={cn(
-                        "flex items-center justify-between rounded-xl bg-white p-4 shadow-sm",
-                        "transition-colors hover:bg-gray-50"
-                      )}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
-                          <ShoppingBag className="h-5 w-5 text-blue-600" />
+                {lists?.map((list) => {
+                  const stat = listStats.get(list.id) ?? { total: 0, checked: 0 }
+                  return (
+                    <li key={list.id}>
+                      <Link
+                        href={`/lists/${list.id}`}
+                        className={cn(
+                          "flex items-center justify-between rounded-xl bg-white p-4 shadow-sm",
+                          "transition-colors hover:bg-gray-50"
+                        )}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
+                            <ShoppingBag className="h-5 w-5 text-blue-600" />
+                          </div>
+                          <div>
+                            <p className="font-semibold text-gray-900">
+                              {list.name}
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              {stat.checked}/{stat.total} 完了
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-semibold text-gray-900">
-                            {list.name}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {list.checkedCount}/{list.itemCount} 完了
-                          </p>
-                        </div>
-                      </div>
-                      <ChevronRight className="h-5 w-5 text-gray-400" />
-                    </Link>
-                  </li>
-                ))}
+                        <ChevronRight className="h-5 w-5 text-gray-400" />
+                      </Link>
+                    </li>
+                  )
+                })}
               </ul>
             </section>
           </div>

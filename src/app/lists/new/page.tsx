@@ -3,22 +3,13 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Button, Checkbox, Input, PageContainer } from "@/components/ui"
+import { db } from "@/lib/db"
+import { deleteItems } from "@/lib/db/items"
+import { addListItems, createList } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
+import { useLiveQuery } from "dexie-react-hooks"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-
-// モックデータ
-const mockItems = [
-  { id: "1", name: "牛乳", quantity: 1, tags: ["食品"] },
-  { id: "2", name: "食パン", quantity: 2, tags: ["食品"] },
-  { id: "3", name: "卵", quantity: 1, tags: ["食品"] },
-  { id: "4", name: "トマト", quantity: 3, tags: ["食品"] },
-  { id: "5", name: "洗剤", quantity: 1, tags: ["日用品"] },
-  { id: "6", name: "ティッシュ", quantity: 2, tags: ["日用品"] },
-  { id: "7", name: "Netflix", quantity: 1, tags: ["エンタメ"] },
-]
-
-const allTags = ["食品", "日用品", "エンタメ"]
 
 type Step = "tags" | "items"
 
@@ -26,15 +17,21 @@ export default function NewListPage() {
   const router = useRouter()
   const [step, setStep] = useState<Step>("tags")
   const [listName, setListName] = useState("")
-  const [selectedTags, setSelectedTags] = useState<string[]>([])
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [excludedItemIds, setExcludedItemIds] = useState<string[]>([])
+  const [isCreating, setIsCreating] = useState(false)
+
+  const items = useLiveQuery(() => db.items.orderBy("createdAt").reverse().toArray(), [])
+  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
+
+  const isLoading = items === undefined || tags === undefined
 
   // タグでフィルタされたアイテム
   const filteredItems =
-    selectedTags.length === 0
-      ? mockItems
-      : mockItems.filter((item) =>
-          item.tags.some((tag) => selectedTags.includes(tag))
+    selectedTagIds.length === 0
+      ? items ?? []
+      : (items ?? []).filter((item) =>
+          item.tagIds.some((tagId) => selectedTagIds.includes(tagId))
         )
 
   // 選択されたアイテム（除外されていないもの）
@@ -42,10 +39,12 @@ export default function NewListPage() {
     (item) => !excludedItemIds.includes(item.id)
   )
 
-  const handleTagToggle = (tag: string) => {
-    setSelectedTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+  const handleTagToggle = (tagId: string) => {
+    setSelectedTagIds((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
     )
+    // タグを変更したら除外リストをリセット
+    setExcludedItemIds([])
   }
 
   const handleItemToggle = (itemId: string) => {
@@ -62,9 +61,64 @@ export default function NewListPage() {
     }
   }
 
-  const handleCreateList = () => {
-    // TODO: APIでリストを作成
-    router.push("/lists/1") // モックのリストIDに遷移
+  const handleCreateList = async () => {
+    if (selectedItems.length === 0) return
+
+    setIsCreating(true)
+
+    try {
+      // リストを作成
+      const list = await createList(listName || undefined)
+
+      // アイテムをリストに追加
+      await addListItems(
+        list.id,
+        selectedItems.map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+        }))
+      )
+
+      // 買いたいものから選択されたアイテムを削除
+      await deleteItems(selectedItems.map((item) => item.id))
+
+      router.push(`/lists/${list.id}`)
+    } catch (error) {
+      console.error("Failed to create list:", error)
+      setIsCreating(false)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <AppLayout showBottomNav={false}>
+        <Header title="リスト作成" showBackButton backHref="/lists" />
+        <PageContainer>
+          <div className="flex items-center justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+          </div>
+        </PageContainer>
+      </AppLayout>
+    )
+  }
+
+  // アイテムがない場合
+  if ((items?.length ?? 0) === 0) {
+    return (
+      <AppLayout showBottomNav={false}>
+        <Header title="リスト作成" showBackButton backHref="/lists" />
+        <PageContainer>
+          <div className="py-8 text-center">
+            <p className="text-base text-gray-500">
+              買いたいものがありません
+            </p>
+            <p className="mt-2 text-sm text-gray-400">
+              まずはアイテムを追加してください
+            </p>
+          </div>
+        </PageContainer>
+      </AppLayout>
+    )
   }
 
   return (
@@ -87,45 +141,47 @@ export default function NewListPage() {
             />
 
             {/* タグ選択 */}
-            <div>
-              <label className="mb-2 block text-base font-semibold text-gray-900">
-                含めるタグを選択
-              </label>
-              <p className="mb-3 text-sm text-gray-600">
-                選択したタグのアイテムがリストに追加されます
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {allTags.map((tag) => {
-                  const isSelected = selectedTags.includes(tag)
-                  const itemCount = mockItems.filter((item) =>
-                    item.tags.includes(tag)
-                  ).length
-                  return (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => handleTagToggle(tag)}
-                      className={cn(
-                        "rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                        "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
-                        isSelected
-                          ? "bg-blue-600 text-white"
-                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                      )}
-                    >
-                      {tag}
-                      <span className="ml-1 opacity-70">({itemCount})</span>
-                    </button>
-                  )
-                })}
+            {(tags?.length ?? 0) > 0 && (
+              <div>
+                <label className="mb-2 block text-base font-semibold text-gray-900">
+                  含めるタグを選択
+                </label>
+                <p className="mb-3 text-sm text-gray-600">
+                  選択したタグのアイテムがリストに追加されます
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {tags?.map((tag) => {
+                    const isSelected = selectedTagIds.includes(tag.id)
+                    const itemCount = (items ?? []).filter((item) =>
+                      item.tagIds.includes(tag.id)
+                    ).length
+                    return (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        onClick={() => handleTagToggle(tag.id)}
+                        className={cn(
+                          "rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                          "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+                          isSelected
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        )}
+                      >
+                        {tag.name}
+                        <span className="ml-1 opacity-70">({itemCount})</span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* プレビュー */}
             <div className="rounded-lg bg-gray-50 p-4">
               <p className="text-sm text-gray-600">
-                {selectedTags.length === 0
-                  ? `すべてのアイテム（${mockItems.length}件）がリストに追加されます`
+                {selectedTagIds.length === 0
+                  ? `すべてのアイテム（${items?.length ?? 0}件）がリストに追加されます`
                   : `${filteredItems.length}件のアイテムがリストに追加されます`}
               </p>
             </div>
@@ -180,9 +236,9 @@ export default function NewListPage() {
               <Button
                 className="w-full"
                 onClick={handleCreateList}
-                disabled={selectedItems.length === 0}
+                disabled={selectedItems.length === 0 || isCreating}
               >
-                リストを作成して買い物開始
+                {isCreating ? "作成中..." : "リストを作成して買い物開始"}
               </Button>
               <Button
                 variant="ghost"

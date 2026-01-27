@@ -3,40 +3,53 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Badge, Button, Input, PageContainer } from "@/components/ui"
+import { db } from "@/lib/db"
+import { createItem } from "@/lib/db/items"
+import { createTag } from "@/lib/db/tags"
 import { cn } from "@/lib/utils"
+import { useLiveQuery } from "dexie-react-hooks"
 import { Minus, Plus, X } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-
-// デフォルトのタグ
-const defaultTags = ["食品", "日用品", "エンタメ"]
 
 export default function NewItemPage() {
   const router = useRouter()
   const [name, setName] = useState("")
   const [quantity, setQuantity] = useState(1)
-  const [tags, setTags] = useState<string[]>(defaultTags)
-  const [selectedTags, setSelectedTags] = useState<string[]>([])
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [isAddingTag, setIsAddingTag] = useState(false)
   const [newTagName, setNewTagName] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
 
   const handleQuantityChange = (delta: number) => {
     setQuantity((prev) => Math.max(1, prev + delta))
   }
 
-  const handleTagToggle = (tag: string) => {
-    setSelectedTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+  const handleTagToggle = (tagId: string) => {
+    setSelectedTagIds((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
     )
   }
 
-  const handleAddTag = () => {
+  const handleAddTag = async () => {
     const trimmed = newTagName.trim()
-    if (trimmed && !tags.includes(trimmed)) {
-      setTags((prev) => [...prev, trimmed])
-      setSelectedTags((prev) => [...prev, trimmed])
+    if (!trimmed) return
+
+    // 既存のタグをチェック
+    const existing = tags?.find((t) => t.name === trimmed)
+    if (existing) {
+      // 既存のタグを選択
+      if (!selectedTagIds.includes(existing.id)) {
+        setSelectedTagIds((prev) => [...prev, existing.id])
+      }
+    } else {
+      // 新しいタグを作成
+      const newTag = await createTag(trimmed)
+      setSelectedTagIds((prev) => [...prev, newTag.id])
     }
+
     setNewTagName("")
     setIsAddingTag(false)
   }
@@ -47,13 +60,34 @@ export default function NewItemPage() {
 
     setIsSubmitting(true)
 
-    // TODO: APIに保存する処理
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
-    router.push("/")
+    try {
+      await createItem({
+        name: name.trim(),
+        quantity,
+        tagIds: selectedTagIds,
+      })
+      router.push("/")
+    } catch (error) {
+      console.error("Failed to create item:", error)
+      setIsSubmitting(false)
+    }
   }
 
   const isValid = name.trim().length > 0
+  const isLoading = tags === undefined
+
+  if (isLoading) {
+    return (
+      <AppLayout showBottomNav={false}>
+        <Header title="アイテムを追加" showBackButton backHref="/" />
+        <PageContainer>
+          <div className="flex items-center justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+          </div>
+        </PageContainer>
+      </AppLayout>
+    )
+  }
 
   return (
     <AppLayout showBottomNav={false}>
@@ -115,13 +149,13 @@ export default function NewItemPage() {
               タグ
             </label>
             <div className="flex flex-wrap gap-2">
-              {tags.map((tag) => {
-                const isSelected = selectedTags.includes(tag)
+              {tags?.map((tag) => {
+                const isSelected = selectedTagIds.includes(tag.id)
                 return (
                   <button
-                    key={tag}
+                    key={tag.id}
                     type="button"
-                    onClick={() => handleTagToggle(tag)}
+                    onClick={() => handleTagToggle(tag.id)}
                     className={cn(
                       "rounded-full px-4 py-2 text-sm font-medium transition-colors",
                       "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
@@ -130,7 +164,7 @@ export default function NewItemPage() {
                         : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                     )}
                   >
-                    {tag}
+                    {tag.name}
                   </button>
                 )
               })}
@@ -202,15 +236,18 @@ export default function NewItemPage() {
               </div>
             )}
 
-            {selectedTags.length > 0 && (
+            {selectedTagIds.length > 0 && (
               <div className="mt-3 flex items-center gap-2">
                 <span className="text-sm text-gray-600">選択中:</span>
                 <div className="flex flex-wrap gap-1">
-                  {selectedTags.map((tag) => (
-                    <Badge key={tag} variant="primary">
-                      {tag}
-                    </Badge>
-                  ))}
+                  {selectedTagIds.map((tagId) => {
+                    const tag = tags?.find((t) => t.id === tagId)
+                    return tag ? (
+                      <Badge key={tagId} variant="primary">
+                        {tag.name}
+                      </Badge>
+                    ) : null
+                  })}
                 </div>
               </div>
             )}

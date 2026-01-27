@@ -3,50 +3,50 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Badge, EmptyState, PageContainer } from "@/components/ui"
+import { db, type ShoppingItem, type Tag } from "@/lib/db"
 import { cn } from "@/lib/utils"
+import { useLiveQuery } from "dexie-react-hooks"
 import { Plus, Search, ShoppingCart, X } from "lucide-react"
 import Link from "next/link"
 import { useState } from "react"
 
-// モックデータ（後でAPIから取得）
-const mockItems = [
-  { id: "1", name: "牛乳", quantity: 1, tags: ["食品"] },
-  { id: "2", name: "食パン", quantity: 2, tags: ["食品"] },
-  { id: "3", name: "卵", quantity: 1, tags: ["食品"] },
-  { id: "4", name: "トマト", quantity: 3, tags: ["食品"] },
-  { id: "5", name: "洗剤", quantity: 1, tags: ["日用品"] },
-  { id: "6", name: "ティッシュ", quantity: 2, tags: ["日用品"] },
-  { id: "7", name: "Netflix", quantity: 1, tags: ["エンタメ"] },
-]
-
-// タグ一覧を抽出
-const allTags = Array.from(new Set(mockItems.flatMap((item) => item.tags)))
-
-interface ShoppingItem {
-  id: string
-  name: string
-  quantity: number
-  tags: string[]
-}
-
 export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState("")
-  const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
 
-  const items: ShoppingItem[] = mockItems
+  const items = useLiveQuery(() => db.items.orderBy("createdAt").reverse().toArray(), [])
+  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
+
+  const isLoading = items === undefined || tags === undefined
+
+  // タグIDからタグ名を取得するマップ
+  const tagMap = new Map(tags?.map((tag) => [tag.id, tag]) ?? [])
 
   // フィルタリング
-  const filteredItems = items.filter((item) => {
+  const filteredItems = (items ?? []).filter((item) => {
     const matchesSearch =
       searchQuery === "" ||
       item.name.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesTag =
-      selectedTag === null || item.tags.includes(selectedTag)
+      selectedTagId === null || item.tagIds.includes(selectedTagId)
     return matchesSearch && matchesTag
   })
 
-  const hasItems = items.length > 0
+  const hasItems = (items?.length ?? 0) > 0
   const hasFilteredItems = filteredItems.length > 0
+
+  if (isLoading) {
+    return (
+      <AppLayout>
+        <Header title="買いたいもの" />
+        <PageContainer>
+          <div className="flex items-center justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+          </div>
+        </PageContainer>
+      </AppLayout>
+    )
+  }
 
   return (
     <AppLayout>
@@ -88,35 +88,39 @@ export default function HomePage() {
             </div>
 
             {/* タグフィルター */}
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setSelectedTag(null)}
-                className={cn(
-                  "rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
-                  selectedTag === null
-                    ? "bg-gray-900 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                )}
-              >
-                すべて
-              </button>
-              {allTags.map((tag) => (
+            {(tags?.length ?? 0) > 0 && (
+              <div className="flex flex-wrap gap-2">
                 <button
-                  key={tag}
                   type="button"
-                  onClick={() => setSelectedTag(tag === selectedTag ? null : tag)}
+                  onClick={() => setSelectedTagId(null)}
                   className={cn(
                     "rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
-                    selectedTag === tag
-                      ? "bg-blue-600 text-white"
+                    selectedTagId === null
+                      ? "bg-gray-900 text-white"
                       : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                   )}
                 >
-                  {tag}
+                  すべて
                 </button>
-              ))}
-            </div>
+                {tags?.map((tag) => (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    onClick={() =>
+                      setSelectedTagId(tag.id === selectedTagId ? null : tag.id)
+                    }
+                    className={cn(
+                      "rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
+                      selectedTagId === tag.id
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    )}
+                  >
+                    {tag.name}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* アイテム一覧 */}
             {!hasFilteredItems ? (
@@ -137,13 +141,16 @@ export default function HomePage() {
                         <p className="text-lg font-semibold text-gray-900">
                           {item.name}
                         </p>
-                        {item.tags.length > 0 && (
+                        {item.tagIds.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1.5">
-                            {item.tags.map((tag) => (
-                              <Badge key={tag} variant="default">
-                                {tag}
-                              </Badge>
-                            ))}
+                            {item.tagIds.map((tagId) => {
+                              const tag = tagMap.get(tagId)
+                              return tag ? (
+                                <Badge key={tagId} variant="default">
+                                  {tag.name}
+                                </Badge>
+                              ) : null
+                            })}
                           </div>
                         )}
                       </div>

@@ -3,55 +3,80 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Button, Checkbox, PageContainer } from "@/components/ui"
+import { db } from "@/lib/db"
+import { finishShopping, toggleListItem } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
+import { useLiveQuery } from "dexie-react-hooks"
 import { CheckCircle, ShoppingCart } from "lucide-react"
-import { useRouter } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { useState } from "react"
 
-// モックデータ
-const mockListItems = [
-  { id: "1", name: "牛乳", quantity: 1, checked: false },
-  { id: "2", name: "食パン", quantity: 2, checked: false },
-  { id: "3", name: "卵", quantity: 1, checked: true },
-  { id: "4", name: "トマト", quantity: 3, checked: false },
-  { id: "5", name: "洗剤", quantity: 1, checked: false },
-]
-
-interface ListItem {
-  id: string
-  name: string
-  quantity: number
-  checked: boolean
-}
-
 export default function ShoppingListPage() {
+  const params = useParams()
   const router = useRouter()
-  const [items, setItems] = useState<ListItem[]>(mockListItems)
+  const listId = params.id as string
   const [isCompleting, setIsCompleting] = useState(false)
 
-  const uncheckedItems = items.filter((item) => !item.checked)
-  const checkedItems = items.filter((item) => item.checked)
-  const progress = (checkedItems.length / items.length) * 100
-  const allChecked = uncheckedItems.length === 0
+  const list = useLiveQuery(() => db.lists.get(listId), [listId])
+  const items = useLiveQuery(
+    () => db.listItems.where("listId").equals(listId).toArray(),
+    [listId]
+  )
 
-  const handleToggle = (id: string) => {
-    setItems((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, checked: !item.checked } : item
-      )
-    )
+  const isLoading = list === undefined || items === undefined
+
+  const uncheckedItems = (items ?? []).filter((item) => !item.checked)
+  const checkedItems = (items ?? []).filter((item) => item.checked)
+  const progress =
+    items && items.length > 0 ? (checkedItems.length / items.length) * 100 : 0
+  const allChecked = uncheckedItems.length === 0 && (items?.length ?? 0) > 0
+
+  const handleToggle = async (id: string, checked: boolean) => {
+    await toggleListItem(id, !checked)
   }
 
   const handleComplete = async () => {
     setIsCompleting(true)
-    // TODO: APIで購入完了処理
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    router.push("/history")
+    try {
+      await finishShopping(listId, list?.name)
+      router.push("/history")
+    } catch (error) {
+      console.error("Failed to complete shopping:", error)
+      setIsCompleting(false)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <AppLayout showBottomNav={false}>
+        <Header title="買い物中" showBackButton backHref="/lists" />
+        <PageContainer>
+          <div className="flex items-center justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+          </div>
+        </PageContainer>
+      </AppLayout>
+    )
+  }
+
+  if (!list) {
+    return (
+      <AppLayout showBottomNav={false}>
+        <Header title="買い物中" showBackButton backHref="/lists" />
+        <PageContainer>
+          <div className="py-8 text-center">
+            <p className="text-base text-gray-500">
+              リストが見つかりません
+            </p>
+          </div>
+        </PageContainer>
+      </AppLayout>
+    )
   }
 
   return (
     <AppLayout showBottomNav={false}>
-      <Header title="買い物中" showBackButton backHref="/lists" />
+      <Header title={list.name || "買い物中"} showBackButton backHref="/lists" />
 
       {/* プログレスバー */}
       <div className="border-b border-gray-200 bg-white px-4 py-3">
@@ -59,7 +84,7 @@ export default function ShoppingListPage() {
           <div className="mb-1 flex items-center justify-between text-sm">
             <span className="font-medium text-gray-700">進捗</span>
             <span className="font-semibold text-gray-900">
-              {checkedItems.length}/{items.length}
+              {checkedItems.length}/{items?.length ?? 0}
             </span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-gray-200">
@@ -88,7 +113,7 @@ export default function ShoppingListPage() {
                   >
                     <Checkbox
                       checked={item.checked}
-                      onChange={() => handleToggle(item.id)}
+                      onChange={() => handleToggle(item.id, item.checked)}
                       label={
                         item.quantity > 1
                           ? `${item.name} x${item.quantity}`
@@ -116,7 +141,7 @@ export default function ShoppingListPage() {
                   >
                     <Checkbox
                       checked={item.checked}
-                      onChange={() => handleToggle(item.id)}
+                      onChange={() => handleToggle(item.id, item.checked)}
                       strikethrough
                       label={
                         item.quantity > 1

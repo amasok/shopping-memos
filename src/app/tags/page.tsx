@@ -3,34 +3,57 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Button, EmptyState, PageContainer } from "@/components/ui"
+import { db } from "@/lib/db"
+import { createTag, deleteTag } from "@/lib/db/tags"
 import { cn } from "@/lib/utils"
+import { useLiveQuery } from "dexie-react-hooks"
 import { Plus, Tag, Trash2, X } from "lucide-react"
 import { useState } from "react"
 
-// モックデータ
-const defaultTags = ["食品", "日用品", "エンタメ"]
-
 export default function TagsPage() {
-  const [tags, setTags] = useState<string[]>(defaultTags)
   const [isAdding, setIsAdding] = useState(false)
   const [newTagName, setNewTagName] = useState("")
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
-  const handleAddTag = () => {
+  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
+  const isLoading = tags === undefined
+
+  const handleAddTag = async () => {
     const trimmed = newTagName.trim()
-    if (trimmed && !tags.includes(trimmed)) {
-      setTags((prev) => [...prev, trimmed])
+    if (!trimmed) return
+
+    // 重複チェック
+    const existing = tags?.find((t) => t.name === trimmed)
+    if (existing) {
+      setNewTagName("")
+      setIsAdding(false)
+      return
     }
+
+    await createTag(trimmed)
     setNewTagName("")
     setIsAdding(false)
   }
 
-  const handleDeleteTag = (tag: string) => {
-    setTags((prev) => prev.filter((t) => t !== tag))
+  const handleDeleteTag = async (id: string) => {
+    await deleteTag(id)
     setDeleteTarget(null)
   }
 
-  const hasTags = tags.length > 0
+  if (isLoading) {
+    return (
+      <AppLayout showBottomNav={false}>
+        <Header title="タグ管理" showBackButton backHref="/settings" />
+        <PageContainer>
+          <div className="flex items-center justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+          </div>
+        </PageContainer>
+      </AppLayout>
+    )
+  }
+
+  const hasTags = (tags?.length ?? 0) > 0
 
   return (
     <AppLayout showBottomNav={false}>
@@ -97,24 +120,24 @@ export default function TagsPage() {
             />
           ) : (
             <ul className="space-y-2">
-              {tags.map((tag) => (
+              {tags?.map((tag) => (
                 <li
-                  key={tag}
+                  key={tag.id}
                   className="flex items-center justify-between rounded-xl bg-white p-4 shadow-sm"
                 >
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
                       <Tag className="h-5 w-5 text-gray-600" />
                     </div>
-                    <span className="font-semibold text-gray-900">{tag}</span>
+                    <span className="font-semibold text-gray-900">{tag.name}</span>
                   </div>
 
-                  {deleteTarget === tag ? (
+                  {deleteTarget === tag.id ? (
                     <div className="flex items-center gap-2">
                       <Button
                         variant="danger"
                         size="sm"
-                        onClick={() => handleDeleteTag(tag)}
+                        onClick={() => handleDeleteTag(tag.id)}
                       >
                         削除
                       </Button>
@@ -129,9 +152,9 @@ export default function TagsPage() {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => setDeleteTarget(tag)}
+                      onClick={() => setDeleteTarget(tag.id)}
                       className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-red-500"
-                      aria-label={`${tag}を削除`}
+                      aria-label={`${tag.name}を削除`}
                     >
                       <Trash2 className="h-5 w-5" />
                     </button>
