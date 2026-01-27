@@ -18,8 +18,16 @@
     "commit": "Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
   },
   "hooks": {
-    "PostToolUse": {
-      "Write": "npm run lint --fix"
-    }
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npm run lint --fix"
+          }
+        ]
+      }
+    ]
   }
 }
