@@ -1,0 +1,25 @@
+{
+  "language": "japanese",
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(npx prisma:*)",
+      "Bash(docker compose:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)"
+    ],
+    "deny": [
+      "Read(./.env)"
+    ]
+  },
+  "attribution": {
+    "commit": "Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+  },
+  "hooks": {
+    "PostToolUse": {
+      "Write": "npm run lint --fix"
+    }
+  }
+}
