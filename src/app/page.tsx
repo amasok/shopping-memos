@@ -1,18 +1,20 @@
 "use client"
 
+import { ItemForm } from "@/components/ItemForm"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Badge, EmptyState, PageContainer } from "@/components/ui"
-import { db, type ShoppingItem, type Tag } from "@/lib/db"
+import { Badge, BottomSheet, EmptyState, PageContainer } from "@/components/ui"
+import { db, type ShoppingItem } from "@/lib/db"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
 import { Plus, Search, ShoppingCart, X } from "lucide-react"
-import Link from "next/link"
 import { useState } from "react"
 
 export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
+  const [isSheetOpen, setIsSheetOpen] = useState(false)
+  const [editingItem, setEditingItem] = useState<ShoppingItem | null>(null)
 
   const items = useLiveQuery(() => db.items.orderBy("createdAt").reverse().toArray(), [])
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
@@ -34,6 +36,21 @@ export default function HomePage() {
 
   const hasItems = (items?.length ?? 0) > 0
   const hasFilteredItems = filteredItems.length > 0
+
+  const handleOpenAdd = () => {
+    setEditingItem(null)
+    setIsSheetOpen(true)
+  }
+
+  const handleOpenEdit = (item: ShoppingItem) => {
+    setEditingItem(item)
+    setIsSheetOpen(true)
+  }
+
+  const handleCloseSheet = () => {
+    setIsSheetOpen(false)
+    setEditingItem(null)
+  }
 
   if (isLoading) {
     return (
@@ -132,34 +149,40 @@ export default function HomePage() {
             ) : (
               <ul className="space-y-3">
                 {filteredItems.map((item) => (
-                  <li
-                    key={item.id}
-                    className="rounded-xl bg-white p-4 shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <p className="text-lg font-semibold text-gray-900">
-                          {item.name}
-                        </p>
-                        {item.tagIds.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {item.tagIds.map((tagId) => {
-                              const tag = tagMap.get(tagId)
-                              return tag ? (
-                                <Badge key={tagId} variant="default">
-                                  {tag.name}
-                                </Badge>
-                              ) : null
-                            })}
-                          </div>
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEdit(item)}
+                      className={cn(
+                        "w-full rounded-xl bg-white p-4 shadow-sm text-left",
+                        "transition-colors hover:bg-gray-50"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <p className="text-lg font-semibold text-gray-900">
+                            {item.name}
+                          </p>
+                          {item.tagIds.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {item.tagIds.map((tagId) => {
+                                const tag = tagMap.get(tagId)
+                                return tag ? (
+                                  <Badge key={tagId} variant="default">
+                                    {tag.name}
+                                  </Badge>
+                                ) : null
+                              })}
+                            </div>
+                          )}
+                        </div>
+                        {item.quantity > 1 && (
+                          <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-bold text-gray-700">
+                            x{item.quantity}
+                          </span>
                         )}
                       </div>
-                      {item.quantity > 1 && (
-                        <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-bold text-gray-700">
-                          x{item.quantity}
-                        </span>
-                      )}
-                    </div>
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -169,8 +192,9 @@ export default function HomePage() {
       </PageContainer>
 
       {/* FAB（追加ボタン） */}
-      <Link
-        href="/items/new"
+      <button
+        type="button"
+        onClick={handleOpenAdd}
         className={cn(
           "fixed bottom-20 right-4 z-20",
           "flex h-14 w-14 items-center justify-center",
@@ -181,7 +205,19 @@ export default function HomePage() {
         aria-label="アイテムを追加"
       >
         <Plus className="h-6 w-6" strokeWidth={2.5} />
-      </Link>
+      </button>
+
+      {/* アイテム追加/編集ボトムシート */}
+      <BottomSheet
+        isOpen={isSheetOpen}
+        onClose={handleCloseSheet}
+        title={editingItem ? "アイテムを編集" : "アイテムを追加"}
+      >
+        <ItemForm
+          item={editingItem}
+          onClose={handleCloseSheet}
+        />
+      </BottomSheet>
     </AppLayout>
   )
 }

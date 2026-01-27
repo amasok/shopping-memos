@@ -2,18 +2,20 @@
 
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Button, EmptyState, PageContainer } from "@/components/ui"
-import { db } from "@/lib/db"
-import { createTag, deleteTag } from "@/lib/db/tags"
+import { BottomSheet, Button, EmptyState, PageContainer } from "@/components/ui"
+import { db, type Tag } from "@/lib/db"
+import { createTag, deleteTag, updateTag } from "@/lib/db/tags"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { Plus, Tag, Trash2, X } from "lucide-react"
-import { useState } from "react"
+import { Pencil, Plus, Tag as TagIcon, Trash2, X } from "lucide-react"
+import { useEffect, useState } from "react"
 
 export default function TagsPage() {
   const [isAdding, setIsAdding] = useState(false)
   const [newTagName, setNewTagName] = useState("")
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [editingTag, setEditingTag] = useState<Tag | null>(null)
+  const [isSheetOpen, setIsSheetOpen] = useState(false)
 
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
   const isLoading = tags === undefined
@@ -38,6 +40,16 @@ export default function TagsPage() {
   const handleDeleteTag = async (id: string) => {
     await deleteTag(id)
     setDeleteTarget(null)
+  }
+
+  const handleOpenEdit = (tag: Tag) => {
+    setEditingTag(tag)
+    setIsSheetOpen(true)
+  }
+
+  const handleCloseSheet = () => {
+    setIsSheetOpen(false)
+    setEditingTag(null)
   }
 
   if (isLoading) {
@@ -80,7 +92,7 @@ export default function TagsPage() {
                 autoFocus
                 className={cn(
                   "flex-1 rounded-lg border-2 border-gray-300 px-4 py-3",
-                  "text-base font-medium",
+                  "text-base font-medium text-gray-900",
                   "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 )}
                 onKeyDown={(e) => {
@@ -114,7 +126,7 @@ export default function TagsPage() {
           {/* タグ一覧 */}
           {!hasTags ? (
             <EmptyState
-              icon={<Tag className="h-16 w-16" />}
+              icon={<TagIcon className="h-16 w-16" />}
               title="タグがありません"
               description="タグを作ると買い物が便利になります"
             />
@@ -127,7 +139,7 @@ export default function TagsPage() {
                 >
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
-                      <Tag className="h-5 w-5 text-gray-600" />
+                      <TagIcon className="h-5 w-5 text-gray-600" />
                     </div>
                     <span className="font-semibold text-gray-900">{tag.name}</span>
                   </div>
@@ -150,14 +162,24 @@ export default function TagsPage() {
                       </Button>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => setDeleteTarget(tag.id)}
-                      className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-red-500"
-                      aria-label={`${tag.name}を削除`}
-                    >
-                      <Trash2 className="h-5 w-5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEdit(tag)}
+                        className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-blue-500"
+                        aria-label={`${tag.name}を編集`}
+                      >
+                        <Pencil className="h-5 w-5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteTarget(tag.id)}
+                        className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-red-500"
+                        aria-label={`${tag.name}を削除`}
+                      >
+                        <Trash2 className="h-5 w-5" />
+                      </button>
+                    </div>
                   )}
                 </li>
               ))}
@@ -165,6 +187,82 @@ export default function TagsPage() {
           )}
         </div>
       </PageContainer>
+
+      {/* タグ編集ボトムシート */}
+      <BottomSheet
+        isOpen={isSheetOpen}
+        onClose={handleCloseSheet}
+        title="タグを編集"
+      >
+        <TagEditForm tag={editingTag} onClose={handleCloseSheet} />
+      </BottomSheet>
     </AppLayout>
+  )
+}
+
+// タグ編集フォーム
+function TagEditForm({
+  tag,
+  onClose,
+}: {
+  tag: Tag | null
+  onClose: () => void
+}) {
+  const [name, setName] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (tag) {
+      setName(tag.name)
+    }
+  }, [tag])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!tag || !name.trim()) return
+
+    setIsSubmitting(true)
+    try {
+      await updateTag(tag.id, name.trim())
+      onClose()
+    } catch (error) {
+      console.error("Failed to update tag:", error)
+      setIsSubmitting(false)
+    }
+  }
+
+  const isValid = name.trim().length > 0
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <div>
+        <label
+          htmlFor="tag-name"
+          className="mb-2 block text-base font-semibold text-gray-900"
+        >
+          タグ名
+        </label>
+        <input
+          id="tag-name"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+          className={cn(
+            "w-full rounded-lg border-2 border-gray-300 px-4 py-3",
+            "text-lg font-semibold text-gray-900",
+            "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+          )}
+        />
+      </div>
+
+      <Button
+        type="submit"
+        className="w-full text-lg font-semibold"
+        disabled={!isValid || isSubmitting}
+      >
+        {isSubmitting ? "更新中..." : "更新"}
+      </Button>
+    </form>
   )
 }

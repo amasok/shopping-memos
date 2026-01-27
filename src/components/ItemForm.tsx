@@ -1,0 +1,358 @@
+"use client"
+
+import { Badge, Button } from "@/components/ui"
+import { db, type ShoppingItem, type Tag } from "@/lib/db"
+import { createItem, deleteItem, updateItem } from "@/lib/db/items"
+import { createTag } from "@/lib/db/tags"
+import { cn } from "@/lib/utils"
+import { useLiveQuery } from "dexie-react-hooks"
+import { Minus, Plus, Trash2, X } from "lucide-react"
+import { useEffect, useState } from "react"
+
+export interface ItemFormProps {
+  item?: ShoppingItem | null
+  onClose: () => void
+  onSaved?: () => void
+  onDeleted?: () => void
+}
+
+export function ItemForm({ item, onClose, onSaved, onDeleted }: ItemFormProps) {
+  const [name, setName] = useState("")
+  const [quantity, setQuantity] = useState(1)
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [isAddingTag, setIsAddingTag] = useState(false)
+  const [newTagName, setNewTagName] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
+
+  const isEditing = !!item
+
+  // アイテムが変更されたらフォームをリセット
+  useEffect(() => {
+    if (item) {
+      setName(item.name)
+      setQuantity(item.quantity)
+      setSelectedTagIds(item.tagIds)
+    } else {
+      setName("")
+      setQuantity(1)
+      setSelectedTagIds([])
+    }
+    setIsAddingTag(false)
+    setNewTagName("")
+    setShowDeleteConfirm(false)
+  }, [item])
+
+  const handleQuantityChange = (delta: number) => {
+    setQuantity((prev) => Math.max(1, prev + delta))
+  }
+
+  const handleTagToggle = (tagId: string) => {
+    setSelectedTagIds((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+    )
+  }
+
+  const handleAddTag = async () => {
+    const trimmed = newTagName.trim()
+    if (!trimmed) return
+
+    const existing = tags?.find((t) => t.name === trimmed)
+    if (existing) {
+      if (!selectedTagIds.includes(existing.id)) {
+        setSelectedTagIds((prev) => [...prev, existing.id])
+      }
+    } else {
+      const newTag = await createTag(trimmed)
+      setSelectedTagIds((prev) => [...prev, newTag.id])
+    }
+
+    setNewTagName("")
+    setIsAddingTag(false)
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!name.trim()) return
+
+    setIsSubmitting(true)
+
+    try {
+      if (isEditing && item) {
+        await updateItem(item.id, {
+          name: name.trim(),
+          quantity,
+          tagIds: selectedTagIds,
+        })
+      } else {
+        await createItem({
+          name: name.trim(),
+          quantity,
+          tagIds: selectedTagIds,
+        })
+      }
+      onSaved?.()
+      onClose()
+    } catch (error) {
+      console.error("Failed to save item:", error)
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!item) return
+
+    setIsSubmitting(true)
+    try {
+      await deleteItem(item.id)
+      onDeleted?.()
+      onClose()
+    } catch (error) {
+      console.error("Failed to delete item:", error)
+      setIsSubmitting(false)
+    }
+  }
+
+  const isValid = name.trim().length > 0
+  const isLoading = tags === undefined
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+      </div>
+    )
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      {/* アイテム名 */}
+      <div>
+        <label
+          htmlFor="item-name"
+          className="mb-2 block text-base font-semibold text-gray-900"
+        >
+          アイテム名
+        </label>
+        <input
+          id="item-name"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="例: 牛乳"
+          autoFocus
+          autoComplete="off"
+          className={cn(
+            "w-full rounded-lg border-2 border-gray-300 px-4 py-3",
+            "text-lg font-semibold text-gray-900",
+            "placeholder:font-normal placeholder:text-gray-400",
+            "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+          )}
+        />
+      </div>
+
+      {/* 数量 */}
+      <div>
+        <label className="mb-2 block text-base font-semibold text-gray-900">
+          数量
+        </label>
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => handleQuantityChange(-1)}
+            disabled={quantity <= 1}
+            className={cn(
+              "flex h-12 w-12 items-center justify-center rounded-full",
+              "border-2 border-gray-300 text-gray-700",
+              "transition-colors hover:bg-gray-100",
+              "disabled:border-gray-200 disabled:text-gray-300"
+            )}
+            aria-label="数量を減らす"
+          >
+            <Minus className="h-5 w-5" strokeWidth={2.5} />
+          </button>
+          <span className="min-w-[56px] text-center text-3xl font-bold text-gray-900">
+            {quantity}
+          </span>
+          <button
+            type="button"
+            onClick={() => handleQuantityChange(1)}
+            className={cn(
+              "flex h-12 w-12 items-center justify-center rounded-full",
+              "border-2 border-gray-300 text-gray-700",
+              "transition-colors hover:bg-gray-100"
+            )}
+            aria-label="数量を増やす"
+          >
+            <Plus className="h-5 w-5" strokeWidth={2.5} />
+          </button>
+        </div>
+      </div>
+
+      {/* タグ選択 */}
+      <div>
+        <label className="mb-2 block text-base font-semibold text-gray-900">
+          タグ
+        </label>
+        <div className="flex flex-wrap gap-2">
+          {tags?.map((tag) => {
+            const isSelected = selectedTagIds.includes(tag.id)
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                onClick={() => handleTagToggle(tag.id)}
+                className={cn(
+                  "rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                  "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+                  isSelected
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                )}
+              >
+                {tag.name}
+              </button>
+            )
+          })}
+          {!isAddingTag && (
+            <button
+              type="button"
+              onClick={() => setIsAddingTag(true)}
+              className={cn(
+                "flex items-center gap-1 rounded-full px-4 py-2 text-sm font-medium",
+                "border-2 border-dashed border-gray-300 text-gray-500",
+                "transition-colors hover:border-gray-400 hover:text-gray-700",
+                "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              )}
+            >
+              <Plus className="h-4 w-4" strokeWidth={2.5} />
+              追加
+            </button>
+          )}
+        </div>
+
+        {isAddingTag && (
+          <div className="mt-3 flex items-center gap-2">
+            <input
+              type="text"
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              placeholder="新しいタグ名"
+              autoFocus
+              className={cn(
+                "flex-1 rounded-lg border-2 border-gray-300 px-3 py-2 text-sm",
+                "font-medium text-gray-900",
+                "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              )}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  handleAddTag()
+                }
+                if (e.key === "Escape") {
+                  setIsAddingTag(false)
+                  setNewTagName("")
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleAddTag}
+              disabled={!newTagName.trim()}
+              className={cn(
+                "rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white",
+                "transition-colors hover:bg-blue-700",
+                "disabled:bg-gray-300 disabled:text-gray-500"
+              )}
+            >
+              追加
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsAddingTag(false)
+                setNewTagName("")
+              }}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100"
+              aria-label="キャンセル"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        )}
+
+        {selectedTagIds.length > 0 && (
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-sm text-gray-600">選択中:</span>
+            <div className="flex flex-wrap gap-1">
+              {selectedTagIds.map((tagId) => {
+                const tag = tags?.find((t) => t.id === tagId)
+                return tag ? (
+                  <Badge key={tagId} variant="primary">
+                    {tag.name}
+                  </Badge>
+                ) : null
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ボタン */}
+      <div className="space-y-3 pt-2">
+        <Button
+          type="submit"
+          className="w-full text-lg font-semibold"
+          disabled={!isValid || isSubmitting}
+        >
+          {isSubmitting ? "保存中..." : isEditing ? "更新" : "追加"}
+        </Button>
+
+        {isEditing && (
+          <>
+            {!showDeleteConfirm ? (
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirm(true)}
+                className={cn(
+                  "flex w-full items-center justify-center gap-2 rounded-lg py-3",
+                  "text-red-600 transition-colors hover:bg-red-50"
+                )}
+              >
+                <Trash2 className="h-5 w-5" />
+                削除
+              </button>
+            ) : (
+              <div className="rounded-lg bg-red-50 p-3">
+                <p className="mb-3 text-center text-sm font-medium text-red-800">
+                  本当に削除しますか？
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="danger"
+                    className="flex-1"
+                    onClick={handleDelete}
+                    disabled={isSubmitting}
+                  >
+                    削除する
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="flex-1"
+                    onClick={() => setShowDeleteConfirm(false)}
+                  >
+                    キャンセル
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </form>
+  )
+}
