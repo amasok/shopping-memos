@@ -4,9 +4,10 @@ import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Badge, EmptyState, PageContainer } from "@/components/ui"
 import { db, type ShoppingItem } from "@/lib/db"
+import { revertPurchasedItem } from "@/lib/db/items"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { ChevronDown, ChevronUp, History, ShoppingBag } from "lucide-react"
+import { ChevronDown, ChevronUp, History, ShoppingBag, Undo2 } from "lucide-react"
 import { useState } from "react"
 
 function formatDate(date: Date): string {
@@ -47,6 +48,11 @@ export default function HistoryPage() {
   // タグIDからタグ名を引くマップ
   const tagMap = new Map(tags?.map((tag) => [tag.id, tag]) ?? [])
 
+  const handleRevertItem = async (itemId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    await revertPurchasedItem(itemId)
+  }
+
   if (isLoading) {
     return (
       <AppLayout>
@@ -76,7 +82,7 @@ export default function HistoryPage() {
           <ul className="space-y-3">
             {history?.map((record) => {
               const isExpanded = expandedId === record.id
-              // itemIdsからアイテムを取得
+              // itemIdsからアイテムを取得（購入済みのもののみ）
               const items = (record.itemIds ?? [])
                 .map((id) => itemMap.get(id))
                 .filter((item): item is ShoppingItem => item !== undefined)
@@ -103,7 +109,7 @@ export default function HistoryPage() {
                             {record.location || "買い物"}
                           </p>
                           <p className="text-sm text-gray-500">
-                            {formatDate(record.purchasedAt)} · {items.length}点
+                            {formatDate(record.purchasedAt)} · {record.itemIds?.length ?? 0}点
                           </p>
                           {!isExpanded && items.length > 0 && (
                             <p className="mt-1 text-sm text-gray-400">
@@ -125,37 +131,55 @@ export default function HistoryPage() {
 
                     {isExpanded && (
                       <div className="mt-4 border-t border-gray-100 pt-4">
-                        <ul className="space-y-3">
+                        <p className="mb-2 text-xs text-gray-400">
+                          タップで「買いたいもの」に戻す
+                        </p>
+                        <ul className="space-y-2">
                           {items.map((item) => (
                             <li
                               key={item.id}
-                              className="text-sm"
+                              onClick={(e) => handleRevertItem(item.id, e)}
+                              className={cn(
+                                "rounded-lg bg-gray-50 p-3 text-sm",
+                                "cursor-pointer transition-colors hover:bg-orange-50"
+                              )}
                             >
                               <div className="flex items-center justify-between">
-                                <span className="font-medium text-gray-700">{item.name}</span>
-                                {item.quantity > 1 && (
-                                  <span className="text-gray-500">
-                                    x{item.quantity}
-                                  </span>
-                                )}
-                              </div>
-                              {item.memo && (
-                                <p className="mt-0.5 text-xs text-gray-400">{item.memo}</p>
-                              )}
-                              {item.tagIds.length > 0 && (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {item.tagIds.map((tagId) => {
-                                    const tag = tagMap.get(tagId)
-                                    return tag ? (
-                                      <Badge key={tagId} variant="default">
-                                        {tag.name}
-                                      </Badge>
-                                    ) : null
-                                  })}
+                                <div className="flex-1">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-medium text-gray-700">{item.name}</span>
+                                    {item.quantity > 1 && (
+                                      <span className="text-gray-500">
+                                        x{item.quantity}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {item.memo && (
+                                    <p className="mt-0.5 text-xs text-gray-400">{item.memo}</p>
+                                  )}
+                                  {item.tagIds.length > 0 && (
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                      {item.tagIds.map((tagId) => {
+                                        const tag = tagMap.get(tagId)
+                                        return tag ? (
+                                          <Badge key={tagId} variant="default">
+                                            {tag.name}
+                                          </Badge>
+                                        ) : null
+                                      })}
+                                    </div>
+                                  )}
                                 </div>
-                              )}
+                                <Undo2 className="ml-2 h-4 w-4 flex-shrink-0 text-orange-500" />
+                              </div>
                             </li>
                           ))}
+                          {/* 戻されたアイテム（itemMapにないもの）を表示 */}
+                          {(record.itemIds ?? []).filter((id) => !itemMap.has(id)).length > 0 && (
+                            <li className="text-xs text-gray-400 italic">
+                              {(record.itemIds ?? []).filter((id) => !itemMap.has(id)).length}件は「買いたいもの」に戻されました
+                            </li>
+                          )}
                         </ul>
                       </div>
                     )}
