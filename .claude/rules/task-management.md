@@ -35,6 +35,13 @@ PRの本文に `Closes #1` または `Fixes #1` を記載すると、マージ�
 gh pr create --title "feat: Zod導入" --body "Closes #1"
 ```
 
+**注意**: Squashマージの場合、自動クローズが動作しないことがある。その場合はマージ後に手動で閉じる:
+
+```bash
+gh pr merge <番号> --squash --delete-branch
+gh issue close <Issue番号> --comment "PR #<PR番号> でマージ済み"
+```
+
 ## ラベル体系
 
 | ラベル | 説明 |
@@ -63,7 +70,11 @@ gh pr create --title "feat: Zod導入" --body "Closes #1"
 5. PR作成（Issueを紐付け）
    gh pr create --title "feat: ..." --body "Closes #<番号>"
 
-6. マージ後、Issueが自動クローズ
+6. マージ
+   gh pr merge <PR番号> --squash --delete-branch
+
+7. Issueを手動で閉じる（自動クローズされなかった場合）
+   gh issue close <番号> --comment "PR #<PR番号> でマージ済み"
 ```
 
 ## 禁止事項
