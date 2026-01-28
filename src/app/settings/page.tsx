@@ -5,7 +5,7 @@ import { Header } from "@/components/layouts/Header"
 import { Button, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { cn } from "@/lib/utils"
-import { ChevronRight, LogIn, LogOut, Tag, User, Users } from "lucide-react"
+import { ChevronRight, FileText, LogIn, LogOut, Shield, Tag, User, Users } from "lucide-react"
 import Link from "next/link"
 
 interface SettingItem {
@@ -132,11 +132,51 @@ export default function SettingsPage() {
             <h2 className="mb-3 text-sm font-semibold text-gray-500">
               アプリ情報
             </h2>
-            <div className="rounded-xl bg-white p-4 shadow-sm">
-              <p className="text-sm text-gray-600">
-                買い物メモ v0.1.0
-              </p>
-            </div>
+            <ul className="divide-y divide-gray-100 rounded-xl bg-white shadow-sm">
+              <li>
+                <Link
+                  href="/privacy"
+                  className={cn(
+                    "flex items-center justify-between p-4",
+                    "transition-colors hover:bg-gray-50"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-600">
+                      <Shield className="h-5 w-5" />
+                    </div>
+                    <p className="font-semibold text-gray-900">
+                      プライバシーポリシー
+                    </p>
+                  </div>
+                  <ChevronRight className="h-5 w-5 text-gray-400" />
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/terms"
+                  className={cn(
+                    "flex items-center justify-between p-4",
+                    "transition-colors hover:bg-gray-50"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-600">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                    <p className="font-semibold text-gray-900">
+                      利用規約
+                    </p>
+                  </div>
+                  <ChevronRight className="h-5 w-5 text-gray-400" />
+                </Link>
+              </li>
+              <li className="p-4">
+                <p className="text-sm text-gray-600">
+                  買い物メモ v0.1.0
+                </p>
+              </li>
+            </ul>
           </section>
         </div>
       </PageContainer>
