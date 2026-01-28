@@ -20,13 +20,16 @@ import { itemRepository } from "@/modules/catalog/infrastructure/repositories/Dr
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-objects/ListStatus"
 import { ShoppingService } from "@/modules/shopping/application/services/ShoppingService"
+import { ShoppingSyncService } from "@/modules/shopping/application/services/ShoppingSyncService"
 
 // サービスインスタンス
 const shoppingService = new ShoppingService(shoppingListRepository, purchaseHistoryRepository)
+const shoppingSyncService = new ShoppingSyncService(shoppingListRepository, purchaseHistoryRepository)
 
 /**
  * Shopping コンテキストのルーター
  * 買い物フロー・履歴管理
+ * 同期ログ記録を統合
  */
 export const shoppingRouter = router({
   // === リスト ===
@@ -35,7 +38,7 @@ export const shoppingRouter = router({
   getLists: publicProcedure
     .input(getListsQuerySchema)
     .query(async ({ input }) => {
-      return shoppingListRepository.findMany({
+      return shoppingSyncService.getLists({
         groupId: input.groupId,
         status: input.status as ListStatus | undefined,
         includeCompleted: input.includeCompleted,
@@ -46,7 +49,7 @@ export const shoppingRouter = router({
   getList: publicProcedure
     .input(deleteListSchema) // idのみ
     .query(async ({ input }) => {
-      const list = await shoppingListRepository.findById(input.id)
+      const list = await shoppingSyncService.getList(input.id)
       if (!list) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -60,7 +63,7 @@ export const shoppingRouter = router({
   getListItems: publicProcedure
     .input(getListItemsQuerySchema)
     .query(async ({ input }) => {
-      const list = await shoppingListRepository.findById(input.listId)
+      const list = await shoppingSyncService.getList(input.listId)
       if (!list) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -76,27 +79,33 @@ export const shoppingRouter = router({
     .mutation(async ({ input, ctx }) => {
       const listId = crypto.randomUUID()
 
-      // リストを作成
-      const list = await shoppingListRepository.create({
-        id: listId,
-        name: input.name,
-        groupId: input.groupId,
-      })
+      // リストを作成（同期ログ記録付き）
+      await shoppingSyncService.createList(
+        {
+          id: listId,
+          name: input.name,
+          groupId: input.groupId,
+        },
+        ctx.userId
+      )
 
       // itemIdsが指定された場合、アイテムを追加
       if (input.itemIds && input.itemIds.length > 0) {
         for (const itemId of input.itemIds) {
           const item = await itemRepository.findById(itemId)
           if (item) {
-            await shoppingListRepository.addItem({
-              id: crypto.randomUUID(),
-              listId,
-              name: item.name,
-              quantity: item.quantity,
-              memo: item.memo,
-              tagIds: item.tags.map((t) => t.id),
-              groupId: item.groupId,
-            })
+            await shoppingSyncService.addItem(
+              {
+                id: crypto.randomUUID(),
+                listId,
+                name: item.name,
+                quantity: item.quantity,
+                memo: item.memo,
+                tagIds: item.tags.map((t) => t.id),
+                groupId: item.groupId,
+              },
+              ctx.userId
+            )
           }
         }
       }
@@ -110,20 +119,23 @@ export const shoppingRouter = router({
         })
 
         for (const item of items) {
-          await shoppingListRepository.addItem({
-            id: crypto.randomUUID(),
-            listId,
-            name: item.name,
-            quantity: item.quantity,
-            memo: item.memo,
-            tagIds: item.tags.map((t) => t.id),
-            groupId: item.groupId,
-          })
+          await shoppingSyncService.addItem(
+            {
+              id: crypto.randomUUID(),
+              listId,
+              name: item.name,
+              quantity: item.quantity,
+              memo: item.memo,
+              tagIds: item.tags.map((t) => t.id),
+              groupId: item.groupId,
+            },
+            ctx.userId
+          )
         }
       }
 
       // アイテム付きで返す
-      return shoppingListRepository.findById(listId)
+      return shoppingSyncService.getList(listId)
     }),
 
   /** 買い物リストを更新 */
@@ -131,7 +143,7 @@ export const shoppingRouter = router({
     .input(updateListSchema)
     .mutation(async ({ input, ctx }) => {
       // アクセス権確認
-      const canAccess = await shoppingListRepository.canAccess(input.id, ctx.userId)
+      const canAccess = await shoppingSyncService.canAccessList(input.id, ctx.userId)
       if (!canAccess) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -139,10 +151,13 @@ export const shoppingRouter = router({
         })
       }
 
-      return shoppingListRepository.update({
-        id: input.id,
-        name: input.name,
-      })
+      return shoppingSyncService.updateList(
+        {
+          id: input.id,
+          name: input.name,
+        },
+        ctx.userId
+      )
     }),
 
   /** 買い物リストを削除 */
@@ -150,7 +165,7 @@ export const shoppingRouter = router({
     .input(deleteListSchema)
     .mutation(async ({ input, ctx }) => {
       // アクセス権確認
-      const canAccess = await shoppingListRepository.canAccess(input.id, ctx.userId)
+      const canAccess = await shoppingSyncService.canAccessList(input.id, ctx.userId)
       if (!canAccess) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -158,7 +173,7 @@ export const shoppingRouter = router({
         })
       }
 
-      await shoppingListRepository.delete(input.id)
+      await shoppingSyncService.deleteList(input.id, ctx.userId)
       return { success: true }
     }),
 
@@ -167,7 +182,7 @@ export const shoppingRouter = router({
     .input(addItemToListSchema)
     .mutation(async ({ input, ctx }) => {
       // アクセス権確認
-      const canAccess = await shoppingListRepository.canAccess(input.listId, ctx.userId)
+      const canAccess = await shoppingSyncService.canAccessList(input.listId, ctx.userId)
       if (!canAccess) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -176,7 +191,7 @@ export const shoppingRouter = router({
       }
 
       // リストが進行中か確認
-      const list = await shoppingListRepository.findById(input.listId)
+      const list = await shoppingSyncService.getList(input.listId)
       if (!list) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -199,16 +214,19 @@ export const shoppingRouter = router({
         })
       }
 
-      // リストにアイテムを追加（スナップショット）
-      return shoppingListRepository.addItem({
-        id: crypto.randomUUID(),
-        listId: input.listId,
-        name: item.name,
-        quantity: item.quantity,
-        memo: item.memo,
-        tagIds: item.tags.map((t) => t.id),
-        groupId: item.groupId,
-      })
+      // リストにアイテムを追加（スナップショット、同期ログ記録付き）
+      return shoppingSyncService.addItem(
+        {
+          id: crypto.randomUUID(),
+          listId: input.listId,
+          name: item.name,
+          quantity: item.quantity,
+          memo: item.memo,
+          tagIds: item.tags.map((t) => t.id),
+          groupId: item.groupId,
+        },
+        ctx.userId
+      )
     }),
 
   /** リストからアイテムを削除 */
@@ -216,7 +234,7 @@ export const shoppingRouter = router({
     .input(removeListItemSchema)
     .mutation(async ({ input, ctx }) => {
       // アクセス権確認
-      const canAccess = await shoppingListRepository.canAccessItem(input.id, ctx.userId)
+      const canAccess = await shoppingSyncService.canAccessItem(input.id, ctx.userId)
       if (!canAccess) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -225,7 +243,7 @@ export const shoppingRouter = router({
       }
 
       // アイテムのリストが進行中か確認
-      const item = await shoppingListRepository.findItemById(input.id)
+      const item = await shoppingSyncService.getItem(input.id)
       if (!item) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -233,7 +251,7 @@ export const shoppingRouter = router({
         })
       }
 
-      const list = await shoppingListRepository.findById(item.listId)
+      const list = await shoppingSyncService.getList(item.listId)
       if (list && !isInProgress(list.status)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -241,7 +259,7 @@ export const shoppingRouter = router({
         })
       }
 
-      await shoppingListRepository.removeItem(input.id)
+      await shoppingSyncService.removeItem(input.id, ctx.userId)
       return { success: true }
     }),
 
@@ -250,7 +268,7 @@ export const shoppingRouter = router({
     .input(checkItemSchema)
     .mutation(async ({ input, ctx }) => {
       // アクセス権確認
-      const canAccess = await shoppingListRepository.canAccessItem(input.listItemId, ctx.userId)
+      const canAccess = await shoppingSyncService.canAccessItem(input.listItemId, ctx.userId)
       if (!canAccess) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -259,7 +277,7 @@ export const shoppingRouter = router({
       }
 
       // アイテムのリストが進行中か確認
-      const item = await shoppingListRepository.findItemById(input.listItemId)
+      const item = await shoppingSyncService.getItem(input.listItemId)
       if (!item) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -267,7 +285,7 @@ export const shoppingRouter = router({
         })
       }
 
-      const list = await shoppingListRepository.findById(item.listId)
+      const list = await shoppingSyncService.getList(item.listId)
       if (list && !isInProgress(list.status)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -275,10 +293,13 @@ export const shoppingRouter = router({
         })
       }
 
-      return shoppingListRepository.updateItem({
-        id: input.listItemId,
-        checked: input.checked,
-      })
+      return shoppingSyncService.updateItem(
+        {
+          id: input.listItemId,
+          checked: input.checked,
+        },
+        ctx.userId
+      )
     }),
 
   /** 買い物を完了 */
@@ -286,7 +307,7 @@ export const shoppingRouter = router({
     .input(finishShoppingSchema)
     .mutation(async ({ input, ctx }) => {
       // アクセス権確認
-      const canAccess = await shoppingListRepository.canAccess(input.listId, ctx.userId)
+      const canAccess = await shoppingSyncService.canAccessList(input.listId, ctx.userId)
       if (!canAccess) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -317,7 +338,7 @@ export const shoppingRouter = router({
   getHistory: publicProcedure
     .input(getHistoryQuerySchema)
     .query(async ({ input }) => {
-      return purchaseHistoryRepository.findMany({
+      return shoppingSyncService.getHistory({
         groupId: input.groupId,
         limit: input.limit,
         offset: input.offset,
@@ -328,7 +349,7 @@ export const shoppingRouter = router({
   getHistoryById: publicProcedure
     .input(deleteHistorySchema) // idのみ
     .query(async ({ input }) => {
-      const history = await purchaseHistoryRepository.findById(input.id)
+      const history = await shoppingSyncService.getHistoryById(input.id)
       if (!history) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -343,7 +364,7 @@ export const shoppingRouter = router({
     .input(revertHistorySchema)
     .mutation(async ({ input, ctx }) => {
       // アクセス権確認
-      const canAccess = await purchaseHistoryRepository.canAccess(input.historyId, ctx.userId)
+      const canAccess = await shoppingSyncService.canAccessHistory(input.historyId, ctx.userId)
       if (!canAccess) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -352,7 +373,7 @@ export const shoppingRouter = router({
       }
 
       // 履歴を取得
-      const history = await purchaseHistoryRepository.findById(input.historyId)
+      const history = await shoppingSyncService.getHistoryById(input.historyId)
       if (!history) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -407,7 +428,7 @@ export const shoppingRouter = router({
     .input(deleteHistorySchema)
     .mutation(async ({ input, ctx }) => {
       // アクセス権確認
-      const canAccess = await purchaseHistoryRepository.canAccess(input.id, ctx.userId)
+      const canAccess = await shoppingSyncService.canAccessHistory(input.id, ctx.userId)
       if (!canAccess) {
         throw new TRPCError({
           code: "FORBIDDEN",
@@ -415,19 +436,7 @@ export const shoppingRouter = router({
         })
       }
 
-      // 履歴を削除
-      await purchaseHistoryRepository.delete(input.id)
-
-      // 同期ログを記録
-      await syncRepository.createOperation({
-        id: crypto.randomUUID(),
-        userId: ctx.userId,
-        entity: "history",
-        entityId: input.id,
-        operation: "delete",
-        payload: { id: input.id },
-      })
-
+      await shoppingSyncService.deleteHistory(input.id, ctx.userId)
       return { success: true }
     }),
 })
