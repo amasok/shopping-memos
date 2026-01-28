@@ -5,6 +5,8 @@
       "Bash(npm run:*)",
       "Bash(npm install:*)",
       "Bash(npx drizzle-kit:*)",
+      "Bash(DATABASE_URL=* npm run db:*)",
+      "Bash(DATABASE_URL=* npx drizzle-kit:*)",
       "Bash(npx playwright:*)",
       "Bash(docker compose:*)",
       "Bash(gh issue:*)",
