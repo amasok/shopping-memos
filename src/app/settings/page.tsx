@@ -6,6 +6,7 @@ import { Button, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { cn } from "@/lib/utils"
 import { ChevronRight, FileText, LogIn, LogOut, Shield, Tag, User, Users } from "lucide-react"
+import Image from "next/image"
 import Link from "next/link"
 
 interface SettingItem {
@@ -52,9 +53,19 @@ export default function SettingsPage() {
           ) : user ? (
             <div className="rounded-xl bg-white p-4 shadow-sm">
               <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100">
-                  <User className="h-6 w-6 text-blue-600" />
-                </div>
+                {user.avatarUrl ? (
+                  <Image
+                    src={user.avatarUrl}
+                    alt={user.name}
+                    width={48}
+                    height={48}
+                    className="h-12 w-12 rounded-full"
+                  />
+                ) : (
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100">
+                    <User className="h-6 w-6 text-blue-600" />
+                  </div>
+                )}
                 <div className="flex-1">
                   <p className="font-semibold text-gray-900">{user.name}</p>
                   <p className="text-sm text-gray-500">{user.email}</p>

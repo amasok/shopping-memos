@@ -12,6 +12,7 @@ import { db, type ShoppingItem } from "@/lib/db"
 import { getGroupsByUserId } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
+import { LoginPromotionBanner } from "@/components/features/auth/LoginPromotionBanner"
 import { ClipboardList, Plus, Search, ShoppingCart, X } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useRef, useState } from "react"
@@ -343,6 +344,9 @@ export default function HomePage() {
           </div>
         )}
       </PageContainer>
+
+      {/* ログイン促進バナー（未ログイン時のみ） */}
+      <LoginPromotionBanner />
 
       {/* FAB（追加ボタン） */}
       <button
