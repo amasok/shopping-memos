@@ -46,6 +46,25 @@ export interface PurchaseHistory {
   purchasedAt: Date
 }
 
+export interface Group {
+  id: string
+  name: string
+  ownerId: string
+  inviteCode?: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface GroupMember {
+  id: string
+  groupId: string
+  userId: string
+  userName: string
+  userEmail: string
+  role: "owner" | "member"
+  joinedAt: Date
+}
+
 // Dexie データベースクラス
 class ShoppingMemosDB extends Dexie {
   tags!: EntityTable<Tag, "id">
@@ -53,6 +72,8 @@ class ShoppingMemosDB extends Dexie {
   lists!: EntityTable<ShoppingList, "id">
   listItems!: EntityTable<ListItem, "id">
   history!: EntityTable<PurchaseHistory, "id">
+  groups!: EntityTable<Group, "id">
+  groupMembers!: EntityTable<GroupMember, "id">
 
   constructor() {
     super("ShoppingMemosDB")
@@ -105,6 +126,17 @@ class ShoppingMemosDB extends Dexie {
         record.itemIds = []
         delete record.items
       })
+    })
+
+    // v5: グループ機能を追加
+    this.version(5).stores({
+      tags: "id, name, createdAt",
+      items: "id, name, createdAt, purchasedAt, *tagIds",
+      lists: "id, status, createdAt",
+      listItems: "id, listId, checked, *tagIds",
+      history: "id, listId, purchasedAt",
+      groups: "id, ownerId, inviteCode, createdAt",
+      groupMembers: "id, groupId, userId",
     })
   }
 }

@@ -3,8 +3,9 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Button, PageContainer } from "@/components/ui"
+import { useAuth } from "@/contexts/AuthContext"
 import { cn } from "@/lib/utils"
-import { ChevronRight, LogIn, Tag, Users } from "lucide-react"
+import { ChevronRight, LogIn, LogOut, Tag, User, Users } from "lucide-react"
 import Link from "next/link"
 
 interface SettingItem {
@@ -30,16 +31,45 @@ const settingItems: SettingItem[] = [
 ]
 
 export default function SettingsPage() {
-  // TODO: 認証状態を取得
-  const isLoggedIn = false
+  const { user, isLoading, login, logout } = useAuth()
+
+  const handleLogin = async () => {
+    await login()
+  }
 
   return (
     <AppLayout>
       <Header title="設定" />
       <PageContainer>
         <div className="space-y-6">
-          {/* ログイン促進バナー */}
-          {!isLoggedIn && (
+          {/* ユーザー情報 or ログイン促進 */}
+          {isLoading ? (
+            <div className="rounded-xl bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-center py-4">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+              </div>
+            </div>
+          ) : user ? (
+            <div className="rounded-xl bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100">
+                  <User className="h-6 w-6 text-blue-600" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-gray-900">{user.name}</p>
+                  <p className="text-sm text-gray-500">{user.email}</p>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                className="mt-4 w-full text-red-600 hover:bg-red-50 hover:text-red-700"
+                onClick={logout}
+              >
+                <LogOut className="mr-2 h-5 w-5" />
+                ログアウト
+              </Button>
+            </div>
+          ) : (
             <div className="rounded-xl bg-blue-50 p-4">
               <div className="flex items-start gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
@@ -52,7 +82,7 @@ export default function SettingsPage() {
                   <p className="mt-1 text-sm text-blue-700">
                     Googleアカウントでログインすると、デバイス間でデータを同期できます
                   </p>
-                  <Button className="mt-3" size="sm">
+                  <Button className="mt-3" size="sm" onClick={handleLogin}>
                     Googleでログイン
                   </Button>
                 </div>
