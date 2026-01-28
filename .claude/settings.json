@@ -5,7 +5,12 @@
       "Bash(npm run:*)",
       "Bash(npm install:*)",
       "Bash(npx prisma:*)",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "Bash(gh issue:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh label:*)",
+      "Bash(gh repo:*)",
+      "Bash(gh api:*)"
     ],
     "ask": [
       "Bash(git push:*)"
