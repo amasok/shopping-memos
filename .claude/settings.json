@@ -6,6 +6,7 @@
       "Bash(npm install:*)",
       "Bash(npx prisma:*)",
       "Bash(npx drizzle-kit:*)",
+      "Bash(npx playwright:*)",
       "Bash(docker compose:*)",
       "Bash(gh issue:*)",
       "Bash(gh pr:*)",
