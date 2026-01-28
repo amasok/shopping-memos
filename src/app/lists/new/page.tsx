@@ -102,12 +102,13 @@ export default function NewListPage() {
       // リストを作成
       const list = await createList(listName || undefined)
 
-      // アイテムをリストに追加
+      // アイテムをリストに追加（タグを保持）
       await addListItems(
         list.id,
         selectedItems.map((item) => ({
           name: item.name,
           quantity: item.quantity,
+          tagIds: item.tagIds,
         }))
       )
 

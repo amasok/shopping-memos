@@ -30,6 +30,7 @@ export interface ListItem {
   listId: string
   name: string
   quantity: number
+  tagIds: string[]
   checked: boolean
   createdAt: Date
 }
@@ -59,6 +60,22 @@ class ShoppingMemosDB extends Dexie {
       lists: "id, status, createdAt",
       listItems: "id, listId, checked",
       history: "id, listId, purchasedAt",
+    })
+
+    // v2: ListItem に tagIds を追加
+    this.version(2).stores({
+      tags: "id, name, createdAt",
+      items: "id, name, createdAt, *tagIds",
+      lists: "id, status, createdAt",
+      listItems: "id, listId, checked, *tagIds",
+      history: "id, listId, purchasedAt",
+    }).upgrade((tx) => {
+      // 既存の listItems に tagIds: [] を追加
+      return tx.table("listItems").toCollection().modify((item) => {
+        if (!item.tagIds) {
+          item.tagIds = []
+        }
+      })
     })
   }
 }

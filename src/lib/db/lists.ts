@@ -51,7 +51,7 @@ export async function getListItems(listId: string): Promise<ListItem[]> {
 
 export async function addListItems(
   listId: string,
-  items: { name: string; quantity: number }[]
+  items: { name: string; quantity: number; tagIds?: string[] }[]
 ): Promise<void> {
   const now = new Date()
   const listItems: ListItem[] = items.map((item) => ({
@@ -59,6 +59,7 @@ export async function addListItems(
     listId,
     name: item.name,
     quantity: item.quantity,
+    tagIds: item.tagIds ?? [],
     checked: false,
     createdAt: now,
   }))
@@ -72,13 +73,15 @@ export async function toggleListItem(id: string, checked: boolean): Promise<void
 export async function addListItem(
   listId: string,
   name: string,
-  quantity: number = 1
+  quantity: number = 1,
+  tagIds: string[] = []
 ): Promise<ListItem> {
   const listItem: ListItem = {
     id: generateId(),
     listId,
     name,
     quantity,
+    tagIds,
     checked: false,
     createdAt: new Date(),
   }
@@ -96,13 +99,13 @@ export async function removeListItemAndReturnToItems(id: string): Promise<void> 
     const listItem = await db.listItems.get(id)
     if (!listItem) return
 
-    // 買いたいものに戻す
+    // 買いたいものに戻す（タグを保持）
     const now = new Date()
     await db.items.add({
       id: generateId(),
       name: listItem.name,
       quantity: listItem.quantity,
-      tagIds: [],
+      tagIds: listItem.tagIds ?? [],
       createdAt: now,
       updatedAt: now,
     })
@@ -160,6 +163,21 @@ export async function finishShopping(
           purchasedItems.map((item) => ({
             name: item.name,
             quantity: item.quantity,
+          }))
+        )
+      }
+
+      // 未チェックアイテムを「買いたいもの」に戻す（タグを保持）
+      if (unpurchasedItems.length > 0) {
+        const now = new Date()
+        await db.items.bulkAdd(
+          unpurchasedItems.map((item) => ({
+            id: generateId(),
+            name: item.name,
+            quantity: item.quantity,
+            tagIds: item.tagIds ?? [],
+            createdAt: now,
+            updatedAt: now,
           }))
         )
       }
