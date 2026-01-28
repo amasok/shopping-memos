@@ -50,9 +50,9 @@ export default function ShoppingListPage() {
     () => db.listItems.where("listId").equals(listId).toArray(),
     [listId]
   )
-  // 買いたいもの一覧（リストに追加するため）
+  // 買いたいもの一覧（リストに追加するため）- 未購入のみ
   const items = useLiveQuery(
-    () => db.items.orderBy("createdAt").reverse().toArray(),
+    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt).toArray(),
     []
   )
   // タグ一覧

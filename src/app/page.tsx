@@ -20,7 +20,11 @@ export default function HomePage() {
   const [showListItems, setShowListItems] = useState(false)
   const longPressTimer = useRef<NodeJS.Timeout | null>(null)
 
-  const items = useLiveQuery(() => db.items.orderBy("createdAt").reverse().toArray(), [])
+  // 未購入アイテムのみ取得（purchasedAtがundefinedのもの）
+  const items = useLiveQuery(
+    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt).toArray(),
+    []
+  )
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
   const lists = useLiveQuery(() => db.lists.where("status").equals("in_progress").toArray(), [])
   const listItems = useLiveQuery(() => db.listItems.toArray(), [])

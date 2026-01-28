@@ -18,7 +18,11 @@ export default function TagsPage() {
   const [isSheetOpen, setIsSheetOpen] = useState(false)
 
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
-  const items = useLiveQuery(() => db.items.toArray(), [])
+  // 未購入アイテムのみカウント対象
+  const items = useLiveQuery(
+    () => db.items.filter((item) => !item.purchasedAt).toArray(),
+    []
+  )
   const isLoading = tags === undefined || items === undefined
 
   // タグごとのアイテム数をカウント

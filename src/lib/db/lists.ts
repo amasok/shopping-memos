@@ -167,13 +167,13 @@ export async function getHistoryById(
 export async function createHistory(
   listId: string,
   location: string | undefined,
-  items: { name: string; quantity: number }[]
+  itemIds: string[]
 ): Promise<PurchaseHistory> {
   const history: PurchaseHistory = {
     id: generateId(),
     listId,
     location,
-    items,
+    itemIds,
     purchasedAt: new Date(),
   }
   await db.history.add(history)
@@ -193,21 +193,33 @@ export async function finishShopping(
       const purchasedItems = listItems.filter((item) => item.checked)
       const unpurchasedItems = listItems.filter((item) => !item.checked)
 
-      // 購入履歴を作成
+      const now = new Date()
+
+      // 購入済みアイテムをShoppingItemとして保存（purchasedAt付き）
+      const purchasedItemIds: string[] = []
       if (purchasedItems.length > 0) {
-        await createHistory(
-          listId,
-          location,
-          purchasedItems.map((item) => ({
+        const purchasedShoppingItems = purchasedItems.map((item) => {
+          const id = generateId()
+          purchasedItemIds.push(id)
+          return {
+            id,
             name: item.name,
             quantity: item.quantity,
-          }))
-        )
+            memo: item.memo,
+            tagIds: item.tagIds ?? [],
+            purchasedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          }
+        })
+        await db.items.bulkAdd(purchasedShoppingItems)
+
+        // 購入履歴を作成（アイテムIDを参照）
+        await createHistory(listId, location, purchasedItemIds)
       }
 
-      // 未チェックアイテムを「買いたいもの」に戻す（タグ・メモを保持）
+      // 未チェックアイテムを「買いたいもの」に戻す（purchasedAtなし）
       if (unpurchasedItems.length > 0) {
-        const now = new Date()
         await db.items.bulkAdd(
           unpurchasedItems.map((item) => ({
             id: generateId(),
@@ -220,6 +232,9 @@ export async function finishShopping(
           }))
         )
       }
+
+      // リストのアイテムを削除
+      await db.listItems.where("listId").equals(listId).delete()
 
       // リストを完了
       await completeList(listId)

@@ -14,6 +14,7 @@ export interface ShoppingItem {
   quantity: number
   memo?: string
   tagIds: string[]
+  purchasedAt?: Date  // undefined = 未購入, Date = 購入済み
   createdAt: Date
   updatedAt: Date
 }
@@ -41,7 +42,7 @@ export interface PurchaseHistory {
   id: string
   listId: string
   location?: string
-  items: { name: string; quantity: number }[]
+  itemIds: string[]  // 購入したアイテムのID配列
   purchasedAt: Date
 }
 
@@ -89,6 +90,22 @@ class ShoppingMemosDB extends Dexie {
       history: "id, listId, purchasedAt",
     })
     // memo はオプショナルなのでマイグレーション不要
+
+    // v4: ShoppingItem に purchasedAt を追加、PurchaseHistory.items を itemIds に変更
+    this.version(4).stores({
+      tags: "id, name, createdAt",
+      items: "id, name, createdAt, purchasedAt, *tagIds",
+      lists: "id, status, createdAt",
+      listItems: "id, listId, checked, *tagIds",
+      history: "id, listId, purchasedAt",
+    }).upgrade((tx) => {
+      // 既存の history.items を itemIds に変換（空配列に）
+      // 既存データは名前しかないのでIDへの変換は不可能
+      return tx.table("history").toCollection().modify((record) => {
+        record.itemIds = []
+        delete record.items
+      })
+    })
   }
 }
 

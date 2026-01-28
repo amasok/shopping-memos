@@ -22,8 +22,9 @@ function NewListPageContent() {
   const [isCreating, setIsCreating] = useState(false)
   const [initialized, setInitialized] = useState(false)
 
+  // 未購入アイテムのみ表示
   const items = useLiveQuery(
-    () => db.items.orderBy("createdAt").reverse().toArray(),
+    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt).toArray(),
     []
   )
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
