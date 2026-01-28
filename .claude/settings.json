@@ -4,7 +4,6 @@
     "allow": [
       "Bash(npm run:*)",
       "Bash(npm install:*)",
-      "Bash(npx prisma:*)",
       "Bash(npx drizzle-kit:*)",
       "Bash(npx playwright:*)",
       "Bash(docker compose:*)",

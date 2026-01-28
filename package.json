@@ -15,11 +15,10 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "db:reset": "docker exec shopping-memos-db psql -U postgres -d shopping_memos -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;' && npm run db:push"
   },
   "dependencies": {
-    "@auth/prisma-adapter": "^2.11.1",
-    "@prisma/client": "^7.3.0",
     "@tanstack/react-query": "^5.90.20",
     "@trpc/client": "^11.9.0",
     "@trpc/react-query": "^11.9.0",
@@ -55,7 +54,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.5",
     "jsdom": "^27.4.0",
-    "prisma": "^7.3.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.0.18"
