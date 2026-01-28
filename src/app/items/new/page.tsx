@@ -2,7 +2,7 @@
 
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Badge, Button, Input, PageContainer } from "@/components/ui"
+import { Badge, Button, Input, LoadingPage, PageContainer } from "@/components/ui"
 import { db } from "@/lib/db"
 import { createItem } from "@/lib/db/items"
 import { createTag } from "@/lib/db/tags"
@@ -81,9 +81,7 @@ export default function NewItemPage() {
       <AppLayout showBottomNav={false}>
         <Header title="アイテムを追加" showBackButton backHref="/" />
         <PageContainer>
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          </div>
+          <LoadingPage />
         </PageContainer>
       </AppLayout>
     )

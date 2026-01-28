@@ -2,7 +2,7 @@
 
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Badge, BottomSheet, Button, Checkbox, PageContainer, SwipeToRemove } from "@/components/ui"
+import { Badge, BottomSheet, Button, Checkbox, LoadingPage, PageContainer, SwipeToRemove } from "@/components/ui"
 import { db, type ShoppingItem, type Tag } from "@/lib/db"
 import { deleteItems } from "@/lib/db/items"
 import { createTag } from "@/lib/db/tags"
@@ -143,9 +143,7 @@ export default function ShoppingListPage() {
       <AppLayout showBottomNav={false}>
         <Header title="買い物中" showBackButton backHref="/lists" />
         <PageContainer>
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          </div>
+          <LoadingPage />
         </PageContainer>
       </AppLayout>
     )

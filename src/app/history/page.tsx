@@ -1,8 +1,9 @@
 "use client"
 
+import { GroupSelector } from "@/components/features/groups/GroupSelector"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Badge, BottomSheet, Button, EmptyState, PageContainer } from "@/components/ui"
+import { Badge, BottomSheet, Button, EmptyState, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
 import { db, type ShoppingItem } from "@/lib/db"
@@ -10,7 +11,7 @@ import { getGroupsByUserId } from "@/lib/db/groups"
 import { deleteHistory, revertHistoryToList } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { ChevronDown, ChevronUp, History, RotateCcw, ShoppingBag, Trash2, Users } from "lucide-react"
+import { ChevronDown, ChevronUp, History, RotateCcw, ShoppingBag, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
 
@@ -100,9 +101,7 @@ export default function HistoryPage() {
       <AppLayout>
         <Header title="購入履歴" />
         <PageContainer>
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          </div>
+          <LoadingPage />
         </PageContainer>
       </AppLayout>
     )
@@ -115,36 +114,13 @@ export default function HistoryPage() {
       <Header title="購入履歴" />
       <PageContainer>
         {/* グループ選択（ログイン時のみ） */}
-        {user && groups && groups.length > 0 && (
-          <div className="mb-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedGroupId(undefined)}
-              className={cn(
-                "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
-                selectedGroupId === undefined
-                  ? "bg-gray-900 text-white"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-              )}
-            >
-              個人
-            </button>
-            {groups.map((group) => (
-              <button
-                key={group.id}
-                type="button"
-                onClick={() => setSelectedGroupId(group.id)}
-                className={cn(
-                  "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
-                  selectedGroupId === group.id
-                    ? "bg-purple-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                )}
-              >
-                <Users className="h-4 w-4" />
-                {group.name}
-              </button>
-            ))}
+        {user && (
+          <div className="mb-4">
+            <GroupSelector
+              selectedGroupId={selectedGroupId}
+              groups={groups}
+              onGroupChange={setSelectedGroupId}
+            />
           </div>
         )}
 

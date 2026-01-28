@@ -1,16 +1,18 @@
 "use client"
 
-import { ItemForm } from "@/components/ItemForm"
+import { GroupSelector } from "@/components/features/groups/GroupSelector"
+import { ItemForm } from "@/components/features/items/ItemForm"
+import { TagFilter } from "@/components/features/tags/TagFilter"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Badge, BottomSheet, EmptyState, PageContainer } from "@/components/ui"
+import { Badge, BottomSheet, EmptyState, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
 import { db, type ShoppingItem } from "@/lib/db"
 import { getGroupsByUserId } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { ClipboardList, Plus, Search, ShoppingCart, Users, X } from "lucide-react"
+import { ClipboardList, Plus, Search, ShoppingCart, X } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useRef, useState } from "react"
 
@@ -127,9 +129,7 @@ export default function HomePage() {
       <AppLayout>
         <Header title="買いたいもの" />
         <PageContainer>
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          </div>
+          <LoadingPage />
         </PageContainer>
       </AppLayout>
     )
@@ -140,36 +140,13 @@ export default function HomePage() {
       <Header title="買いたいもの" />
       <PageContainer>
         {/* グループ選択（ログイン時のみ、常に表示） */}
-        {user && groups && groups.length > 0 && (
-          <div className="mb-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => handleGroupChange(undefined)}
-              className={cn(
-                "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
-                selectedGroupId === undefined
-                  ? "bg-gray-900 text-white"
-                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-              )}
-            >
-              個人
-            </button>
-            {groups.map((group) => (
-              <button
-                key={group.id}
-                type="button"
-                onClick={() => handleGroupChange(group.id)}
-                className={cn(
-                  "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
-                  selectedGroupId === group.id
-                    ? "bg-purple-600 text-white"
-                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                )}
-              >
-                <Users className="h-4 w-4" />
-                {group.name}
-              </button>
-            ))}
+        {user && (
+          <div className="mb-4">
+            <GroupSelector
+              selectedGroupId={selectedGroupId}
+              groups={groups}
+              onGroupChange={handleGroupChange}
+            />
           </div>
         )}
 
@@ -209,43 +186,12 @@ export default function HomePage() {
             </div>
 
             {/* タグフィルター */}
-            {(tags?.length ?? 0) > 0 && (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedTagId(null)}
-                  className={cn(
-                    "rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
-                    selectedTagId === null
-                      ? "bg-gray-900 text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  )}
-                >
-                  すべて
-                </button>
-                {tags?.map((tag) => {
-                  const itemCount = tagItemCounts.get(tag.id) ?? 0
-                  return (
-                    <button
-                      key={tag.id}
-                      type="button"
-                      onClick={() =>
-                        setSelectedTagId(tag.id === selectedTagId ? null : tag.id)
-                      }
-                      className={cn(
-                        "rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
-                        selectedTagId === tag.id
-                          ? "bg-blue-600 text-white"
-                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                      )}
-                    >
-                      {tag.name}
-                      <span className="ml-1 opacity-70">({itemCount})</span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+            <TagFilter
+              tags={tags}
+              selectedTagId={selectedTagId}
+              onTagSelect={setSelectedTagId}
+              tagItemCounts={tagItemCounts}
+            />
 
             {/* リスト内アイテム表示オプション */}
             {(lists?.length ?? 0) > 0 && (

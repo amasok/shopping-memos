@@ -2,7 +2,7 @@
 
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { BottomSheet, Button, EmptyState, Input, PageContainer } from "@/components/ui"
+import { BottomSheet, Button, EmptyState, Input, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { db, type Group } from "@/lib/db"
 import { createGroup, getGroupsByUserId } from "@/lib/db/groups"
@@ -83,9 +83,7 @@ export default function GroupsPage() {
       <AppLayout showBottomNav={false}>
         <Header title="グループ管理" showBackButton backHref="/settings" />
         <PageContainer>
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          </div>
+          <LoadingPage />
         </PageContainer>
       </AppLayout>
     )

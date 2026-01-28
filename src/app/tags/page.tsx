@@ -1,8 +1,9 @@
 "use client"
 
+import { GroupSelector } from "@/components/features/groups/GroupSelector"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { BottomSheet, Button, EmptyState, PageContainer } from "@/components/ui"
+import { BottomSheet, Button, EmptyState, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
 import { db, type Tag } from "@/lib/db"
@@ -10,7 +11,7 @@ import { getGroupsByUserId } from "@/lib/db/groups"
 import { createTag, deleteTag, updateTag } from "@/lib/db/tags"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { Pencil, Plus, Tag as TagIcon, Trash2, Users, X } from "lucide-react"
+import { Pencil, Plus, Tag as TagIcon, Trash2, X } from "lucide-react"
 import { useEffect, useState } from "react"
 
 export default function TagsPage() {
@@ -89,9 +90,7 @@ export default function TagsPage() {
       <AppLayout showBottomNav={false}>
         <Header title="タグ管理" showBackButton backHref="/settings" />
         <PageContainer>
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          </div>
+          <LoadingPage />
         </PageContainer>
       </AppLayout>
     )
@@ -105,44 +104,14 @@ export default function TagsPage() {
       <PageContainer>
         <div className="space-y-4">
           {/* グループ選択（ログイン時のみ） */}
-          {user && groups && groups.length > 0 && (
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-gray-500">
-                共有先グループ
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedGroupId(undefined)}
-                  className={cn(
-                    "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                    "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
-                    selectedGroupId === undefined
-                      ? "bg-gray-900 text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  )}
-                >
-                  個人
-                </button>
-                {groups.map((group) => (
-                  <button
-                    key={group.id}
-                    type="button"
-                    onClick={() => setSelectedGroupId(group.id)}
-                    className={cn(
-                      "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                      "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
-                      selectedGroupId === group.id
-                        ? "bg-purple-600 text-white"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    )}
-                  >
-                    <Users className="h-4 w-4" />
-                    {group.name}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {user && (
+            <GroupSelector
+              selectedGroupId={selectedGroupId}
+              groups={groups}
+              onGroupChange={setSelectedGroupId}
+              label="共有先グループ"
+              size="md"
+            />
           )}
 
           {/* 追加ボタン */}

@@ -1,8 +1,10 @@
 "use client"
 
+import { GroupSelector } from "@/components/features/groups/GroupSelector"
+import { MultiTagFilter } from "@/components/features/tags/TagFilter"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Button, Checkbox, Input, PageContainer } from "@/components/ui"
+import { Button, Checkbox, Input, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
 import { db } from "@/lib/db"
@@ -11,7 +13,6 @@ import { deleteItems } from "@/lib/db/items"
 import { addListItems, createList } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { Users } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useEffect, useState } from "react"
 
@@ -176,9 +177,7 @@ function NewListPageContent() {
       <AppLayout showBottomNav={false}>
         <Header title="リスト作成" showBackButton backHref="/lists" />
         <PageContainer>
-          <div className="flex items-center justify-center py-12">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-          </div>
+          <LoadingPage />
         </PageContainer>
       </AppLayout>
     )
@@ -213,44 +212,14 @@ function NewListPageContent() {
       <PageContainer>
         <div className="space-y-6">
           {/* グループ選択（ログイン時のみ） */}
-          {user && groups && groups.length > 0 && (
-            <div>
-              <label className="mb-2 block text-base font-semibold text-gray-900">
-                共有先グループ
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedGroupId(undefined)}
-                  className={cn(
-                    "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                    "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
-                    selectedGroupId === undefined
-                      ? "bg-gray-900 text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  )}
-                >
-                  個人
-                </button>
-                {groups.map((group) => (
-                  <button
-                    key={group.id}
-                    type="button"
-                    onClick={() => setSelectedGroupId(group.id)}
-                    className={cn(
-                      "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                      "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
-                      selectedGroupId === group.id
-                        ? "bg-purple-600 text-white"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                    )}
-                  >
-                    <Users className="h-4 w-4" />
-                    {group.name}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {user && (
+            <GroupSelector
+              selectedGroupId={selectedGroupId}
+              groups={groups}
+              onGroupChange={setSelectedGroupId}
+              label="共有先グループ"
+              size="md"
+            />
           )}
 
           {/* リスト名 */}
@@ -263,52 +232,16 @@ function NewListPageContent() {
           />
 
           {/* タグで絞り込み */}
-          {(tags?.length ?? 0) > 0 && (
-            <div>
-              <label className="mb-2 block text-base font-semibold text-gray-900">
-                タグで絞り込み
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedTagIds([])}
-                  className={cn(
-                    "rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                    "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
-                    selectedTagIds.length === 0
-                      ? "bg-gray-900 text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  )}
-                >
-                  すべて
-                </button>
-                {tags?.map((tag) => {
-                  const isSelected = selectedTagIds.includes(tag.id)
-                  const itemCount = tagItemCounts.get(tag.id) ?? 0
-
-                  return (
-                    <button
-                      key={tag.id}
-                      type="button"
-                      onClick={() => handleTagToggle(tag.id)}
-                      disabled={itemCount === 0}
-                      className={cn(
-                        "rounded-full px-4 py-2 text-sm font-medium transition-colors",
-                        "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
-                        "disabled:cursor-not-allowed disabled:opacity-50",
-                        isSelected
-                          ? "bg-blue-600 text-white"
-                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                      )}
-                    >
-                      {tag.name}
-                      <span className="ml-1 opacity-70">({itemCount})</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          <MultiTagFilter
+            tags={tags}
+            selectedTagIds={selectedTagIds}
+            onTagToggle={handleTagToggle}
+            onClearAll={() => setSelectedTagIds([])}
+            tagItemCounts={tagItemCounts}
+            label="タグで絞り込み"
+            size="md"
+            disableEmpty
+          />
 
           {/* 一括選択ボタン */}
           <div className="flex gap-2">
@@ -401,9 +334,7 @@ export default function NewListPage() {
         <AppLayout showBottomNav={false}>
           <Header title="リスト作成" showBackButton backHref="/lists" />
           <PageContainer>
-            <div className="flex items-center justify-center py-12">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-            </div>
+            <LoadingPage />
           </PageContainer>
         </AppLayout>
       }

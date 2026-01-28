@@ -1,6 +1,6 @@
 "use client"
 
-import { Badge, Button } from "@/components/ui"
+import { Badge, Button, LoadingSpinner } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { db, type ShoppingItem, type Tag } from "@/lib/db"
 import { getGroupsByUserId } from "@/lib/db/groups"
@@ -155,7 +155,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+        <LoadingSpinner />
       </div>
     )
   }
