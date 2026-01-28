@@ -4,6 +4,7 @@ import Dexie, { type EntityTable } from "dexie"
 export interface Tag {
   id: string
   name: string
+  groupId?: string  // グループに紐付け（任意）
   createdAt: Date
   updatedAt: Date
 }
@@ -14,6 +15,7 @@ export interface ShoppingItem {
   quantity: number
   memo?: string
   tagIds: string[]
+  groupId?: string  // グループに紐付け（任意）
   purchasedAt?: Date  // undefined = 未購入, Date = 購入済み
   createdAt: Date
   updatedAt: Date
@@ -23,6 +25,7 @@ export interface ShoppingList {
   id: string
   name: string
   status: "in_progress" | "completed"
+  groupId?: string  // グループに紐付け（任意）
   createdAt: Date
   completedAt?: Date
 }
@@ -34,6 +37,7 @@ export interface ListItem {
   quantity: number
   memo?: string
   tagIds: string[]
+  groupId?: string  // グループに紐付け（任意）
   checked: boolean
   createdAt: Date
 }
@@ -43,6 +47,7 @@ export interface PurchaseHistory {
   listId: string
   location?: string
   itemIds: string[]  // 購入したアイテムのID配列
+  groupId?: string  // グループに紐付け（任意）
   purchasedAt: Date
 }
 
@@ -138,6 +143,18 @@ class ShoppingMemosDB extends Dexie {
       groups: "id, ownerId, inviteCode, createdAt",
       groupMembers: "id, groupId, userId",
     })
+
+    // v6: 各エンティティにグループ紐付けを追加
+    this.version(6).stores({
+      tags: "id, name, groupId, createdAt",
+      items: "id, name, groupId, createdAt, purchasedAt, *tagIds",
+      lists: "id, status, groupId, createdAt",
+      listItems: "id, listId, groupId, checked, *tagIds",
+      history: "id, listId, groupId, purchasedAt",
+      groups: "id, ownerId, inviteCode, createdAt",
+      groupMembers: "id, groupId, userId",
+    })
+    // groupId はオプショナルなのでマイグレーション不要（undefined許容）
   }
 }
 

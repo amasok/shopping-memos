@@ -3,25 +3,43 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { BottomSheet, Button, EmptyState, PageContainer } from "@/components/ui"
+import { useAuth } from "@/contexts/AuthContext"
+import { useGroup } from "@/contexts/GroupContext"
 import { db, type Tag } from "@/lib/db"
+import { getGroupsByUserId } from "@/lib/db/groups"
 import { createTag, deleteTag, updateTag } from "@/lib/db/tags"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { Pencil, Plus, Tag as TagIcon, Trash2, X } from "lucide-react"
+import { Pencil, Plus, Tag as TagIcon, Trash2, Users, X } from "lucide-react"
 import { useEffect, useState } from "react"
 
 export default function TagsPage() {
+  const { user } = useAuth()
+  const { selectedGroupId, setSelectedGroupId } = useGroup()
   const [isAdding, setIsAdding] = useState(false)
   const [newTagName, setNewTagName] = useState("")
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [editingTag, setEditingTag] = useState<Tag | null>(null)
   const [isSheetOpen, setIsSheetOpen] = useState(false)
 
-  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
-  // 未購入アイテムのみカウント対象
+  // ログイン中の場合のみグループを取得
+  const groups = useLiveQuery(
+    async () => {
+      if (!user) return []
+      return getGroupsByUserId(user.id)
+    },
+    [user?.id]
+  )
+
+  // 選択されたグループでタグをフィルタ
+  const tags = useLiveQuery(
+    () => db.tags.filter((tag) => tag.groupId === selectedGroupId).toArray(),
+    [selectedGroupId]
+  )
+  // 未購入アイテムのみカウント対象（選択されたグループでフィルタ）
   const items = useLiveQuery(
-    () => db.items.filter((item) => !item.purchasedAt).toArray(),
-    []
+    () => db.items.filter((item) => !item.purchasedAt && item.groupId === selectedGroupId).toArray(),
+    [selectedGroupId]
   )
   const isLoading = tags === undefined || items === undefined
 
@@ -38,7 +56,7 @@ export default function TagsPage() {
     const trimmed = newTagName.trim()
     if (!trimmed) return
 
-    // 重複チェック
+    // 重複チェック（同じグループ内で）
     const existing = tags?.find((t) => t.name === trimmed)
     if (existing) {
       setNewTagName("")
@@ -46,7 +64,7 @@ export default function TagsPage() {
       return
     }
 
-    await createTag(trimmed)
+    await createTag(trimmed, selectedGroupId)
     setNewTagName("")
     setIsAdding(false)
   }
@@ -86,6 +104,47 @@ export default function TagsPage() {
       <Header title="タグ管理" showBackButton backHref="/settings" />
       <PageContainer>
         <div className="space-y-4">
+          {/* グループ選択（ログイン時のみ） */}
+          {user && groups && groups.length > 0 && (
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-gray-500">
+                共有先グループ
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroupId(undefined)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                    "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+                    selectedGroupId === undefined
+                      ? "bg-gray-900 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  )}
+                >
+                  個人
+                </button>
+                {groups.map((group) => (
+                  <button
+                    key={group.id}
+                    type="button"
+                    onClick={() => setSelectedGroupId(group.id)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                      "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+                      selectedGroupId === group.id
+                        ? "bg-purple-600 text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    )}
+                  >
+                    <Users className="h-4 w-4" />
+                    {group.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 追加ボタン */}
           {!isAdding ? (
             <Button

@@ -3,11 +3,14 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Badge, BottomSheet, Button, EmptyState, PageContainer } from "@/components/ui"
+import { useAuth } from "@/contexts/AuthContext"
+import { useGroup } from "@/contexts/GroupContext"
 import { db, type ShoppingItem } from "@/lib/db"
+import { getGroupsByUserId } from "@/lib/db/groups"
 import { deleteHistory, revertHistoryToList } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { ChevronDown, ChevronUp, History, RotateCcw, ShoppingBag, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronUp, History, RotateCcw, ShoppingBag, Trash2, Users } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
 
@@ -21,23 +24,38 @@ function formatDate(date: Date): string {
 
 export default function HistoryPage() {
   const router = useRouter()
+  const { user } = useAuth()
+  const { selectedGroupId, setSelectedGroupId } = useGroup()
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
 
+  // ログイン中の場合のみグループを取得
+  const groups = useLiveQuery(
+    async () => {
+      if (!user) return []
+      return getGroupsByUserId(user.id)
+    },
+    [user?.id]
+  )
+
+  // 選択されたグループで履歴をフィルタ
   const history = useLiveQuery(
-    () => db.history.orderBy("purchasedAt").reverse().toArray(),
-    []
+    () => db.history.filter((h) => h.groupId === selectedGroupId).reverse().sortBy("purchasedAt"),
+    [selectedGroupId]
   )
 
-  // 購入済みアイテムを全て取得
+  // 購入済みアイテムを全て取得（選択されたグループでフィルタ）
   const purchasedItems = useLiveQuery(
-    () => db.items.filter((item) => !!item.purchasedAt).toArray(),
-    []
+    () => db.items.filter((item) => !!item.purchasedAt && item.groupId === selectedGroupId).toArray(),
+    [selectedGroupId]
   )
 
-  // タグを取得
-  const tags = useLiveQuery(() => db.tags.toArray(), [])
+  // タグを取得（選択されたグループでフィルタ）
+  const tags = useLiveQuery(
+    () => db.tags.filter((tag) => tag.groupId === selectedGroupId).toArray(),
+    [selectedGroupId]
+  )
 
   const isLoading = history === undefined || purchasedItems === undefined || tags === undefined
 
@@ -96,6 +114,40 @@ export default function HistoryPage() {
     <AppLayout>
       <Header title="購入履歴" />
       <PageContainer>
+        {/* グループ選択（ログイン時のみ） */}
+        {user && groups && groups.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedGroupId(undefined)}
+              className={cn(
+                "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
+                selectedGroupId === undefined
+                  ? "bg-gray-900 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              )}
+            >
+              個人
+            </button>
+            {groups.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                onClick={() => setSelectedGroupId(group.id)}
+                className={cn(
+                  "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
+                  selectedGroupId === group.id
+                    ? "bg-purple-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                )}
+              >
+                <Users className="h-4 w-4" />
+                {group.name}
+              </button>
+            ))}
+          </div>
+        )}
+
         {!hasHistory ? (
           <EmptyState
             icon={<History className="h-16 w-16" />}
@@ -113,45 +165,49 @@ export default function HistoryPage() {
 
               return (
                 <li key={record.id}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpandedId(isExpanded ? null : record.id)
-                    }
+                  <div
                     className={cn(
-                      "w-full rounded-xl bg-white p-4 shadow-sm text-left",
-                      "transition-colors hover:bg-gray-50"
+                      "w-full rounded-xl bg-white p-4 shadow-sm text-left"
                     )}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
-                          <ShoppingBag className="h-5 w-5 text-gray-600" />
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-900">
-                            {record.location || "買い物"}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {formatDate(record.purchasedAt)} · {record.itemIds?.length ?? 0}点
-                          </p>
-                          {!isExpanded && items.length > 0 && (
-                            <p className="mt-1 text-sm text-gray-400">
-                              {items
-                                .slice(0, 3)
-                                .map((item) => item.name)
-                                .join("、")}
-                              {items.length > 3 && " ..."}
+                    {/* ヘッダー部分（クリックで展開/折りたたみ） */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedId(isExpanded ? null : record.id)
+                      }
+                      className="w-full text-left transition-colors hover:opacity-80"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
+                            <ShoppingBag className="h-5 w-5 text-gray-600" />
+                          </div>
+                          <div>
+                            <p className="font-semibold text-gray-900">
+                              {record.location || "買い物"}
                             </p>
-                          )}
+                            <p className="text-sm text-gray-500">
+                              {formatDate(record.purchasedAt)} · {record.itemIds?.length ?? 0}点
+                            </p>
+                            {!isExpanded && items.length > 0 && (
+                              <p className="mt-1 text-sm text-gray-400">
+                                {items
+                                  .slice(0, 3)
+                                  .map((item) => item.name)
+                                  .join("、")}
+                                {items.length > 3 && " ..."}
+                              </p>
+                            )}
+                          </div>
                         </div>
+                        {isExpanded ? (
+                          <ChevronUp className="mt-2 h-5 w-5 text-gray-400" />
+                        ) : (
+                          <ChevronDown className="mt-2 h-5 w-5 text-gray-400" />
+                        )}
                       </div>
-                      {isExpanded ? (
-                        <ChevronUp className="mt-2 h-5 w-5 text-gray-400" />
-                      ) : (
-                        <ChevronDown className="mt-2 h-5 w-5 text-gray-400" />
-                      )}
-                    </div>
+                    </button>
 
                     {isExpanded && (
                       <div className="mt-4 border-t border-gray-100 pt-4">
@@ -215,7 +271,7 @@ export default function HistoryPage() {
                         </ul>
                       </div>
                     )}
-                  </button>
+                  </div>
                 </li>
               )
             })}

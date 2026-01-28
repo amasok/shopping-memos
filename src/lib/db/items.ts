@@ -12,6 +12,24 @@ export async function getItemsByTagId(tagId: string): Promise<ShoppingItem[]> {
   return db.items.where("tagIds").equals(tagId).toArray()
 }
 
+// グループIDでアイテムを取得（個人アイテムはgroupIdがundefined）
+export async function getItemsByGroupId(groupId: string | undefined): Promise<ShoppingItem[]> {
+  if (groupId === undefined) {
+    // 個人アイテム（グループに紐付いていないもの）
+    return db.items
+      .filter((item) => item.groupId === undefined)
+      .reverse()
+      .sortBy("createdAt")
+  }
+  return db.items.where("groupId").equals(groupId).reverse().sortBy("createdAt")
+}
+
+// 未購入アイテムをグループIDでフィルタリング
+export async function getUnpurchasedItemsByGroupId(groupId: string | undefined): Promise<ShoppingItem[]> {
+  const items = await getItemsByGroupId(groupId)
+  return items.filter((item) => item.purchasedAt === undefined)
+}
+
 export async function createItem(
   data: Omit<ShoppingItem, "id" | "createdAt" | "updatedAt">
 ): Promise<ShoppingItem> {

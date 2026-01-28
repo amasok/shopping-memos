@@ -3,16 +3,32 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Button, EmptyState, PageContainer } from "@/components/ui"
+import { useAuth } from "@/contexts/AuthContext"
+import { useGroup } from "@/contexts/GroupContext"
 import { db } from "@/lib/db"
+import { getGroupsByUserId } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { ChevronRight, ClipboardList, Plus, ShoppingBag } from "lucide-react"
+import { ChevronRight, ClipboardList, Plus, ShoppingBag, Users } from "lucide-react"
 import Link from "next/link"
 
 export default function ListsPage() {
+  const { user } = useAuth()
+  const { selectedGroupId, setSelectedGroupId } = useGroup()
+
+  // ログイン中の場合のみグループを取得
+  const groups = useLiveQuery(
+    async () => {
+      if (!user) return []
+      return getGroupsByUserId(user.id)
+    },
+    [user?.id]
+  )
+
+  // 選択されたグループでリストをフィルタ
   const lists = useLiveQuery(
-    () => db.lists.where("status").equals("in_progress").toArray(),
-    []
+    () => db.lists.filter((list) => list.status === "in_progress" && list.groupId === selectedGroupId).toArray(),
+    [selectedGroupId]
   )
   const listItems = useLiveQuery(() => db.listItems.toArray(), [])
 
@@ -48,13 +64,47 @@ export default function ListsPage() {
     <AppLayout>
       <Header title="買い物リスト" />
       <PageContainer>
+        {/* グループ選択（ログイン時のみ） */}
+        {user && groups && groups.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedGroupId(undefined)}
+              className={cn(
+                "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
+                selectedGroupId === undefined
+                  ? "bg-gray-900 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              )}
+            >
+              個人
+            </button>
+            {groups.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                onClick={() => setSelectedGroupId(group.id)}
+                className={cn(
+                  "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
+                  selectedGroupId === group.id
+                    ? "bg-purple-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                )}
+              >
+                <Users className="h-4 w-4" />
+                {group.name}
+              </button>
+            ))}
+          </div>
+        )}
+
         {!hasActiveLists ? (
           <EmptyState
             icon={<ClipboardList className="h-16 w-16" />}
             title="進行中のリストがありません"
             description="買い物に行く時はリストを作成しましょう"
             action={
-              <Link href="/lists/new">
+              <Link href={selectedGroupId ? `/lists/new?groupId=${selectedGroupId}` : "/lists/new"}>
                 <Button>
                   <Plus className="mr-2 h-5 w-5" />
                   リストを作成
@@ -65,7 +115,7 @@ export default function ListsPage() {
         ) : (
           <div className="space-y-4">
             {/* 新規作成ボタン */}
-            <Link href="/lists/new">
+            <Link href={selectedGroupId ? `/lists/new?groupId=${selectedGroupId}` : "/lists/new"}>
               <Button className="w-full">
                 <Plus className="mr-2 h-5 w-5" />
                 新しいリストを作成

@@ -3,11 +3,15 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Button, Checkbox, Input, PageContainer } from "@/components/ui"
+import { useAuth } from "@/contexts/AuthContext"
+import { useGroup } from "@/contexts/GroupContext"
 import { db } from "@/lib/db"
+import { getGroupsByUserId } from "@/lib/db/groups"
 import { deleteItems } from "@/lib/db/items"
 import { addListItems, createList } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
+import { Users } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useEffect, useState } from "react"
 
@@ -15,21 +19,62 @@ function NewListPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const initialItemId = searchParams.get("itemId")
+  const urlGroupId = searchParams.get("groupId")
+  const { user } = useAuth()
+  const { selectedGroupId: contextGroupId, setSelectedGroupId: setContextGroupId } = useGroup()
 
   const [listName, setListName] = useState("")
+  // URLにgroupIdがある場合はそれを使用、なければContextの値を使用
+  const [selectedGroupId, setSelectedGroupIdLocal] = useState<string | undefined>(
+    urlGroupId ?? contextGroupId
+  )
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [isCreating, setIsCreating] = useState(false)
   const [initialized, setInitialized] = useState(false)
 
-  // 未購入アイテムのみ表示
+  // グループ変更時にContextも更新
+  const setSelectedGroupId = (groupId: string | undefined) => {
+    setSelectedGroupIdLocal(groupId)
+    setContextGroupId(groupId)
+  }
+
+  // URLパラメータがある場合、Contextも同期
+  useEffect(() => {
+    if (urlGroupId !== null) {
+      setContextGroupId(urlGroupId === "undefined" ? undefined : urlGroupId)
+    }
+  }, [urlGroupId, setContextGroupId])
+
+  // 未購入アイテムのみ表示（選択されたグループでフィルタ）
   const items = useLiveQuery(
-    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt).toArray(),
-    []
+    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt && item.groupId === selectedGroupId).toArray(),
+    [selectedGroupId]
   )
-  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
+  // タグはグループ選択時も個人タグ（共通）を含めて表示
+  const tags = useLiveQuery(
+    () => db.tags.filter((tag) =>
+      tag.groupId === selectedGroupId || (selectedGroupId !== undefined && tag.groupId === undefined)
+    ).toArray(),
+    [selectedGroupId]
+  )
+
+  // ログイン中の場合のみグループを取得
+  const groups = useLiveQuery(
+    async () => {
+      if (!user) return []
+      return getGroupsByUserId(user.id)
+    },
+    [user?.id]
+  )
 
   const isLoading = items === undefined || tags === undefined
+
+  // グループ変更時にタグ選択とアイテム選択をリセット
+  useEffect(() => {
+    setSelectedTagIds([])
+    setSelectedItemIds([])
+  }, [selectedGroupId])
 
   // 初期アイテム選択（長押しから来た場合）
   useEffect(() => {
@@ -101,10 +146,10 @@ function NewListPageContent() {
         selectedItemIds.includes(item.id)
       )
 
-      // リストを作成
-      const list = await createList(listName || undefined)
+      // リストを作成（グループIDを紐付け）
+      const list = await createList(listName || undefined, selectedGroupId)
 
-      // アイテムをリストに追加（タグ・メモを保持）
+      // アイテムをリストに追加（タグ・メモ・グループを保持）
       await addListItems(
         list.id,
         selectedItems.map((item) => ({
@@ -112,6 +157,7 @@ function NewListPageContent() {
           quantity: item.quantity,
           memo: item.memo,
           tagIds: item.tagIds,
+          groupId: item.groupId,
         }))
       )
 
@@ -166,6 +212,47 @@ function NewListPageContent() {
       <Header title="リスト作成" showBackButton backHref="/lists" />
       <PageContainer>
         <div className="space-y-6">
+          {/* グループ選択（ログイン時のみ） */}
+          {user && groups && groups.length > 0 && (
+            <div>
+              <label className="mb-2 block text-base font-semibold text-gray-900">
+                共有先グループ
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroupId(undefined)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                    "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+                    selectedGroupId === undefined
+                      ? "bg-gray-900 text-white"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  )}
+                >
+                  個人
+                </button>
+                {groups.map((group) => (
+                  <button
+                    key={group.id}
+                    type="button"
+                    onClick={() => setSelectedGroupId(group.id)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                      "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+                      selectedGroupId === group.id
+                        ? "bg-purple-600 text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    )}
+                  >
+                    <Users className="h-4 w-4" />
+                    {group.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* リスト名 */}
           <Input
             label="リスト名（任意）"

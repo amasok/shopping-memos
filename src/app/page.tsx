@@ -4,15 +4,20 @@ import { ItemForm } from "@/components/ItemForm"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Badge, BottomSheet, EmptyState, PageContainer } from "@/components/ui"
+import { useAuth } from "@/contexts/AuthContext"
+import { useGroup } from "@/contexts/GroupContext"
 import { db, type ShoppingItem } from "@/lib/db"
+import { getGroupsByUserId } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { ClipboardList, Plus, Search, ShoppingCart, X } from "lucide-react"
+import { ClipboardList, Plus, Search, ShoppingCart, Users, X } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useRef, useState } from "react"
 
 export default function HomePage() {
   const router = useRouter()
+  const { user } = useAuth()
+  const { selectedGroupId, setSelectedGroupId } = useGroup()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
   const [isSheetOpen, setIsSheetOpen] = useState(false)
@@ -20,16 +25,43 @@ export default function HomePage() {
   const [showListItems, setShowListItems] = useState(false)
   const longPressTimer = useRef<NodeJS.Timeout | null>(null)
 
-  // 未購入アイテムのみ取得（purchasedAtがundefinedのもの）
-  const items = useLiveQuery(
-    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt).toArray(),
-    []
+  // ログイン中の場合のみグループを取得
+  const groups = useLiveQuery(
+    async () => {
+      if (!user) return []
+      return getGroupsByUserId(user.id)
+    },
+    [user?.id]
   )
-  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
-  const lists = useLiveQuery(() => db.lists.where("status").equals("in_progress").toArray(), [])
+
+  // 未購入アイテムのみ取得（purchasedAtがundefinedのもの、選択されたグループでフィルタ）
+  const items = useLiveQuery(
+    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt && item.groupId === selectedGroupId).toArray(),
+    [selectedGroupId]
+  )
+  // タグはグループ選択時も個人タグ（共通）を含めて表示
+  // グループ選択時: そのグループのタグ + 個人タグ
+  // 個人モード時: 個人タグのみ
+  const tags = useLiveQuery(
+    () => db.tags.filter((tag) =>
+      tag.groupId === selectedGroupId || (selectedGroupId !== undefined && tag.groupId === undefined)
+    ).toArray(),
+    [selectedGroupId]
+  )
+  // リストも選択されたグループでフィルタ
+  const lists = useLiveQuery(
+    () => db.lists.filter((list) => list.status === "in_progress" && list.groupId === selectedGroupId).toArray(),
+    [selectedGroupId]
+  )
   const listItems = useLiveQuery(() => db.listItems.toArray(), [])
 
   const isLoading = items === undefined || tags === undefined || lists === undefined || listItems === undefined
+
+  // グループ変更時にタグ選択をリセット
+  const handleGroupChange = (groupId: string | undefined) => {
+    setSelectedGroupId(groupId)
+    setSelectedTagId(null)
+  }
 
   // リストアイテムをリストIDでグループ化
   const listItemsByListId = new Map<string, typeof listItems>()
@@ -107,6 +139,40 @@ export default function HomePage() {
     <AppLayout>
       <Header title="買いたいもの" />
       <PageContainer>
+        {/* グループ選択（ログイン時のみ、常に表示） */}
+        {user && groups && groups.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => handleGroupChange(undefined)}
+              className={cn(
+                "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
+                selectedGroupId === undefined
+                  ? "bg-gray-900 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              )}
+            >
+              個人
+            </button>
+            {groups.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                onClick={() => handleGroupChange(group.id)}
+                className={cn(
+                  "flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors",
+                  selectedGroupId === group.id
+                    ? "bg-purple-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                )}
+              >
+                <Users className="h-4 w-4" />
+                {group.name}
+              </button>
+            ))}
+          </div>
+        )}
+
         {!hasItems ? (
           <EmptyState
             icon={<ShoppingCart className="h-16 w-16" />}
@@ -210,7 +276,12 @@ export default function HomePage() {
                       onClick={() => handleOpenEdit(item)}
                       onTouchStart={() => {
                         longPressTimer.current = setTimeout(() => {
-                          router.push(`/lists/new?itemId=${item.id}`)
+                          const params = new URLSearchParams()
+                          params.set("itemId", item.id)
+                          if (item.groupId) {
+                            params.set("groupId", item.groupId)
+                          }
+                          router.push(`/lists/new?${params.toString()}`)
                         }, 500)
                       }}
                       onTouchEnd={() => {

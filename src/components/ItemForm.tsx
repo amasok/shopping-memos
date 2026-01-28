@@ -1,12 +1,14 @@
 "use client"
 
 import { Badge, Button } from "@/components/ui"
+import { useAuth } from "@/contexts/AuthContext"
 import { db, type ShoppingItem, type Tag } from "@/lib/db"
+import { getGroupsByUserId } from "@/lib/db/groups"
 import { createItem, deleteItem, updateItem } from "@/lib/db/items"
 import { createTag } from "@/lib/db/tags"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { Minus, Plus, Trash2, X } from "lucide-react"
+import { Minus, Plus, Trash2, Users, X } from "lucide-react"
 import { useEffect, useState } from "react"
 
 export interface ItemFormProps {
@@ -18,16 +20,27 @@ export interface ItemFormProps {
 }
 
 export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = false }: ItemFormProps) {
+  const { user } = useAuth()
   const [name, setName] = useState("")
   const [quantity, setQuantity] = useState(1)
   const [memo, setMemo] = useState("")
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [selectedGroupId, setSelectedGroupId] = useState<string | undefined>(undefined)
   const [isAddingTag, setIsAddingTag] = useState(false)
   const [newTagName, setNewTagName] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
+
+  // ログイン中の場合のみグループを取得
+  const groups = useLiveQuery(
+    async () => {
+      if (!user) return []
+      return getGroupsByUserId(user.id)
+    },
+    [user?.id]
+  )
 
   const isEditing = !!item
 
@@ -38,11 +51,13 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
       setQuantity(item.quantity)
       setMemo(item.memo ?? "")
       setSelectedTagIds(item.tagIds)
+      setSelectedGroupId(item.groupId)
     } else {
       setName("")
       setQuantity(1)
       setMemo("")
       setSelectedTagIds([])
+      setSelectedGroupId(undefined)
     }
     setIsAddingTag(false)
     setNewTagName("")
@@ -63,13 +78,15 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
     const trimmed = newTagName.trim()
     if (!trimmed) return
 
-    const existing = tags?.find((t) => t.name === trimmed)
+    // 同じグループ（または個人）の既存タグをチェック
+    const existing = tags?.find((t) => t.name === trimmed && t.groupId === selectedGroupId)
     if (existing) {
       if (!selectedTagIds.includes(existing.id)) {
         setSelectedTagIds((prev) => [...prev, existing.id])
       }
     } else {
-      const newTag = await createTag(trimmed)
+      // 新しいタグを作成（同じグループに紐付け）
+      const newTag = await createTag(trimmed, selectedGroupId)
       setSelectedTagIds((prev) => [...prev, newTag.id])
     }
 
@@ -90,6 +107,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
           quantity,
           memo: memo.trim() || undefined,
           tagIds: selectedTagIds,
+          groupId: selectedGroupId,
         })
       } else {
         await createItem({
@@ -97,6 +115,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
           quantity,
           memo: memo.trim() || undefined,
           tagIds: selectedTagIds,
+          groupId: selectedGroupId,
         })
       }
       onSaved?.()
@@ -229,6 +248,47 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
           )}
         />
       </div>
+
+      {/* グループ選択（ログイン時のみ） */}
+      {user && groups && groups.length > 0 && (
+        <div>
+          <label className="mb-2 block text-base font-semibold text-gray-900">
+            共有先グループ
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedGroupId(undefined)}
+              className={cn(
+                "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+                selectedGroupId === undefined
+                  ? "bg-gray-900 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              )}
+            >
+              個人
+            </button>
+            {groups.map((group) => (
+              <button
+                key={group.id}
+                type="button"
+                onClick={() => setSelectedGroupId(group.id)}
+                className={cn(
+                  "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                  "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+                  selectedGroupId === group.id
+                    ? "bg-purple-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                )}
+              >
+                <Users className="h-4 w-4" />
+                {group.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* タグ選択 */}
       <div>

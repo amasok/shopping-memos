@@ -12,11 +12,21 @@ export async function getTagsByIds(ids: string[]): Promise<Tag[]> {
   return db.tags.where("id").anyOf(ids).toArray()
 }
 
-export async function createTag(name: string): Promise<Tag> {
+// グループIDでタグを取得（個人タグはgroupIdがundefined）
+export async function getTagsByGroupId(groupId: string | undefined): Promise<Tag[]> {
+  if (groupId === undefined) {
+    // 個人タグ（グループに紐付いていないもの）
+    return db.tags.filter((tag) => tag.groupId === undefined).toArray()
+  }
+  return db.tags.where("groupId").equals(groupId).toArray()
+}
+
+export async function createTag(name: string, groupId?: string): Promise<Tag> {
   const now = new Date()
   const tag: Tag = {
     id: generateId(),
     name,
+    groupId,
     createdAt: now,
     updatedAt: now,
   }

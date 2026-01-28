@@ -50,13 +50,30 @@ export default function ShoppingListPage() {
     () => db.listItems.where("listId").equals(listId).toArray(),
     [listId]
   )
-  // 買いたいもの一覧（リストに追加するため）- 未購入のみ
+
+  // リストのgroupIdを取得
+  const listGroupId = list?.groupId
+
+  // 買いたいもの一覧（リストに追加するため）- 未購入のみ、リストと同じグループのみ
   const items = useLiveQuery(
-    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt).toArray(),
-    []
+    () =>
+      db.items
+        .orderBy("createdAt")
+        .reverse()
+        .filter((item) => !item.purchasedAt && item.groupId === listGroupId)
+        .toArray(),
+    [listGroupId]
   )
-  // タグ一覧
-  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
+  // タグ一覧（リストと同じグループ + 個人タグ）
+  const tags = useLiveQuery(
+    () =>
+      db.tags
+        .filter((tag) =>
+          tag.groupId === listGroupId || (listGroupId !== undefined && tag.groupId === undefined)
+        )
+        .toArray(),
+    [listGroupId]
+  )
 
   const isLoading =
     list === undefined ||
@@ -405,6 +422,7 @@ export default function ShoppingListPage() {
       >
         <AddItemSheet
           listId={listId}
+          groupId={listGroupId}
           existingItems={items ?? []}
           tags={tags ?? []}
           onClose={() => setIsAddSheetOpen(false)}
@@ -514,11 +532,13 @@ export default function ShoppingListPage() {
 // アイテム追加シート
 function AddItemSheet({
   listId,
+  groupId,
   existingItems,
   tags,
   onClose,
 }: {
   listId: string
+  groupId: string | undefined
   existingItems: ShoppingItem[]
   tags: Tag[]
   onClose: () => void
@@ -576,7 +596,7 @@ function AddItemSheet({
         selectedIds.includes(item.id)
       )
 
-      // リストに追加（タグ・メモを保持）
+      // リストに追加（タグ・メモ・グループを保持）
       await addListItems(
         listId,
         selected.map((item) => ({
@@ -584,6 +604,7 @@ function AddItemSheet({
           quantity: item.quantity,
           memo: item.memo,
           tagIds: item.tagIds,
+          groupId: item.groupId,
         }))
       )
 
@@ -619,7 +640,7 @@ function AddItemSheet({
         setSelectedTagIds((prev) => [...prev, existing.id])
       }
     } else {
-      const newTag = await createTag(trimmed)
+      const newTag = await createTag(trimmed, groupId)
       setSelectedTagIds((prev) => [...prev, newTag.id])
     }
 
@@ -633,7 +654,7 @@ function AddItemSheet({
 
     setIsSubmitting(true)
     try {
-      await addListItem(listId, name.trim(), quantity, selectedTagIds, memo.trim() || undefined)
+      await addListItem(listId, name.trim(), quantity, selectedTagIds, memo.trim() || undefined, groupId)
       setName("")
       setMemo("")
       setQuantity(1)
