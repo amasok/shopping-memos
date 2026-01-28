@@ -8,15 +8,19 @@ import { deleteItems } from "@/lib/db/items"
 import { addListItems, createList } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { useRouter } from "next/navigation"
-import { useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { Suspense, useEffect, useState } from "react"
 
-export default function NewListPage() {
+function NewListPageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialItemId = searchParams.get("itemId")
+
   const [listName, setListName] = useState("")
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [isCreating, setIsCreating] = useState(false)
+  const [initialized, setInitialized] = useState(false)
 
   const items = useLiveQuery(
     () => db.items.orderBy("createdAt").reverse().toArray(),
@@ -25,6 +29,17 @@ export default function NewListPage() {
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
 
   const isLoading = items === undefined || tags === undefined
+
+  // 初期アイテム選択（長押しから来た場合）
+  useEffect(() => {
+    if (!initialized && items && initialItemId) {
+      const itemExists = items.some((item) => item.id === initialItemId)
+      if (itemExists) {
+        setSelectedItemIds([initialItemId])
+      }
+      setInitialized(true)
+    }
+  }, [items, initialItemId, initialized])
 
   // タグでフィルタされたアイテム
   const filteredItems =
@@ -88,12 +103,13 @@ export default function NewListPage() {
       // リストを作成
       const list = await createList(listName || undefined)
 
-      // アイテムをリストに追加（タグを保持）
+      // アイテムをリストに追加（タグ・メモを保持）
       await addListItems(
         list.id,
         selectedItems.map((item) => ({
           name: item.name,
           quantity: item.quantity,
+          memo: item.memo,
           tagIds: item.tagIds,
         }))
       )
@@ -287,5 +303,24 @@ export default function NewListPage() {
         </div>
       </PageContainer>
     </AppLayout>
+  )
+}
+
+export default function NewListPage() {
+  return (
+    <Suspense
+      fallback={
+        <AppLayout showBottomNav={false}>
+          <Header title="リスト作成" showBackButton backHref="/lists" />
+          <PageContainer>
+            <div className="flex items-center justify-center py-12">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+            </div>
+          </PageContainer>
+        </AppLayout>
+      }
+    >
+      <NewListPageContent />
+    </Suspense>
   )
 }

@@ -18,7 +18,17 @@ export default function TagsPage() {
   const [isSheetOpen, setIsSheetOpen] = useState(false)
 
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
-  const isLoading = tags === undefined
+  const items = useLiveQuery(() => db.items.toArray(), [])
+  const isLoading = tags === undefined || items === undefined
+
+  // タグごとのアイテム数をカウント
+  const tagItemCounts = new Map<string, number>()
+  if (tags && items) {
+    for (const tag of tags) {
+      const count = items.filter((item) => item.tagIds.includes(tag.id)).length
+      tagItemCounts.set(tag.id, count)
+    }
+  }
 
   const handleAddTag = async () => {
     const trimmed = newTagName.trim()
@@ -132,57 +142,74 @@ export default function TagsPage() {
             />
           ) : (
             <ul className="space-y-2">
-              {tags?.map((tag) => (
-                <li
-                  key={tag.id}
-                  className="flex items-center justify-between rounded-xl bg-white p-4 shadow-sm"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
-                      <TagIcon className="h-5 w-5 text-gray-600" />
-                    </div>
-                    <span className="font-semibold text-gray-900">{tag.name}</span>
-                  </div>
+              {tags?.map((tag) => {
+                const itemCount = tagItemCounts.get(tag.id) ?? 0
+                const isDeleting = deleteTarget === tag.id
 
-                  {deleteTarget === tag.id ? (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() => handleDeleteTag(tag.id)}
-                      >
-                        削除
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setDeleteTarget(null)}
-                      >
-                        キャンセル
-                      </Button>
+                return (
+                  <li
+                    key={tag.id}
+                    className="flex items-center justify-between rounded-xl bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
+                        <TagIcon className="h-5 w-5 text-gray-600" />
+                      </div>
+                      <div>
+                        <span className="font-semibold text-gray-900">{tag.name}</span>
+                        <span className="ml-2 text-sm text-gray-500">
+                          ({itemCount}件)
+                        </span>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEdit(tag)}
-                        className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-blue-500"
-                        aria-label={`${tag.name}を編集`}
-                      >
-                        <Pencil className="h-5 w-5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTarget(tag.id)}
-                        className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-red-500"
-                        aria-label={`${tag.name}を削除`}
-                      >
-                        <Trash2 className="h-5 w-5" />
-                      </button>
-                    </div>
-                  )}
-                </li>
-              ))}
+
+                    {isDeleting ? (
+                      <div className="flex flex-col items-end gap-2">
+                        {itemCount > 0 && (
+                          <p className="text-xs text-red-600">
+                            {itemCount}件のアイテムに紐付いています
+                          </p>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => handleDeleteTag(tag.id)}
+                          >
+                            削除
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleteTarget(null)}
+                          >
+                            キャンセル
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEdit(tag)}
+                          className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-blue-500"
+                          aria-label={`${tag.name}を編集`}
+                        >
+                          <Pencil className="h-5 w-5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteTarget(tag.id)}
+                          className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-red-500"
+                          aria-label={`${tag.name}を削除`}
+                        >
+                          <Trash2 className="h-5 w-5" />
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </div>

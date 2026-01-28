@@ -12,6 +12,7 @@ export interface ShoppingItem {
   id: string
   name: string
   quantity: number
+  memo?: string
   tagIds: string[]
   createdAt: Date
   updatedAt: Date
@@ -30,6 +31,7 @@ export interface ListItem {
   listId: string
   name: string
   quantity: number
+  memo?: string
   tagIds: string[]
   checked: boolean
   createdAt: Date
@@ -77,6 +79,16 @@ class ShoppingMemosDB extends Dexie {
         }
       })
     })
+
+    // v3: ShoppingItem と ListItem に memo を追加
+    this.version(3).stores({
+      tags: "id, name, createdAt",
+      items: "id, name, createdAt, *tagIds",
+      lists: "id, status, createdAt",
+      listItems: "id, listId, checked, *tagIds",
+      history: "id, listId, purchasedAt",
+    })
+    // memo はオプショナルなのでマイグレーション不要
   }
 }
 

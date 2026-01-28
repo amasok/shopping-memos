@@ -2,38 +2,48 @@
 
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Badge, BottomSheet, Button, Checkbox, PageContainer } from "@/components/ui"
+import { Badge, BottomSheet, Button, Checkbox, PageContainer, SwipeToRemove } from "@/components/ui"
 import { db, type ShoppingItem, type Tag } from "@/lib/db"
 import { deleteItems } from "@/lib/db/items"
 import { createTag } from "@/lib/db/tags"
 import {
   addListItem,
   addListItems,
+  deleteList,
   finishShopping,
+  getListItems,
   removeListItemAndReturnToItems,
   toggleListItem,
+  updateList,
 } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
 import {
   CheckCircle,
   Minus,
+  MoreVertical,
   Package,
+  Pencil,
   Plus,
   ShoppingCart,
-  Undo2,
+  Trash2,
   X,
 } from "lucide-react"
 import { useParams, useRouter } from "next/navigation"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 export default function ShoppingListPage() {
   const params = useParams()
   const router = useRouter()
   const listId = params.id as string
   const [isCompleting, setIsCompleting] = useState(false)
-  const [removeTargetId, setRemoveTargetId] = useState<string | null>(null)
   const [isAddSheetOpen, setIsAddSheetOpen] = useState(false)
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [editName, setEditName] = useState("")
+  const [showMenu, setShowMenu] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteItemHandling, setDeleteItemHandling] = useState<"return" | "delete">("return")
+  const [showEmptyListConfirm, setShowEmptyListConfirm] = useState(false)
 
   const list = useLiveQuery(() => db.lists.get(listId), [listId])
   const listItems = useLiveQuery(
@@ -54,6 +64,13 @@ export default function ShoppingListPage() {
     items === undefined ||
     tags === undefined
 
+  // リスト名編集の初期化
+  useEffect(() => {
+    if (list && !isEditingName) {
+      setEditName(list.name)
+    }
+  }, [list, isEditingName])
+
   const uncheckedItems = (listItems ?? []).filter((item) => !item.checked)
   const checkedItems = (listItems ?? []).filter((item) => item.checked)
   const progress =
@@ -69,7 +86,28 @@ export default function ShoppingListPage() {
 
   const handleRemove = async (id: string) => {
     await removeListItemAndReturnToItems(id)
-    setRemoveTargetId(null)
+
+    // 空になったかチェック
+    const remainingItems = await getListItems(listId)
+    if (remainingItems.length === 0) {
+      setShowEmptyListConfirm(true)
+    }
+  }
+
+  const handleSaveName = async () => {
+    if (!editName.trim()) return
+    await updateList(listId, { name: editName.trim() })
+    setIsEditingName(false)
+  }
+
+  const handleDeleteList = async () => {
+    await deleteList(listId, deleteItemHandling)
+    router.push("/lists")
+  }
+
+  const handleDeleteEmptyList = async () => {
+    await deleteList(listId, "delete")
+    router.push("/lists")
   }
 
   const handleComplete = async () => {
@@ -111,11 +149,89 @@ export default function ShoppingListPage() {
 
   return (
     <AppLayout showBottomNav={false}>
-      <Header
-        title={list.name || "買い物中"}
-        showBackButton
-        backHref="/lists"
-      />
+      {/* カスタムヘッダー（編集可能） */}
+      <header className="sticky top-0 z-10 border-b border-gray-200 bg-white">
+        <div className="mx-auto flex h-14 max-w-lg items-center justify-between px-4">
+          <button
+            type="button"
+            onClick={() => router.push("/lists")}
+            className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100"
+            aria-label="戻る"
+          >
+            <X className="h-5 w-5" />
+          </button>
+
+          {isEditingName ? (
+            <div className="flex flex-1 items-center gap-2 px-2">
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                autoFocus
+                className={cn(
+                  "flex-1 rounded-lg border-2 border-blue-500 px-3 py-1.5",
+                  "text-base font-semibold text-gray-900",
+                  "focus:outline-none"
+                )}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    handleSaveName()
+                  }
+                  if (e.key === "Escape") {
+                    setIsEditingName(false)
+                    setEditName(list.name)
+                  }
+                }}
+              />
+              <Button size="sm" onClick={handleSaveName}>
+                保存
+              </Button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsEditingName(true)}
+              className="flex items-center gap-1 text-lg font-semibold text-gray-900 hover:text-blue-600"
+            >
+              {list.name || "買い物中"}
+              <Pencil className="h-4 w-4 text-gray-400" />
+            </button>
+          )}
+
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowMenu(!showMenu)}
+              className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100"
+              aria-label="メニュー"
+            >
+              <MoreVertical className="h-5 w-5" />
+            </button>
+            {showMenu && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setShowMenu(false)}
+                />
+                <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-lg bg-white py-1 shadow-lg ring-1 ring-black/5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false)
+                      setShowDeleteConfirm(true)
+                    }}
+                    className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    リストを削除
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </header>
 
       {/* プログレスバー */}
       <div className="border-b border-gray-200 bg-white px-4 py-3">
@@ -143,51 +259,32 @@ export default function ShoppingListPage() {
               <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-500">
                 <ShoppingCart className="h-4 w-4" />
                 買うもの
+                <span className="text-xs text-gray-400">（左スワイプで外す）</span>
               </h2>
               <ul className="space-y-2">
                 {uncheckedItems.map((item) => (
-                  <li
-                    key={item.id}
-                    className="flex items-center gap-2 rounded-lg bg-white p-4 shadow-sm"
-                  >
-                    <div className="flex-1">
-                      <Checkbox
-                        checked={item.checked}
-                        onChange={() => handleToggle(item.id, item.checked)}
-                        label={
-                          item.quantity > 1
-                            ? `${item.name} x${item.quantity}`
-                            : item.name
-                        }
-                      />
-                    </div>
-                    {removeTargetId === item.id ? (
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => handleRemove(item.id)}
-                        >
-                          外す
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setRemoveTargetId(null)}
-                        >
-                          戻す
-                        </Button>
+                  <li key={item.id} className="rounded-lg shadow-sm overflow-hidden">
+                    <SwipeToRemove
+                      onRemove={() => handleRemove(item.id)}
+                      removeLabel="外す"
+                    >
+                      <div className="flex items-center gap-2 bg-white p-4">
+                        <div className="flex-1">
+                          <Checkbox
+                            checked={item.checked}
+                            onChange={() => handleToggle(item.id, item.checked)}
+                            label={
+                              item.quantity > 1
+                                ? `${item.name} x${item.quantity}`
+                                : item.name
+                            }
+                          />
+                          {item.memo && (
+                            <p className="ml-7 mt-1 text-sm text-gray-500">{item.memo}</p>
+                          )}
+                        </div>
                       </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setRemoveTargetId(item.id)}
-                        className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-orange-500"
-                        aria-label="リストから外す"
-                      >
-                        <Undo2 className="h-4 w-4" />
-                      </button>
-                    )}
+                    </SwipeToRemove>
                   </li>
                 ))}
               </ul>
@@ -203,49 +300,29 @@ export default function ShoppingListPage() {
               </h2>
               <ul className="space-y-2">
                 {checkedItems.map((item) => (
-                  <li
-                    key={item.id}
-                    className="flex items-center gap-2 rounded-lg bg-white/50 p-4"
-                  >
-                    <div className="flex-1">
-                      <Checkbox
-                        checked={item.checked}
-                        onChange={() => handleToggle(item.id, item.checked)}
-                        strikethrough
-                        label={
-                          item.quantity > 1
-                            ? `${item.name} x${item.quantity}`
-                            : item.name
-                        }
-                      />
-                    </div>
-                    {removeTargetId === item.id ? (
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => handleRemove(item.id)}
-                        >
-                          外す
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setRemoveTargetId(null)}
-                        >
-                          戻す
-                        </Button>
+                  <li key={item.id} className="rounded-lg overflow-hidden">
+                    <SwipeToRemove
+                      onRemove={() => handleRemove(item.id)}
+                      removeLabel="外す"
+                    >
+                      <div className="flex items-center gap-2 bg-white/50 p-4">
+                        <div className="flex-1">
+                          <Checkbox
+                            checked={item.checked}
+                            onChange={() => handleToggle(item.id, item.checked)}
+                            strikethrough
+                            label={
+                              item.quantity > 1
+                                ? `${item.name} x${item.quantity}`
+                                : item.name
+                            }
+                          />
+                          {item.memo && (
+                            <p className="ml-7 mt-1 text-sm text-gray-400 line-through">{item.memo}</p>
+                          )}
+                        </div>
                       </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setRemoveTargetId(item.id)}
-                        className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-orange-500"
-                        aria-label="リストから外す"
-                      >
-                        <Undo2 className="h-4 w-4" />
-                      </button>
-                    )}
+                    </SwipeToRemove>
                   </li>
                 ))}
               </ul>
@@ -333,6 +410,103 @@ export default function ShoppingListPage() {
           onClose={() => setIsAddSheetOpen(false)}
         />
       </BottomSheet>
+
+      {/* リスト削除確認ダイアログ */}
+      <BottomSheet
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="リストを削除"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">
+            このリストを削除しますか？
+          </p>
+
+          {(listItems?.length ?? 0) > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-gray-900">
+                リスト内のアイテム（{listItems?.length}件）の扱い
+              </p>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 rounded-lg border-2 p-3 cursor-pointer hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="itemHandling"
+                    value="return"
+                    checked={deleteItemHandling === "return"}
+                    onChange={() => setDeleteItemHandling("return")}
+                    className="h-4 w-4 text-blue-600"
+                  />
+                  <div>
+                    <span className="font-medium text-gray-900">買いたいものに戻す</span>
+                    <p className="text-xs text-gray-500">アイテムは削除されません</p>
+                  </div>
+                </label>
+                <label className="flex items-center gap-2 rounded-lg border-2 p-3 cursor-pointer hover:bg-gray-50">
+                  <input
+                    type="radio"
+                    name="itemHandling"
+                    value="delete"
+                    checked={deleteItemHandling === "delete"}
+                    onChange={() => setDeleteItemHandling("delete")}
+                    className="h-4 w-4 text-blue-600"
+                  />
+                  <div>
+                    <span className="font-medium text-gray-900">完全に削除する</span>
+                    <p className="text-xs text-gray-500">アイテムも削除されます</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-2">
+            <Button
+              variant="ghost"
+              className="flex-1"
+              onClick={() => setShowDeleteConfirm(false)}
+            >
+              キャンセル
+            </Button>
+            <Button
+              variant="danger"
+              className="flex-1"
+              onClick={handleDeleteList}
+            >
+              削除する
+            </Button>
+          </div>
+        </div>
+      </BottomSheet>
+
+      {/* 空リスト確認ダイアログ */}
+      <BottomSheet
+        isOpen={showEmptyListConfirm}
+        onClose={() => setShowEmptyListConfirm(false)}
+        title="リストが空になりました"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">
+            すべてのアイテムを外しました。このリストを削除しますか？
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              className="flex-1"
+              onClick={() => setShowEmptyListConfirm(false)}
+            >
+              リストを残す
+            </Button>
+            <Button
+              variant="danger"
+              className="flex-1"
+              onClick={handleDeleteEmptyList}
+            >
+              削除する
+            </Button>
+          </div>
+        </div>
+      </BottomSheet>
     </AppLayout>
   )
 }
@@ -353,12 +527,38 @@ function AddItemSheet({
     existingItems.length > 0 ? "select" : "new"
   )
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [filterTagIds, setFilterTagIds] = useState<string[]>([])
   const [name, setName] = useState("")
   const [quantity, setQuantity] = useState(1)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [isAddingTag, setIsAddingTag] = useState(false)
   const [newTagName, setNewTagName] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // タグでフィルタしたアイテム
+  const filteredExistingItems =
+    filterTagIds.length === 0
+      ? existingItems
+      : existingItems.filter((item) =>
+          item.tagIds.some((tagId) => filterTagIds.includes(tagId))
+        )
+
+  // タグごとのアイテム数
+  const tagItemCounts = new Map<string, number>()
+  for (const tag of tags) {
+    const count = existingItems.filter((item) =>
+      item.tagIds.includes(tag.id)
+    ).length
+    tagItemCounts.set(tag.id, count)
+  }
+
+  const handleFilterTagToggle = (tagId: string) => {
+    setFilterTagIds((prev) =>
+      prev.includes(tagId)
+        ? prev.filter((id) => id !== tagId)
+        : [...prev, tagId]
+    )
+  }
 
   const handleToggleItem = (id: string) => {
     setSelectedIds((prev) =>
@@ -375,12 +575,13 @@ function AddItemSheet({
         selectedIds.includes(item.id)
       )
 
-      // リストに追加（タグを保持）
+      // リストに追加（タグ・メモを保持）
       await addListItems(
         listId,
         selected.map((item) => ({
           name: item.name,
           quantity: item.quantity,
+          memo: item.memo,
           tagIds: item.tagIds,
         }))
       )
@@ -489,30 +690,80 @@ function AddItemSheet({
             </div>
           ) : (
             <>
-              <ul className="max-h-64 space-y-2 overflow-y-auto">
-                {existingItems.map((item) => {
-                  const isSelected = selectedIds.includes(item.id)
-                  return (
-                    <li
-                      key={item.id}
-                      className={cn(
-                        "rounded-lg bg-gray-50 p-3",
-                        isSelected && "bg-blue-50"
-                      )}
-                    >
-                      <Checkbox
-                        checked={isSelected}
-                        onChange={() => handleToggleItem(item.id)}
-                        label={
-                          item.quantity > 1
-                            ? `${item.name} x${item.quantity}`
-                            : item.name
-                        }
-                      />
-                    </li>
-                  )
-                })}
-              </ul>
+              {/* タグフィルタ */}
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFilterTagIds([])}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                      filterTagIds.length === 0
+                        ? "bg-gray-900 text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    )}
+                  >
+                    すべて
+                  </button>
+                  {tags.map((tag) => {
+                    const isSelected = filterTagIds.includes(tag.id)
+                    const itemCount = tagItemCounts.get(tag.id) ?? 0
+                    return (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        onClick={() => handleFilterTagToggle(tag.id)}
+                        disabled={itemCount === 0}
+                        className={cn(
+                          "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                          "disabled:cursor-not-allowed disabled:opacity-50",
+                          isSelected
+                            ? "bg-blue-600 text-white"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        )}
+                      >
+                        {tag.name}({itemCount})
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {filteredExistingItems.length === 0 ? (
+                <div className="py-4 text-center">
+                  <p className="text-sm text-gray-500">
+                    該当するアイテムがありません
+                  </p>
+                </div>
+              ) : (
+                <ul className="max-h-52 space-y-2 overflow-y-auto">
+                  {filteredExistingItems.map((item) => {
+                    const isSelected = selectedIds.includes(item.id)
+                    return (
+                      <li
+                        key={item.id}
+                        className={cn(
+                          "rounded-lg bg-gray-50 p-3",
+                          isSelected && "bg-blue-50"
+                        )}
+                      >
+                        <Checkbox
+                          checked={isSelected}
+                          onChange={() => handleToggleItem(item.id)}
+                          label={
+                            item.quantity > 1
+                              ? `${item.name} x${item.quantity}`
+                              : item.name
+                          }
+                        />
+                        {item.memo && (
+                          <p className="ml-7 mt-1 text-xs text-gray-500">{item.memo}</p>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
               <Button
                 className="w-full"
                 onClick={handleAddFromItems}

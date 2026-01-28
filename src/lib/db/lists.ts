@@ -37,11 +37,45 @@ export async function completeList(id: string): Promise<void> {
   })
 }
 
-export async function deleteList(id: string): Promise<void> {
-  await db.transaction("rw", [db.lists, db.listItems], async () => {
-    await db.lists.delete(id)
+export async function updateList(
+  id: string,
+  data: Partial<Omit<ShoppingList, "id" | "createdAt">>
+): Promise<void> {
+  await db.lists.update(id, data)
+}
+
+// リスト削除（アイテムの処理方法を選択可能）
+export async function deleteList(
+  id: string,
+  itemHandling: "delete" | "return" = "delete"
+): Promise<void> {
+  await db.transaction("rw", [db.lists, db.listItems, db.items], async () => {
+    if (itemHandling === "return") {
+      // アイテムを「買いたいもの」に戻す
+      const listItems = await db.listItems.where("listId").equals(id).toArray()
+      if (listItems.length > 0) {
+        const now = new Date()
+        await db.items.bulkAdd(
+          listItems.map((item) => ({
+            id: generateId(),
+            name: item.name,
+            quantity: item.quantity,
+            memo: item.memo,
+            tagIds: item.tagIds ?? [],
+            createdAt: now,
+            updatedAt: now,
+          }))
+        )
+      }
+    }
     await db.listItems.where("listId").equals(id).delete()
+    await db.lists.delete(id)
   })
+}
+
+// 進行中のリスト数を取得
+export async function getActiveListCount(): Promise<number> {
+  return db.lists.where("status").equals("in_progress").count()
 }
 
 // List Items
@@ -51,7 +85,7 @@ export async function getListItems(listId: string): Promise<ListItem[]> {
 
 export async function addListItems(
   listId: string,
-  items: { name: string; quantity: number; tagIds?: string[] }[]
+  items: { name: string; quantity: number; memo?: string; tagIds?: string[] }[]
 ): Promise<void> {
   const now = new Date()
   const listItems: ListItem[] = items.map((item) => ({
@@ -59,6 +93,7 @@ export async function addListItems(
     listId,
     name: item.name,
     quantity: item.quantity,
+    memo: item.memo,
     tagIds: item.tagIds ?? [],
     checked: false,
     createdAt: now,
@@ -74,13 +109,15 @@ export async function addListItem(
   listId: string,
   name: string,
   quantity: number = 1,
-  tagIds: string[] = []
+  tagIds: string[] = [],
+  memo?: string
 ): Promise<ListItem> {
   const listItem: ListItem = {
     id: generateId(),
     listId,
     name,
     quantity,
+    memo,
     tagIds,
     checked: false,
     createdAt: new Date(),
@@ -99,12 +136,13 @@ export async function removeListItemAndReturnToItems(id: string): Promise<void> 
     const listItem = await db.listItems.get(id)
     if (!listItem) return
 
-    // 買いたいものに戻す（タグを保持）
+    // 買いたいものに戻す（タグ・メモを保持）
     const now = new Date()
     await db.items.add({
       id: generateId(),
       name: listItem.name,
       quantity: listItem.quantity,
+      memo: listItem.memo,
       tagIds: listItem.tagIds ?? [],
       createdAt: now,
       updatedAt: now,
@@ -167,7 +205,7 @@ export async function finishShopping(
         )
       }
 
-      // 未チェックアイテムを「買いたいもの」に戻す（タグを保持）
+      // 未チェックアイテムを「買いたいもの」に戻す（タグ・メモを保持）
       if (unpurchasedItems.length > 0) {
         const now = new Date()
         await db.items.bulkAdd(
@@ -175,6 +213,7 @@ export async function finishShopping(
             id: generateId(),
             name: item.name,
             quantity: item.quantity,
+            memo: item.memo,
             tagIds: item.tagIds ?? [],
             createdAt: now,
             updatedAt: now,

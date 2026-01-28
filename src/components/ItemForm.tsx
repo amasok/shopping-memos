@@ -14,11 +14,13 @@ export interface ItemFormProps {
   onClose: () => void
   onSaved?: () => void
   onDeleted?: () => void
+  allowContinue?: boolean
 }
 
-export function ItemForm({ item, onClose, onSaved, onDeleted }: ItemFormProps) {
+export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = false }: ItemFormProps) {
   const [name, setName] = useState("")
   const [quantity, setQuantity] = useState(1)
+  const [memo, setMemo] = useState("")
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [isAddingTag, setIsAddingTag] = useState(false)
   const [newTagName, setNewTagName] = useState("")
@@ -34,10 +36,12 @@ export function ItemForm({ item, onClose, onSaved, onDeleted }: ItemFormProps) {
     if (item) {
       setName(item.name)
       setQuantity(item.quantity)
+      setMemo(item.memo ?? "")
       setSelectedTagIds(item.tagIds)
     } else {
       setName("")
       setQuantity(1)
+      setMemo("")
       setSelectedTagIds([])
     }
     setIsAddingTag(false)
@@ -73,7 +77,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted }: ItemFormProps) {
     setIsAddingTag(false)
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, continueAdding = false) => {
     e.preventDefault()
     if (!name.trim()) return
 
@@ -84,17 +88,28 @@ export function ItemForm({ item, onClose, onSaved, onDeleted }: ItemFormProps) {
         await updateItem(item.id, {
           name: name.trim(),
           quantity,
+          memo: memo.trim() || undefined,
           tagIds: selectedTagIds,
         })
       } else {
         await createItem({
           name: name.trim(),
           quantity,
+          memo: memo.trim() || undefined,
           tagIds: selectedTagIds,
         })
       }
       onSaved?.()
-      onClose()
+
+      if (continueAdding) {
+        // フォームをリセットして続ける（タグは維持）
+        setName("")
+        setQuantity(1)
+        setMemo("")
+        setIsSubmitting(false)
+      } else {
+        onClose()
+      }
     } catch (error) {
       console.error("Failed to save item:", error)
       setIsSubmitting(false)
@@ -189,6 +204,30 @@ export function ItemForm({ item, onClose, onSaved, onDeleted }: ItemFormProps) {
             <Plus className="h-5 w-5" strokeWidth={2.5} />
           </button>
         </div>
+      </div>
+
+      {/* メモ */}
+      <div>
+        <label
+          htmlFor="item-memo"
+          className="mb-2 block text-base font-semibold text-gray-900"
+        >
+          メモ（任意）
+        </label>
+        <textarea
+          id="item-memo"
+          value={memo}
+          onChange={(e) => setMemo(e.target.value)}
+          placeholder="例: 低脂肪タイプ"
+          rows={2}
+          className={cn(
+            "w-full rounded-lg border-2 border-gray-300 px-4 py-3",
+            "text-base font-medium text-gray-900",
+            "placeholder:font-normal placeholder:text-gray-400",
+            "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20",
+            "resize-none"
+          )}
+        />
       </div>
 
       {/* タグ選択 */}
@@ -302,13 +341,34 @@ export function ItemForm({ item, onClose, onSaved, onDeleted }: ItemFormProps) {
 
       {/* ボタン */}
       <div className="space-y-3 pt-2">
-        <Button
-          type="submit"
-          className="w-full text-lg font-semibold"
-          disabled={!isValid || isSubmitting}
-        >
-          {isSubmitting ? "保存中..." : isEditing ? "更新" : "追加"}
-        </Button>
+        {allowContinue && !isEditing ? (
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="flex-1 text-base font-semibold"
+              disabled={!isValid || isSubmitting}
+              onClick={(e) => handleSubmit(e, true)}
+            >
+              追加して続ける
+            </Button>
+            <Button
+              type="submit"
+              className="flex-1 text-base font-semibold"
+              disabled={!isValid || isSubmitting}
+            >
+              {isSubmitting ? "保存中..." : "追加して閉じる"}
+            </Button>
+          </div>
+        ) : (
+          <Button
+            type="submit"
+            className="w-full text-lg font-semibold"
+            disabled={!isValid || isSubmitting}
+          >
+            {isSubmitting ? "保存中..." : isEditing ? "更新" : "追加"}
+          </Button>
+        )}
 
         {isEditing && (
           <>
