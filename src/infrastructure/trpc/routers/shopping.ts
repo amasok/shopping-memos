@@ -15,8 +15,13 @@ import {
   removeListItemSchema,
 } from "@/shared/schemas"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
+import { purchaseHistoryRepository } from "@/modules/shopping/infrastructure/repositories/DrizzlePurchaseHistoryRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-objects/ListStatus"
+import { ShoppingService } from "@/modules/shopping/application/services/ShoppingService"
+
+// サービスインスタンス
+const shoppingService = new ShoppingService(shoppingListRepository, purchaseHistoryRepository)
 
 /**
  * Shopping コンテキストのルーター
@@ -279,11 +284,30 @@ export const shoppingRouter = router({
   finishShopping: protectedProcedure
     .input(finishShoppingSchema)
     .mutation(async ({ input, ctx }) => {
-      // TODO: Issue #12 で実装
-      throw new TRPCError({
-        code: "NOT_IMPLEMENTED",
-        message: "買い物完了フローは Issue #12 で実装予定です",
-      })
+      // アクセス権確認
+      const canAccess = await shoppingListRepository.canAccess(input.listId, ctx.userId)
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "このリストを完了する権限がありません",
+        })
+      }
+
+      try {
+        return await shoppingService.finishShopping(
+          input.listId,
+          ctx.userId,
+          input.location
+        )
+      } catch (error) {
+        if (error instanceof Error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error.message,
+          })
+        }
+        throw error
+      }
     }),
 
   // === 履歴 ===
