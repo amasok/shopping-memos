@@ -90,6 +90,28 @@ export async function deleteListItem(id: string): Promise<void> {
   await db.listItems.delete(id)
 }
 
+// リストからアイテムを外して「買いたいもの」に戻す
+export async function removeListItemAndReturnToItems(id: string): Promise<void> {
+  await db.transaction("rw", [db.listItems, db.items], async () => {
+    const listItem = await db.listItems.get(id)
+    if (!listItem) return
+
+    // 買いたいものに戻す
+    const now = new Date()
+    await db.items.add({
+      id: generateId(),
+      name: listItem.name,
+      quantity: listItem.quantity,
+      tagIds: [],
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // リストから削除
+    await db.listItems.delete(id)
+  })
+}
+
 // Purchase History
 export async function getHistory(): Promise<PurchaseHistory[]> {
   return db.history.orderBy("purchasedAt").reverse().toArray()

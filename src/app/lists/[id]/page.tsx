@@ -3,16 +3,25 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { BottomSheet, Button, Checkbox, PageContainer } from "@/components/ui"
-import { db } from "@/lib/db"
+import { db, type ShoppingItem } from "@/lib/db"
+import { deleteItems } from "@/lib/db/items"
 import {
   addListItem,
-  deleteListItem,
+  addListItems,
   finishShopping,
+  removeListItemAndReturnToItems,
   toggleListItem,
 } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { CheckCircle, Minus, Plus, ShoppingCart, Trash2 } from "lucide-react"
+import {
+  CheckCircle,
+  Minus,
+  Package,
+  Plus,
+  ShoppingCart,
+  Undo2,
+} from "lucide-react"
 import { useParams, useRouter } from "next/navigation"
 import { useState } from "react"
 
@@ -21,30 +30,39 @@ export default function ShoppingListPage() {
   const router = useRouter()
   const listId = params.id as string
   const [isCompleting, setIsCompleting] = useState(false)
-  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  const [removeTargetId, setRemoveTargetId] = useState<string | null>(null)
   const [isAddSheetOpen, setIsAddSheetOpen] = useState(false)
 
   const list = useLiveQuery(() => db.lists.get(listId), [listId])
-  const items = useLiveQuery(
+  const listItems = useLiveQuery(
     () => db.listItems.where("listId").equals(listId).toArray(),
     [listId]
   )
+  // 買いたいもの一覧（リストに追加するため）
+  const items = useLiveQuery(
+    () => db.items.orderBy("createdAt").reverse().toArray(),
+    []
+  )
 
-  const isLoading = list === undefined || items === undefined
+  const isLoading =
+    list === undefined || listItems === undefined || items === undefined
 
-  const uncheckedItems = (items ?? []).filter((item) => !item.checked)
-  const checkedItems = (items ?? []).filter((item) => item.checked)
+  const uncheckedItems = (listItems ?? []).filter((item) => !item.checked)
+  const checkedItems = (listItems ?? []).filter((item) => item.checked)
   const progress =
-    items && items.length > 0 ? (checkedItems.length / items.length) * 100 : 0
-  const allChecked = uncheckedItems.length === 0 && (items?.length ?? 0) > 0
+    listItems && listItems.length > 0
+      ? (checkedItems.length / listItems.length) * 100
+      : 0
+  const allChecked =
+    uncheckedItems.length === 0 && (listItems?.length ?? 0) > 0
 
   const handleToggle = async (id: string, checked: boolean) => {
     await toggleListItem(id, !checked)
   }
 
-  const handleDelete = async (id: string) => {
-    await deleteListItem(id)
-    setDeleteTargetId(null)
+  const handleRemove = async (id: string) => {
+    await removeListItemAndReturnToItems(id)
+    setRemoveTargetId(null)
   }
 
   const handleComplete = async () => {
@@ -86,7 +104,11 @@ export default function ShoppingListPage() {
 
   return (
     <AppLayout showBottomNav={false}>
-      <Header title={list.name || "買い物中"} showBackButton backHref="/lists" />
+      <Header
+        title={list.name || "買い物中"}
+        showBackButton
+        backHref="/lists"
+      />
 
       {/* プログレスバー */}
       <div className="border-b border-gray-200 bg-white px-4 py-3">
@@ -94,7 +116,7 @@ export default function ShoppingListPage() {
           <div className="mb-1 flex items-center justify-between text-sm">
             <span className="font-medium text-gray-700">進捗</span>
             <span className="font-semibold text-gray-900">
-              {checkedItems.length}/{items?.length ?? 0}
+              {checkedItems.length}/{listItems?.length ?? 0}
             </span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-gray-200">
@@ -132,19 +154,19 @@ export default function ShoppingListPage() {
                         }
                       />
                     </div>
-                    {deleteTargetId === item.id ? (
+                    {removeTargetId === item.id ? (
                       <div className="flex items-center gap-1">
                         <Button
-                          variant="danger"
+                          variant="secondary"
                           size="sm"
-                          onClick={() => handleDelete(item.id)}
+                          onClick={() => handleRemove(item.id)}
                         >
-                          削除
+                          外す
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => setDeleteTargetId(null)}
+                          onClick={() => setRemoveTargetId(null)}
                         >
                           戻す
                         </Button>
@@ -152,11 +174,11 @@ export default function ShoppingListPage() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => setDeleteTargetId(item.id)}
-                        className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-red-500"
-                        aria-label="削除"
+                        onClick={() => setRemoveTargetId(item.id)}
+                        className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-orange-500"
+                        aria-label="リストから外す"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Undo2 className="h-4 w-4" />
                       </button>
                     )}
                   </li>
@@ -190,19 +212,19 @@ export default function ShoppingListPage() {
                         }
                       />
                     </div>
-                    {deleteTargetId === item.id ? (
+                    {removeTargetId === item.id ? (
                       <div className="flex items-center gap-1">
                         <Button
-                          variant="danger"
+                          variant="secondary"
                           size="sm"
-                          onClick={() => handleDelete(item.id)}
+                          onClick={() => handleRemove(item.id)}
                         >
-                          削除
+                          外す
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => setDeleteTargetId(null)}
+                          onClick={() => setRemoveTargetId(null)}
                         >
                           戻す
                         </Button>
@@ -210,11 +232,11 @@ export default function ShoppingListPage() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => setDeleteTargetId(item.id)}
-                        className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-red-500"
-                        aria-label="削除"
+                        onClick={() => setRemoveTargetId(item.id)}
+                        className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-orange-500"
+                        aria-label="リストから外す"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Undo2 className="h-4 w-4" />
                       </button>
                     )}
                   </li>
@@ -224,11 +246,9 @@ export default function ShoppingListPage() {
           )}
 
           {/* アイテムがない場合 */}
-          {(items?.length ?? 0) === 0 && (
+          {(listItems?.length ?? 0) === 0 && (
             <div className="py-8 text-center">
-              <p className="text-base text-gray-500">
-                アイテムがありません
-              </p>
+              <p className="text-base text-gray-500">アイテムがありません</p>
               <p className="mt-2 text-sm text-gray-400">
                 下の「+」ボタンから追加できます
               </p>
@@ -236,7 +256,7 @@ export default function ShoppingListPage() {
           )}
 
           {/* 完了ボタン */}
-          {allChecked && (items?.length ?? 0) > 0 && (
+          {allChecked && (listItems?.length ?? 0) > 0 && (
             <div
               className={cn(
                 "rounded-xl bg-green-50 p-4 text-center",
@@ -257,7 +277,7 @@ export default function ShoppingListPage() {
             </div>
           )}
 
-          {!allChecked && (items?.length ?? 0) > 0 && (
+          {!allChecked && (listItems?.length ?? 0) > 0 && (
             <div className="pt-4">
               <Button
                 variant="secondary"
@@ -299,8 +319,9 @@ export default function ShoppingListPage() {
         onClose={() => setIsAddSheetOpen(false)}
         title="アイテムを追加"
       >
-        <AddItemForm
+        <AddItemSheet
           listId={listId}
+          existingItems={items ?? []}
           onClose={() => setIsAddSheetOpen(false)}
         />
       </BottomSheet>
@@ -308,23 +329,63 @@ export default function ShoppingListPage() {
   )
 }
 
-// アイテム追加フォーム
-function AddItemForm({
+// アイテム追加シート
+function AddItemSheet({
   listId,
+  existingItems,
   onClose,
 }: {
   listId: string
+  existingItems: ShoppingItem[]
   onClose: () => void
 }) {
+  const [mode, setMode] = useState<"select" | "new">(
+    existingItems.length > 0 ? "select" : "new"
+  )
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [name, setName] = useState("")
   const [quantity, setQuantity] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const handleToggleItem = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    )
+  }
+
+  const handleAddFromItems = async () => {
+    if (selectedIds.length === 0) return
+
+    setIsSubmitting(true)
+    try {
+      const selected = existingItems.filter((item) =>
+        selectedIds.includes(item.id)
+      )
+
+      // リストに追加
+      await addListItems(
+        listId,
+        selected.map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+        }))
+      )
+
+      // 買いたいものから削除
+      await deleteItems(selectedIds)
+
+      onClose()
+    } catch (error) {
+      console.error("Failed to add items:", error)
+      setIsSubmitting(false)
+    }
+  }
 
   const handleQuantityChange = (delta: number) => {
     setQuantity((prev) => Math.max(1, prev + delta))
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleAddNew = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
 
@@ -340,81 +401,166 @@ function AddItemForm({
     }
   }
 
-  const isValid = name.trim().length > 0
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      {/* アイテム名 */}
-      <div>
-        <label
-          htmlFor="item-name"
-          className="mb-2 block text-base font-semibold text-gray-900"
-        >
-          アイテム名
-        </label>
-        <input
-          id="item-name"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="例: 牛乳"
-          autoFocus
-          autoComplete="off"
+    <div className="space-y-4">
+      {/* モード切替タブ */}
+      <div className="flex rounded-lg bg-gray-100 p-1">
+        <button
+          type="button"
+          onClick={() => setMode("select")}
           className={cn(
-            "w-full rounded-lg border-2 border-gray-300 px-4 py-3",
-            "text-lg font-semibold text-gray-900",
-            "placeholder:font-normal placeholder:text-gray-400",
-            "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            "flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors",
+            mode === "select"
+              ? "bg-white text-gray-900 shadow-sm"
+              : "text-gray-600 hover:text-gray-900"
           )}
-        />
+        >
+          <Package className="mr-2 inline-block h-4 w-4" />
+          買いたいものから
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("new")}
+          className={cn(
+            "flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors",
+            mode === "new"
+              ? "bg-white text-gray-900 shadow-sm"
+              : "text-gray-600 hover:text-gray-900"
+          )}
+        >
+          <Plus className="mr-2 inline-block h-4 w-4" />
+          新規入力
+        </button>
       </div>
 
-      {/* 数量 */}
-      <div>
-        <label className="mb-2 block text-base font-semibold text-gray-900">
-          数量
-        </label>
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={() => handleQuantityChange(-1)}
-            disabled={quantity <= 1}
-            className={cn(
-              "flex h-12 w-12 items-center justify-center rounded-full",
-              "border-2 border-gray-300 text-gray-700",
-              "transition-colors hover:bg-gray-100",
-              "disabled:border-gray-200 disabled:text-gray-300"
-            )}
-            aria-label="数量を減らす"
-          >
-            <Minus className="h-5 w-5" strokeWidth={2.5} />
-          </button>
-          <span className="min-w-[56px] text-center text-3xl font-bold text-gray-900">
-            {quantity}
-          </span>
-          <button
-            type="button"
-            onClick={() => handleQuantityChange(1)}
-            className={cn(
-              "flex h-12 w-12 items-center justify-center rounded-full",
-              "border-2 border-gray-300 text-gray-700",
-              "transition-colors hover:bg-gray-100"
-            )}
-            aria-label="数量を増やす"
-          >
-            <Plus className="h-5 w-5" strokeWidth={2.5} />
-          </button>
-        </div>
-      </div>
+      {mode === "select" ? (
+        <>
+          {existingItems.length === 0 ? (
+            <div className="py-6 text-center">
+              <p className="text-gray-500">買いたいものがありません</p>
+              <button
+                type="button"
+                onClick={() => setMode("new")}
+                className="mt-2 text-sm font-medium text-blue-600"
+              >
+                新規入力で追加する
+              </button>
+            </div>
+          ) : (
+            <>
+              <ul className="max-h-64 space-y-2 overflow-y-auto">
+                {existingItems.map((item) => {
+                  const isSelected = selectedIds.includes(item.id)
+                  return (
+                    <li
+                      key={item.id}
+                      className={cn(
+                        "rounded-lg bg-gray-50 p-3",
+                        isSelected && "bg-blue-50"
+                      )}
+                    >
+                      <Checkbox
+                        checked={isSelected}
+                        onChange={() => handleToggleItem(item.id)}
+                        label={
+                          item.quantity > 1
+                            ? `${item.name} x${item.quantity}`
+                            : item.name
+                        }
+                      />
+                    </li>
+                  )
+                })}
+              </ul>
+              <Button
+                className="w-full"
+                onClick={handleAddFromItems}
+                disabled={selectedIds.length === 0 || isSubmitting}
+              >
+                {isSubmitting
+                  ? "追加中..."
+                  : selectedIds.length === 0
+                    ? "アイテムを選択"
+                    : `${selectedIds.length}件を追加`}
+              </Button>
+            </>
+          )}
+        </>
+      ) : (
+        <form onSubmit={handleAddNew} className="space-y-4">
+          {/* アイテム名 */}
+          <div>
+            <label
+              htmlFor="item-name"
+              className="mb-2 block text-sm font-semibold text-gray-900"
+            >
+              アイテム名
+            </label>
+            <input
+              id="item-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例: 牛乳"
+              autoFocus
+              autoComplete="off"
+              className={cn(
+                "w-full rounded-lg border-2 border-gray-300 px-4 py-3",
+                "text-lg font-semibold text-gray-900",
+                "placeholder:font-normal placeholder:text-gray-400",
+                "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              )}
+            />
+          </div>
 
-      {/* 追加ボタン */}
-      <Button
-        type="submit"
-        className="w-full text-lg font-semibold"
-        disabled={!isValid || isSubmitting}
-      >
-        {isSubmitting ? "追加中..." : "追加"}
-      </Button>
-    </form>
+          {/* 数量 */}
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-gray-900">
+              数量
+            </label>
+            <div className="flex items-center gap-4">
+              <button
+                type="button"
+                onClick={() => handleQuantityChange(-1)}
+                disabled={quantity <= 1}
+                className={cn(
+                  "flex h-10 w-10 items-center justify-center rounded-full",
+                  "border-2 border-gray-300 text-gray-700",
+                  "transition-colors hover:bg-gray-100",
+                  "disabled:border-gray-200 disabled:text-gray-300"
+                )}
+                aria-label="数量を減らす"
+              >
+                <Minus className="h-4 w-4" strokeWidth={2.5} />
+              </button>
+              <span className="min-w-[48px] text-center text-2xl font-bold text-gray-900">
+                {quantity}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleQuantityChange(1)}
+                className={cn(
+                  "flex h-10 w-10 items-center justify-center rounded-full",
+                  "border-2 border-gray-300 text-gray-700",
+                  "transition-colors hover:bg-gray-100"
+                )}
+                aria-label="数量を増やす"
+              >
+                <Plus className="h-4 w-4" strokeWidth={2.5} />
+              </button>
+            </div>
+          </div>
+
+          {/* 追加ボタン */}
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={!name.trim() || isSubmitting}
+          >
+            {isSubmitting ? "追加中..." : "追加"}
+          </Button>
+        </form>
+      )}
+    </div>
   )
 }
