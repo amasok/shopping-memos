@@ -15,7 +15,9 @@ import {
   removeListItemSchema,
 } from "@/shared/schemas"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
+import { purchaseHistoryRepository } from "@/modules/shopping/infrastructure/repositories/DrizzlePurchaseHistoryRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
+import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-objects/ListStatus"
 
 /**
@@ -288,33 +290,121 @@ export const shoppingRouter = router({
 
   // === 履歴 ===
 
-  /** 購入履歴を取得 */
+  /** 購入履歴一覧を取得 */
   getHistory: publicProcedure
     .input(getHistoryQuerySchema)
     .query(async ({ input }) => {
-      // TODO: Issue #13 で実装
-      return []
+      return purchaseHistoryRepository.findMany({
+        groupId: input.groupId,
+        limit: input.limit,
+        offset: input.offset,
+      })
     }),
 
-  /** 履歴からアイテムを戻す */
+  /** 購入履歴を取得 */
+  getHistoryById: publicProcedure
+    .input(deleteHistorySchema) // idのみ
+    .query(async ({ input }) => {
+      const history = await purchaseHistoryRepository.findById(input.id)
+      if (!history) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "履歴が見つかりません",
+        })
+      }
+      return history
+    }),
+
+  /** 履歴からアイテムを戻す（purchasedAtをnullに） */
   revertHistory: protectedProcedure
     .input(revertHistorySchema)
     .mutation(async ({ input, ctx }) => {
-      // TODO: Issue #13 で実装
-      throw new TRPCError({
-        code: "NOT_IMPLEMENTED",
-        message: "履歴からのリバートは Issue #13 で実装予定です",
+      // アクセス権確認
+      const canAccess = await purchaseHistoryRepository.canAccess(input.historyId, ctx.userId)
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "この履歴を操作する権限がありません",
+        })
+      }
+
+      // 履歴を取得
+      const history = await purchaseHistoryRepository.findById(input.historyId)
+      if (!history) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "履歴が見つかりません",
+        })
+      }
+
+      // 指定されたアイテムのpurchasedAtをnullに戻す
+      const revertedItemIds: string[] = []
+      for (const itemId of input.itemIds) {
+        // 履歴に含まれるアイテムか確認
+        if (!history.itemIds?.includes(itemId)) {
+          continue
+        }
+
+        const item = await itemRepository.findById(itemId)
+        if (item) {
+          // アイテムのpurchasedAtをnullに戻す
+          await itemRepository.markAsUnpurchased(itemId)
+          revertedItemIds.push(itemId)
+
+          // 同期ログを記録
+          await syncRepository.createOperation({
+            id: crypto.randomUUID(),
+            userId: ctx.userId,
+            entity: "item",
+            entityId: itemId,
+            operation: "update",
+            payload: { id: itemId, purchasedAt: null },
+          })
+        }
+      }
+
+      // 同期ログを記録（履歴は削除しない、アイテムを戻すだけ）
+      await syncRepository.createOperation({
+        id: crypto.randomUUID(),
+        userId: ctx.userId,
+        entity: "history",
+        entityId: input.historyId,
+        operation: "update",
+        payload: { id: input.historyId, revertedItemIds },
       })
+
+      return {
+        success: true,
+        revertedItemIds,
+      }
     }),
 
-  /** 履歴を削除 */
+  /** 履歴を削除（アイテムは戻さない） */
   deleteHistory: protectedProcedure
     .input(deleteHistorySchema)
     .mutation(async ({ input, ctx }) => {
-      // TODO: Issue #13 で実装
-      throw new TRPCError({
-        code: "NOT_IMPLEMENTED",
-        message: "履歴削除は Issue #13 で実装予定です",
+      // アクセス権確認
+      const canAccess = await purchaseHistoryRepository.canAccess(input.id, ctx.userId)
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "この履歴を削除する権限がありません",
+        })
+      }
+
+      // 履歴を削除
+      await purchaseHistoryRepository.delete(input.id)
+
+      // 同期ログを記録
+      await syncRepository.createOperation({
+        id: crypto.randomUUID(),
+        userId: ctx.userId,
+        entity: "history",
+        entityId: input.id,
+        operation: "delete",
+        payload: { id: input.id },
       })
+
+      return { success: true }
     }),
 })
