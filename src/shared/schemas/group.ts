@@ -1,0 +1,64 @@
+import { z } from "zod"
+
+// グループ役割
+export const groupRoleSchema = z.enum(["owner", "member"])
+
+export type GroupRole = z.infer<typeof groupRoleSchema>
+
+// グループ作成
+export const createGroupSchema = z.object({
+  name: z.string().min(1, "名前は必須です").max(50, "名前は50文字以内です"),
+})
+
+export type CreateGroupInput = z.infer<typeof createGroupSchema>
+
+// グループ更新
+export const updateGroupSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1, "名前は必須です").max(50, "名前は50文字以内です").optional(),
+})
+
+export type UpdateGroupInput = z.infer<typeof updateGroupSchema>
+
+// グループ削除
+export const deleteGroupSchema = z.object({
+  id: z.string().uuid(),
+})
+
+export type DeleteGroupInput = z.infer<typeof deleteGroupSchema>
+
+// メンバー招待（招待リンク生成）
+export const inviteMemberSchema = z.object({
+  groupId: z.string().uuid(),
+})
+
+export type InviteMemberInput = z.infer<typeof inviteMemberSchema>
+
+// 招待承認
+export const acceptInviteSchema = z.object({
+  token: z.string().min(1, "トークンは必須です"),
+})
+
+export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>
+
+// メンバー削除
+export const removeMemberSchema = z.object({
+  groupId: z.string().uuid(),
+  userId: z.string().uuid(),
+})
+
+export type RemoveMemberInput = z.infer<typeof removeMemberSchema>
+
+// グループ取得クエリ
+export const getGroupsQuerySchema = z.object({
+  // ユーザーが所属するグループを取得（userIdはctxから取得）
+})
+
+export type GetGroupsQuery = z.infer<typeof getGroupsQuerySchema>
+
+// グループメンバー取得クエリ
+export const getGroupMembersQuerySchema = z.object({
+  groupId: z.string().uuid(),
+})
+
+export type GetGroupMembersQuery = z.infer<typeof getGroupMembersQuerySchema>
