@@ -529,6 +529,7 @@ function AddItemSheet({
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [filterTagIds, setFilterTagIds] = useState<string[]>([])
   const [name, setName] = useState("")
+  const [memo, setMemo] = useState("")
   const [quantity, setQuantity] = useState(1)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [isAddingTag, setIsAddingTag] = useState(false)
@@ -632,8 +633,9 @@ function AddItemSheet({
 
     setIsSubmitting(true)
     try {
-      await addListItem(listId, name.trim(), quantity, selectedTagIds)
+      await addListItem(listId, name.trim(), quantity, selectedTagIds, memo.trim() || undefined)
       setName("")
+      setMemo("")
       setQuantity(1)
       setSelectedTagIds([])
       onClose()
@@ -736,7 +738,54 @@ function AddItemSheet({
                   </p>
                 </div>
               ) : (
-                <ul className="max-h-52 space-y-2 overflow-y-auto">
+                <>
+                  {/* 一括選択ボタン */}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="flex-1 text-xs"
+                      onClick={() => {
+                        const visibleIds = filteredExistingItems.map((item) => item.id)
+                        setSelectedIds((prev) => {
+                          const newIds = new Set(prev)
+                          for (const id of visibleIds) {
+                            newIds.add(id)
+                          }
+                          return Array.from(newIds)
+                        })
+                      }}
+                      disabled={
+                        filteredExistingItems.every((item) =>
+                          selectedIds.includes(item.id)
+                        )
+                      }
+                    >
+                      表示中をすべて選択
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="flex-1 text-xs"
+                      onClick={() => {
+                        const visibleIds = new Set(
+                          filteredExistingItems.map((item) => item.id)
+                        )
+                        setSelectedIds((prev) =>
+                          prev.filter((id) => !visibleIds.has(id))
+                        )
+                      }}
+                      disabled={
+                        !filteredExistingItems.some((item) =>
+                          selectedIds.includes(item.id)
+                        )
+                      }
+                    >
+                      表示中をすべて解除
+                    </Button>
+                  </div>
+
+                  <ul className="max-h-52 space-y-2 overflow-y-auto">
                   {filteredExistingItems.map((item) => {
                     const isSelected = selectedIds.includes(item.id)
                     return (
@@ -762,7 +811,8 @@ function AddItemSheet({
                       </li>
                     )
                   })}
-                </ul>
+                  </ul>
+                </>
               )}
               <Button
                 className="w-full"
@@ -801,6 +851,30 @@ function AddItemSheet({
                 "text-lg font-semibold text-gray-900",
                 "placeholder:font-normal placeholder:text-gray-400",
                 "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              )}
+            />
+          </div>
+
+          {/* メモ */}
+          <div>
+            <label
+              htmlFor="item-memo"
+              className="mb-2 block text-sm font-semibold text-gray-900"
+            >
+              メモ（任意）
+            </label>
+            <textarea
+              id="item-memo"
+              value={memo}
+              onChange={(e) => setMemo(e.target.value)}
+              placeholder="例: 低脂肪タイプ"
+              rows={2}
+              className={cn(
+                "w-full rounded-lg border-2 border-gray-300 px-4 py-3",
+                "text-base font-medium text-gray-900",
+                "placeholder:font-normal placeholder:text-gray-400",
+                "focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20",
+                "resize-none"
               )}
             />
           </div>
