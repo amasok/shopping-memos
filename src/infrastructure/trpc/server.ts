@@ -1,14 +1,19 @@
 import { initTRPC, TRPCError } from "@trpc/server"
 import superjson from "superjson"
-// import { auth } from "@/infrastructure/auth" // Phase 2で有効化
+import { auth } from "@/infrastructure/auth"
 
 /**
  * tRPCコンテキスト
  * 各リクエストで利用可能な情報を定義
  */
 export interface Context {
-  // Phase 2で追加: session, userId
   userId?: string
+  user?: {
+    id: string
+    name?: string | null
+    email?: string | null
+    image?: string | null
+  }
 }
 
 /**
@@ -16,13 +21,19 @@ export interface Context {
  * API Route から呼び出される
  */
 export async function createContext(): Promise<Context> {
-  // Phase 2: NextAuthセッションを取得
-  // const session = await auth()
-  // return {
-  //   userId: session?.user?.id,
-  // }
+  const session = await auth()
 
-  return {}
+  return {
+    userId: session?.user?.id,
+    user: session?.user
+      ? {
+          id: session.user.id!,
+          name: session.user.name,
+          email: session.user.email,
+          image: session.user.image,
+        }
+      : undefined,
+  }
 }
 
 /**
