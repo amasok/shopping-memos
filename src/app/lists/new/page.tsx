@@ -32,7 +32,6 @@ function NewListPageContent() {
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [isCreating, setIsCreating] = useState(false)
-  const [initialized, setInitialized] = useState(false)
 
   // グループ変更時にContextも更新
   const setSelectedGroupId = (groupId: string | undefined) => {
@@ -71,22 +70,23 @@ function NewListPageContent() {
 
   const isLoading = items === undefined || tags === undefined
 
-  // グループ変更時にタグ選択とアイテム選択をリセット
-  useEffect(() => {
+  // グループ変更時にタグ選択とアイテム選択をリセット（レンダリング中に同期）
+  const [prevGroupId, setPrevGroupId] = useState<string | undefined>(selectedGroupId)
+  if (prevGroupId !== selectedGroupId) {
+    setPrevGroupId(selectedGroupId)
     setSelectedTagIds([])
     setSelectedItemIds([])
-  }, [selectedGroupId])
+  }
 
-  // 初期アイテム選択（長押しから来た場合）
-  useEffect(() => {
-    if (!initialized && items && initialItemId) {
-      const itemExists = items.some((item) => item.id === initialItemId)
-      if (itemExists) {
-        setSelectedItemIds([initialItemId])
-      }
-      setInitialized(true)
+  // 初期アイテム選択（長押しから来た場合）- レンダリング中に同期
+  const [initialized, setInitialized] = useState(false)
+  if (!initialized && items && initialItemId) {
+    const itemExists = items.some((item) => item.id === initialItemId)
+    if (itemExists) {
+      setSelectedItemIds([initialItemId])
     }
-  }, [items, initialItemId, initialized])
+    setInitialized(true)
+  }
 
   // タグでフィルタされたアイテム
   const filteredItems =

@@ -25,24 +25,39 @@ export function BottomSheet({
   const [isVisible, setIsVisible] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
 
-  useEffect(() => {
+  // isOpenの状態変化に基づいてアニメーション状態を同期
+  const [prevIsOpen, setPrevIsOpen] = useState(false)
+  if (isOpen !== prevIsOpen) {
+    setPrevIsOpen(isOpen)
     if (isOpen) {
       setIsVisible(true)
+    } else {
+      setIsAnimating(false)
+    }
+  }
+
+  // アニメーション開始とクリーンアップ
+  useEffect(() => {
+    if (isOpen && isVisible) {
       // 少し遅延させてアニメーションを開始
-      requestAnimationFrame(() => {
+      const frameId = requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           setIsAnimating(true)
         })
       })
-    } else {
-      setIsAnimating(false)
-      // アニメーション完了後に非表示
+      return () => cancelAnimationFrame(frameId)
+    }
+  }, [isOpen, isVisible])
+
+  // 閉じるアニメーション完了後に非表示
+  useEffect(() => {
+    if (!isOpen && isVisible) {
       const timer = setTimeout(() => {
         setIsVisible(false)
       }, 300)
       return () => clearTimeout(timer)
     }
-  }, [isOpen])
+  }, [isOpen, isVisible])
 
   // ESCキーで閉じる
   useEffect(() => {

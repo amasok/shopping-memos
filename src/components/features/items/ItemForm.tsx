@@ -2,14 +2,14 @@
 
 import { Badge, Button, LoadingSpinner } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
-import { db, type ShoppingItem, type Tag } from "@/lib/db"
+import { db, type ShoppingItem } from "@/lib/db"
 import { getGroupsByUserId } from "@/lib/db/groups"
 import { createItem, deleteItem, updateItem } from "@/lib/db/items"
 import { createTag } from "@/lib/db/tags"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
 import { Minus, Plus, Trash2, Users, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 export interface ItemFormProps {
   item?: ShoppingItem | null
@@ -44,8 +44,11 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
 
   const isEditing = !!item
 
-  // アイテムが変更されたらフォームをリセット
-  useEffect(() => {
+  // アイテムが変更されたらフォームをリセット（レンダリング中に同期）
+  const [prevItemId, setPrevItemId] = useState<string | null | undefined>(undefined)
+  const currentItemId = item?.id ?? null
+  if (currentItemId !== prevItemId) {
+    setPrevItemId(currentItemId)
     if (item) {
       setName(item.name)
       setQuantity(item.quantity)
@@ -62,7 +65,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
     setIsAddingTag(false)
     setNewTagName("")
     setShowDeleteConfirm(false)
-  }, [item])
+  }
 
   const handleQuantityChange = (delta: number) => {
     setQuantity((prev) => Math.max(1, prev + delta))

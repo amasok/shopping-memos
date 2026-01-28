@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useCallback, useContext, useEffect, useState } from "react"
+import { createContext, useCallback, useContext, useState } from "react"
 
 export interface User {
   id: string
@@ -29,22 +29,22 @@ const mockUser: User = {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-
-  // 初期化時にlocalStorageから復元
-  useEffect(() => {
+  // 初期化時にlocalStorageから復元（lazy initialization）
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window === "undefined") return null
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
       try {
-        const parsed = JSON.parse(stored)
-        setUser(parsed)
+        return JSON.parse(stored)
       } catch {
         localStorage.removeItem(STORAGE_KEY)
+        return null
       }
     }
-    setIsLoading(false)
-  }, [])
+    return null
+  })
+  // クライアントサイドでは初期状態でfalse（lazy initializationで処理済み）
+  const [isLoading, setIsLoading] = useState(false)
 
   const login = useCallback(async () => {
     // モック: 実際はGoogle OAuthを実行

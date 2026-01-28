@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
+import { createContext, useContext, useState, type ReactNode } from "react"
 
 const STORAGE_KEY = "selectedGroupId"
 
@@ -12,18 +12,15 @@ type GroupContextType = {
 const GroupContext = createContext<GroupContextType | undefined>(undefined)
 
 export function GroupProvider({ children }: { children: ReactNode }) {
-  const [selectedGroupId, setSelectedGroupIdState] = useState<string | undefined>(undefined)
-  const [isInitialized, setIsInitialized] = useState(false)
-
-  // 初期化時にlocalStorageから読み込み
-  useEffect(() => {
+  // 初期化時にlocalStorageから読み込み（lazy initialization）
+  const [selectedGroupId, setSelectedGroupIdState] = useState<string | undefined>(() => {
+    if (typeof window === "undefined") return undefined
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
-      // "undefined" 文字列の場合はundefinedに変換
-      setSelectedGroupIdState(stored === "undefined" ? undefined : stored)
+      return stored === "undefined" ? undefined : stored
     }
-    setIsInitialized(true)
-  }, [])
+    return undefined
+  })
 
   // 変更時にlocalStorageに保存
   const setSelectedGroupId = (groupId: string | undefined) => {
@@ -35,10 +32,8 @@ export function GroupProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // 初期化前はnullを返さない（childrenをレンダリング）
-  // ただし、初期化前の値はundefinedのまま
   return (
-    <GroupContext.Provider value={{ selectedGroupId: isInitialized ? selectedGroupId : undefined, setSelectedGroupId }}>
+    <GroupContext.Provider value={{ selectedGroupId, setSelectedGroupId }}>
       {children}
     </GroupContext.Provider>
   )

@@ -2,9 +2,9 @@
 
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { BottomSheet, Button, Input, LoadingPage, PageContainer } from "@/components/ui"
+import { BottomSheet, Button, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
-import { db, type Group, type GroupMember } from "@/lib/db"
+import { db, type GroupMember } from "@/lib/db"
 import {
   deleteGroup,
   leaveGroup,
@@ -56,7 +56,9 @@ export default function GroupDetailPage() {
 
   const isLoading = group === undefined || members === undefined
   const isOwner = user && group?.ownerId === user.id
-  const myMembership = members?.find((m) => m.userId === user?.id)
+  // myMembership は将来の機能拡張で使用予定
+  const _myMembership = members?.find((m) => m.userId === user?.id)
+  void _myMembership // unused variable警告を抑制
 
   useEffect(() => {
     if (group) {

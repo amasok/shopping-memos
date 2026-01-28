@@ -30,7 +30,7 @@ import {
   X,
 } from "lucide-react"
 import { useParams, useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 export default function ShoppingListPage() {
   const params = useParams()
@@ -81,12 +81,12 @@ export default function ShoppingListPage() {
     items === undefined ||
     tags === undefined
 
-  // リスト名編集の初期化
-  useEffect(() => {
-    if (list && !isEditingName) {
-      setEditName(list.name)
-    }
-  }, [list, isEditingName])
+  // リスト名編集の初期化（listが変わった時のみ同期）
+  const [prevListName, setPrevListName] = useState<string | undefined>(undefined)
+  if (list && !isEditingName && list.name !== prevListName) {
+    setPrevListName(list.name)
+    setEditName(list.name)
+  }
 
   const uncheckedItems = (listItems ?? []).filter((item) => !item.checked)
   const checkedItems = (listItems ?? []).filter((item) => item.checked)
