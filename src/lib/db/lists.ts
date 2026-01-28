@@ -180,6 +180,71 @@ export async function createHistory(
   return history
 }
 
+// 購入履歴を買い物リストに戻す
+export async function revertHistoryToList(historyId: string): Promise<ShoppingList> {
+  return db.transaction(
+    "rw",
+    [db.history, db.lists, db.listItems, db.items],
+    async () => {
+      const history = await db.history.get(historyId)
+      if (!history) {
+        throw new Error("History not found")
+      }
+
+      // 購入済みアイテムを取得
+      const purchasedItems = await db.items.bulkGet(history.itemIds)
+      const validItems = purchasedItems.filter((item) => item !== undefined)
+
+      // 新しい買い物リストを作成
+      const list: ShoppingList = {
+        id: generateId(),
+        name: history.location || "買い物リスト",
+        status: "in_progress",
+        createdAt: new Date(),
+      }
+      await db.lists.add(list)
+
+      // アイテムをListItemとして追加
+      if (validItems.length > 0) {
+        const now = new Date()
+        const listItems: ListItem[] = validItems.map((item) => ({
+          id: generateId(),
+          listId: list.id,
+          name: item!.name,
+          quantity: item!.quantity,
+          memo: item!.memo,
+          tagIds: item!.tagIds ?? [],
+          checked: false,
+          createdAt: now,
+        }))
+        await db.listItems.bulkAdd(listItems)
+      }
+
+      // 購入済みアイテムを削除
+      await db.items.bulkDelete(history.itemIds)
+
+      // 履歴を削除
+      await db.history.delete(historyId)
+
+      return list
+    }
+  )
+}
+
+// 購入履歴を削除（アイテムも一緒に削除）
+export async function deleteHistory(historyId: string): Promise<void> {
+  await db.transaction("rw", [db.history, db.items], async () => {
+    const history = await db.history.get(historyId)
+    if (!history) return
+
+    // 紐付くアイテムを削除
+    await db.items.bulkDelete(history.itemIds)
+
+    // 履歴を削除
+    await db.history.delete(historyId)
+  })
+}
+
 // 買い物完了処理（リスト完了 + 履歴作成 + 未チェックアイテムを買いたいものに戻す）
 export async function finishShopping(
   listId: string,

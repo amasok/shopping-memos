@@ -43,11 +43,3 @@ export async function deleteItem(id: string): Promise<void> {
 export async function deleteItems(ids: string[]): Promise<void> {
   await db.items.bulkDelete(ids)
 }
-
-// 購入済みアイテムを「買いたいもの」に戻す（購入取消）
-export async function revertPurchasedItem(id: string): Promise<void> {
-  await db.items.update(id, {
-    purchasedAt: undefined,
-    updatedAt: new Date(),
-  })
-}

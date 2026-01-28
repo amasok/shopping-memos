@@ -2,12 +2,13 @@
 
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Badge, EmptyState, PageContainer } from "@/components/ui"
+import { Badge, BottomSheet, Button, EmptyState, PageContainer } from "@/components/ui"
 import { db, type ShoppingItem } from "@/lib/db"
-import { revertPurchasedItem } from "@/lib/db/items"
+import { deleteHistory, revertHistoryToList } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { ChevronDown, ChevronUp, History, ShoppingBag, Undo2 } from "lucide-react"
+import { ChevronDown, ChevronUp, History, RotateCcw, ShoppingBag, Trash2 } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { useState } from "react"
 
 function formatDate(date: Date): string {
@@ -19,7 +20,10 @@ function formatDate(date: Date): string {
 }
 
 export default function HistoryPage() {
+  const router = useRouter()
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  const [isProcessing, setIsProcessing] = useState(false)
 
   const history = useLiveQuery(
     () => db.history.orderBy("purchasedAt").reverse().toArray(),
@@ -48,9 +52,29 @@ export default function HistoryPage() {
   // タグIDからタグ名を引くマップ
   const tagMap = new Map(tags?.map((tag) => [tag.id, tag]) ?? [])
 
-  const handleRevertItem = async (itemId: string, e: React.MouseEvent) => {
+  const handleRevertToList = async (historyId: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    await revertPurchasedItem(itemId)
+    setIsProcessing(true)
+    try {
+      const list = await revertHistoryToList(historyId)
+      router.push(`/lists/${list.id}`)
+    } catch (error) {
+      console.error("Failed to revert history:", error)
+      setIsProcessing(false)
+    }
+  }
+
+  const handleDeleteHistory = async () => {
+    if (!deleteTargetId) return
+    setIsProcessing(true)
+    try {
+      await deleteHistory(deleteTargetId)
+      setDeleteTargetId(null)
+    } catch (error) {
+      console.error("Failed to delete history:", error)
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   if (isLoading) {
@@ -82,7 +106,7 @@ export default function HistoryPage() {
           <ul className="space-y-3">
             {history?.map((record) => {
               const isExpanded = expandedId === record.id
-              // itemIdsからアイテムを取得（購入済みのもののみ）
+              // itemIdsからアイテムを取得
               const items = (record.itemIds ?? [])
                 .map((id) => itemMap.get(id))
                 .filter((item): item is ShoppingItem => item !== undefined)
@@ -131,55 +155,63 @@ export default function HistoryPage() {
 
                     {isExpanded && (
                       <div className="mt-4 border-t border-gray-100 pt-4">
-                        <p className="mb-2 text-xs text-gray-400">
-                          タップで「買いたいもの」に戻す
-                        </p>
+                        {/* アクションボタン */}
+                        <div className="mb-4 flex gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="flex-1"
+                            onClick={(e) => handleRevertToList(record.id, e)}
+                            disabled={isProcessing || items.length === 0}
+                          >
+                            <RotateCcw className="mr-1 h-4 w-4" />
+                            リストに戻す
+                          </Button>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDeleteTargetId(record.id)
+                            }}
+                            disabled={isProcessing}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+
+                        {/* アイテム一覧 */}
                         <ul className="space-y-2">
                           {items.map((item) => (
                             <li
                               key={item.id}
-                              onClick={(e) => handleRevertItem(item.id, e)}
-                              className={cn(
-                                "rounded-lg bg-gray-50 p-3 text-sm",
-                                "cursor-pointer transition-colors hover:bg-orange-50"
-                              )}
+                              className="rounded-lg bg-gray-50 p-3 text-sm"
                             >
                               <div className="flex items-center justify-between">
-                                <div className="flex-1">
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-medium text-gray-700">{item.name}</span>
-                                    {item.quantity > 1 && (
-                                      <span className="text-gray-500">
-                                        x{item.quantity}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {item.memo && (
-                                    <p className="mt-0.5 text-xs text-gray-400">{item.memo}</p>
-                                  )}
-                                  {item.tagIds.length > 0 && (
-                                    <div className="mt-1 flex flex-wrap gap-1">
-                                      {item.tagIds.map((tagId) => {
-                                        const tag = tagMap.get(tagId)
-                                        return tag ? (
-                                          <Badge key={tagId} variant="default">
-                                            {tag.name}
-                                          </Badge>
-                                        ) : null
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
-                                <Undo2 className="ml-2 h-4 w-4 flex-shrink-0 text-orange-500" />
+                                <span className="font-medium text-gray-700">{item.name}</span>
+                                {item.quantity > 1 && (
+                                  <span className="text-gray-500">
+                                    x{item.quantity}
+                                  </span>
+                                )}
                               </div>
+                              {item.memo && (
+                                <p className="mt-0.5 text-xs text-gray-400">{item.memo}</p>
+                              )}
+                              {item.tagIds.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {item.tagIds.map((tagId) => {
+                                    const tag = tagMap.get(tagId)
+                                    return tag ? (
+                                      <Badge key={tagId} variant="default">
+                                        {tag.name}
+                                      </Badge>
+                                    ) : null
+                                  })}
+                                </div>
+                              )}
                             </li>
                           ))}
-                          {/* 戻されたアイテム（itemMapにないもの）を表示 */}
-                          {(record.itemIds ?? []).filter((id) => !itemMap.has(id)).length > 0 && (
-                            <li className="text-xs text-gray-400 italic">
-                              {(record.itemIds ?? []).filter((id) => !itemMap.has(id)).length}件は「買いたいもの」に戻されました
-                            </li>
-                          )}
                         </ul>
                       </div>
                     )}
@@ -190,6 +222,40 @@ export default function HistoryPage() {
           </ul>
         )}
       </PageContainer>
+
+      {/* 削除確認ダイアログ */}
+      <BottomSheet
+        isOpen={deleteTargetId !== null}
+        onClose={() => setDeleteTargetId(null)}
+        title="履歴を削除"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">
+            この購入履歴を削除しますか？
+          </p>
+          <p className="text-sm text-red-600">
+            履歴に含まれるアイテムもすべて削除されます。
+          </p>
+          <div className="flex gap-2 pt-2">
+            <Button
+              variant="ghost"
+              className="flex-1"
+              onClick={() => setDeleteTargetId(null)}
+              disabled={isProcessing}
+            >
+              キャンセル
+            </Button>
+            <Button
+              variant="danger"
+              className="flex-1"
+              onClick={handleDeleteHistory}
+              disabled={isProcessing}
+            >
+              {isProcessing ? "削除中..." : "削除する"}
+            </Button>
+          </div>
+        </div>
+      </BottomSheet>
     </AppLayout>
   )
 }
