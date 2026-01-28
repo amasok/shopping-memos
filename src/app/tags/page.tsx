@@ -12,7 +12,7 @@ import { createTag, deleteTag, updateTag } from "@/lib/db/tags"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
 import { Pencil, Plus, Tag as TagIcon, Trash2, X } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useState } from "react"
 
 export default function TagsPage() {
   const { user } = useAuth()
@@ -270,11 +270,12 @@ function TagEditForm({
   const [name, setName] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  useEffect(() => {
-    if (tag) {
-      setName(tag.name)
-    }
-  }, [tag])
+  // 前回のtag.idを追跡して変更時のみ更新（レンダリング中に同期）
+  const [prevTagId, setPrevTagId] = useState<string | null>(null)
+  if (tag && tag.id !== prevTagId) {
+    setPrevTagId(tag.id)
+    setName(tag.name)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
