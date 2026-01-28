@@ -70,6 +70,17 @@ export interface GroupMember {
   joinedAt: Date
 }
 
+// 同期キュー（バックグラウンド同期用）
+export interface SyncQueueItem {
+  id: string
+  entity: "item" | "tag" | "list" | "listItem" | "history"
+  entityId: string
+  operation: "create" | "update" | "delete"
+  payload: string // JSON文字列
+  createdAt: Date
+  retryCount: number
+}
+
 // Dexie データベースクラス
 class ShoppingMemosDB extends Dexie {
   tags!: EntityTable<Tag, "id">
@@ -79,6 +90,7 @@ class ShoppingMemosDB extends Dexie {
   history!: EntityTable<PurchaseHistory, "id">
   groups!: EntityTable<Group, "id">
   groupMembers!: EntityTable<GroupMember, "id">
+  syncQueue!: EntityTable<SyncQueueItem, "id">
 
   constructor() {
     super("ShoppingMemosDB")
@@ -155,6 +167,18 @@ class ShoppingMemosDB extends Dexie {
       groupMembers: "id, groupId, userId",
     })
     // groupId はオプショナルなのでマイグレーション不要（undefined許容）
+
+    // v7: 同期キューを追加（バックグラウンド同期用）
+    this.version(7).stores({
+      tags: "id, name, groupId, createdAt",
+      items: "id, name, groupId, createdAt, purchasedAt, *tagIds",
+      lists: "id, status, groupId, createdAt",
+      listItems: "id, listId, groupId, checked, *tagIds",
+      history: "id, listId, groupId, purchasedAt",
+      groups: "id, ownerId, inviteCode, createdAt",
+      groupMembers: "id, groupId, userId",
+      syncQueue: "id, entity, createdAt, retryCount",
+    })
   }
 }
 

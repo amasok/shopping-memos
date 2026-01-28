@@ -2,6 +2,7 @@ import { router } from "../server"
 import { identityRouter } from "./identity"
 import { catalogRouter } from "./catalog"
 import { shoppingRouter } from "./shopping"
+import { syncRouter } from "./sync"
 
 /**
  * アプリケーションルーター
@@ -11,6 +12,7 @@ export const appRouter = router({
   identity: identityRouter,
   catalog: catalogRouter,
   shopping: shoppingRouter,
+  sync: syncRouter,
 })
 
 /**
