@@ -30,16 +30,30 @@
                           ┌────────────┴────────────┐
                           │                         │
                     ┌─────▼─────┐           ┌──────▼──────┐
-                    │  Supabase │           │ Google OAuth│
-                    │ (PostgreSQL)│         │ (認証)      │
-                    └───────────┘           └─────────────┘
+                    │  Vercel   │           │ Google OAuth│
+                    │  Postgres │           │ (認証)      │
+                    │  (Neon)   │           └─────────────┘
+                    └───────────┘
 ```
+
+### 1.3 Vercel Postgres (Neon) を選択した理由
+
+| 比較項目 | Vercel Postgres | Supabase |
+|---------|-----------------|----------|
+| PostgreSQL | ✅ | ✅ |
+| 認証機能 | ❌ (不要、NextAuth使用) | ✅ (過剰) |
+| リアルタイム | ❌ (不要) | ✅ (過剰) |
+| ストレージ | ❌ (不要) | ✅ (過剰) |
+| Vercel統合 | ✅ ネイティブ統合 | △ 別サービス |
+| ブランチング | ✅ Preview DBサポート | ❌ |
+
+**結論**: このアプリはPostgreSQLのみ必要。Supabaseは機能過多。
 
 ---
 
 ## 2. サービス構成
 
-### 2.1 Vercel (ホスティング)
+### 2.1 Vercel (ホスティング + データベース)
 
 | 項目 | 値 |
 |------|-----|
@@ -57,21 +71,27 @@
 
 **参考:** [Vercel Terraform Provider](https://registry.terraform.io/providers/vercel/vercel/latest)
 
-### 2.2 Supabase (データベース)
+### 2.2 Vercel Postgres (Neon)
 
 | 項目 | 値 |
 |------|-----|
-| プラン | **Free** |
-| データベース | PostgreSQL 500MB |
-| ストレージ | 1GB |
-| 帯域幅 | 2GB/月 |
-| Edge Functions | 500K invocations/月 |
+| プラン | **Neon Free Plan** (Vercel経由) |
+| ストレージ | 512MB |
+| コンピュート | 191時間/月 (0.25 vCPU) |
+| ブランチ | 10個まで |
+| 履歴保持 | 7日間 |
 
-**Terraform管理可能な項目:**
-- プロジェクト設定
-- データベース設定
+**特徴:**
+- Vercelダッシュボードから直接作成・管理
+- Preview Deploymentごとにブランチ作成可能
+- 環境変数が自動設定される
+- Serverless対応 (コールドスタート最適化)
 
-**参考:** [Supabase Terraform Provider](https://supabase.com/docs/guides/platform/terraform)
+**Terraform管理:**
+- Vercel Postgres は現時点でTerraform未対応
+- Vercelダッシュボードで手動作成 → 環境変数はTerraformで参照可能
+
+**参考:** [Vercel Postgres](https://vercel.com/docs/storage/vercel-postgres)
 
 ### 2.3 Google Cloud (OAuth認証)
 
@@ -98,12 +118,19 @@
 
 | 変数名 | 説明 | 環境 | 管理方法 |
 |--------|------|------|----------|
-| `DATABASE_URL` | Supabase接続文字列 | 全環境 | Terraform |
-| `DIRECT_URL` | Supabase直接接続 | 全環境 | Terraform |
+| `POSTGRES_URL` | Vercel Postgres接続文字列 (pooled) | 全環境 | Vercel自動設定 |
+| `POSTGRES_URL_NON_POOLING` | 直接接続 (マイグレーション用) | 全環境 | Vercel自動設定 |
+| `POSTGRES_USER` | DBユーザー名 | 全環境 | Vercel自動設定 |
+| `POSTGRES_HOST` | DBホスト | 全環境 | Vercel自動設定 |
+| `POSTGRES_PASSWORD` | DBパスワード | 全環境 | Vercel自動設定 |
+| `POSTGRES_DATABASE` | DB名 | 全環境 | Vercel自動設定 |
 | `NEXTAUTH_URL` | 認証コールバックURL | 環境別 | Terraform |
 | `NEXTAUTH_SECRET` | セッション暗号化キー | 全環境 | Terraform (sensitive) |
 | `GOOGLE_CLIENT_ID` | OAuth クライアントID | 全環境 | Terraform (sensitive) |
 | `GOOGLE_CLIENT_SECRET` | OAuth シークレット | 全環境 | Terraform (sensitive) |
+
+**注意:** Vercel Postgres作成時、`POSTGRES_*` 環境変数は自動設定される。
+アプリ側で `DATABASE_URL` を使用している場合は、`POSTGRES_URL` を参照するよう設定が必要。
 
 ---
 
@@ -149,12 +176,14 @@ terraform/
 | H-1 | Vercelアカウント作成 | ブラウザ認証が必要 | 5分 |
 | H-2 | Vercel APIトークン発行 | ダッシュボードで発行 | 2分 |
 | H-3 | Vercel GitHub App インストール | OAuth認証が必要 | 3分 |
-| H-4 | Google Cloud プロジェクト確認 | OAuth設定の確認 | 5分 |
-| H-5 | Google OAuth リダイレクトURI追加 | 本番URLを追加 | 3分 |
-| H-6 | terraform.tfvars 作成 | 機密情報の入力 | 5分 |
-| H-7 | Terraform 初回実行 | ローカルで実行 | 5分 |
+| H-4 | Vercel Postgres作成 | ダッシュボードで作成 | 5分 |
+| H-5 | Google Cloud プロジェクト確認 | OAuth設定の確認 | 5分 |
+| H-6 | Google OAuth リダイレクトURI追加 | 本番URLを追加 | 3分 |
+| H-7 | terraform.tfvars 作成 | 機密情報の入力 | 5分 |
+| H-8 | Terraform 初回実行 | ローカルで実行 | 5分 |
+| H-9 | DBマイグレーション実行 | スキーマ適用 | 3分 |
 
-**合計所要時間: 約30分**
+**合計所要時間: 約35分**
 
 ### 5.2 AIが実施するタスク (自動)
 
@@ -175,7 +204,7 @@ terraform/
 
 ## 6. 実装手順
 
-### Phase 1: 準備 (人間)
+### Phase 1: Vercel準備 (人間)
 
 ```
 H-1: Vercelアカウント作成
@@ -188,6 +217,11 @@ H-2: Vercel APIトークン発行
 H-3: Vercel GitHub App インストール
      https://github.com/apps/vercel
      リポジトリ: amasok/shopping-memos を選択
+         ↓
+H-4: Vercel Postgres作成
+     プロジェクト → Storage → Create Database → Postgres
+     リージョン: Tokyo (hnd1) 推奨
+     ※環境変数が自動設定される
 ```
 
 ### Phase 2: Terraform実装 (AI)
@@ -201,17 +235,20 @@ A-1〜A-8: Terraformコード作成
 ### Phase 3: デプロイ (人間)
 
 ```
-H-6: terraform.tfvars 作成
+H-7: terraform.tfvars 作成
      terraform.tfvars.example をコピーして値を設定
          ↓
-H-7: Terraform実行
+H-8: Terraform実行
      cd terraform
      terraform init
      terraform plan
      terraform apply
          ↓
-H-4, H-5: Google OAuth設定更新
+H-5, H-6: Google OAuth設定更新
      本番URLをリダイレクトURIに追加
+         ↓
+H-9: DBマイグレーション実行
+     npx drizzle-kit push
 ```
 
 ---
@@ -253,7 +290,7 @@ terraform/.terraform.lock.hcl
 | サービス | プラン | 月額コスト |
 |---------|--------|-----------|
 | Vercel | Hobby | **$0** |
-| Supabase | Free | **$0** |
+| Vercel Postgres | Neon Free | **$0** |
 | Google Cloud | OAuth only | **$0** |
 | GitHub | Free | **$0** |
 | **合計** | | **$0** |
@@ -263,9 +300,21 @@ terraform/.terraform.lock.hcl
 | サービス | 制限 | 超過時の対応 |
 |---------|------|-------------|
 | Vercel | 100GB帯域/月 | Pro ($20/月) にアップグレード |
-| Supabase | 500MB DB | Pro ($25/月) にアップグレード |
+| Vercel Postgres | 512MB, 191時間/月 | Neon Pro または別プロバイダー |
 
 **想定ユーザー数:** 〜100人程度であれば無料枠で十分
+
+### 8.2 Vercel Postgres (Neon) 無料枠詳細
+
+| リソース | 制限 |
+|---------|------|
+| ストレージ | 512MB |
+| コンピュート | 191時間/月 (約6.3時間/日) |
+| データ転送 | 5GB/月 |
+| ブランチ | 10個 |
+| 履歴 | 7日間 |
+
+**注意:** コンピュートは使用時間課金。アイドル時は課金されない。
 
 ---
 
@@ -273,9 +322,9 @@ terraform/.terraform.lock.hcl
 
 - [Vercel Terraform Guide](https://vercel.com/guides/integrating-terraform-with-vercel)
 - [Vercel Provider - Terraform Registry](https://registry.terraform.io/providers/vercel/vercel/latest)
-- [Supabase Terraform Provider](https://supabase.com/docs/guides/platform/terraform)
+- [Vercel Postgres Documentation](https://vercel.com/docs/storage/vercel-postgres)
+- [Neon Free Tier](https://neon.tech/docs/introduction/plans#free-tier)
 - [Vercel Pricing](https://vercel.com/pricing)
-- [Supabase Pricing](https://supabase.com/pricing)
 
 ---
 

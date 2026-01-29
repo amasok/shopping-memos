@@ -72,7 +72,7 @@
 │  │     Drizzle ORM / NextAuth / Sync Engine / Repositories      │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              ↓                                      │
-│                      PostgreSQL (Supabase)                          │
+│                  PostgreSQL (Vercel Postgres / Neon)                │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 

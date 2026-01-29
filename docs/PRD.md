@@ -421,7 +421,7 @@ User ─┬─< UserGroup >─┬─ Group ─< InviteLink
 | 認証 | NextAuth.js (Auth.js) + Google Provider |
 | 分析 | Google Analytics 4 |
 | ホスティング | Vercel |
-| データベースホスティング | Supabase |
+| データベースホスティング | Vercel Postgres (Neon) |
 
 ### 7.2 アーキテクチャ方針
 
