@@ -7,7 +7,7 @@ export interface AppLayoutProps {
 
 export function AppLayout({ children, showBottomNav = true }: AppLayoutProps) {
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-surface">
       <main className={showBottomNav ? "pb-16" : ""}>{children}</main>
       {showBottomNav && <BottomNav />}
     </div>
