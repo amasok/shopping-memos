@@ -312,21 +312,9 @@ export function useListMutations() {
         }
       }
 
-      // 未チェックアイテムを「買いたいもの」に戻す（新しいカタログアイテムを作成）
-      for (const uncheckedItem of uncheckedItems) {
-        const newItemId = crypto.randomUUID()
-        await db.items.add({
-          id: newItemId,
-          name: uncheckedItem.name,
-          quantity: uncheckedItem.quantity,
-          memo: uncheckedItem.memo,
-          tagIds: uncheckedItem.tagIds ?? [],
-          groupId: uncheckedItem.groupId ?? list.groupId,
-          createdAt: now,
-          updatedAt: now,
-          purchasedAt: undefined,
-        })
-      }
+      // 未チェックアイテムは自動的に「買いたいもの」に戻る
+      // カタログアイテムはリスト追加時に保持されているため、新規作成は不要
+      // リストが完了すると、進行中リストのフィルタから外れて自動的に表示される
 
       // リストを完了状態に + 購入日時/場所を設定（履歴として表示される）
       await db.lists.update(listId, {

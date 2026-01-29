@@ -1,5 +1,5 @@
 import { db } from "@/infrastructure/db/drizzle/client"
-import { items, itemTags, shoppingLists } from "@/infrastructure/db/drizzle/schema"
+import { items, shoppingLists } from "@/infrastructure/db/drizzle/schema"
 import { eq } from "drizzle-orm"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
@@ -26,7 +26,7 @@ export class ShoppingService {
    * ビジネスルール:
    * - チェック済みアイテムのみ購入済みとして記録
    * - チェック済みアイテムはCatalog.ItemのpurchasedAtを設定
-   * - 未チェックアイテムは新しいカタログアイテムとして作成（買いたいものに戻す）
+   * - 未チェックアイテムは自動的に「買いたいもの」に戻る（カタログアイテムは保持されている）
    * - リストのpurchasedAtを設定（購入履歴として表示）
    */
   async finishShopping(
@@ -49,9 +49,8 @@ export class ShoppingService {
       throw new Error("このステータスから完了に遷移できません")
     }
 
-    // チェック済み・未チェックアイテムを抽出
+    // チェック済みアイテムを抽出
     const checkedItems = list.items.filter((item) => item.checked)
-    const uncheckedItems = list.items.filter((item) => !item.checked)
     const checkedItemIds = checkedItems.map((item) => item.id)
 
     // トランザクションで一括処理
@@ -93,38 +92,10 @@ export class ShoppingService {
         }
       }
 
-      // 3. 未チェックアイテムを「買いたいもの」に戻す（新しいカタログアイテムを作成）
+      // 3. 未チェックアイテムは自動的に「買いたいもの」に戻る
+      // カタログアイテムはリスト追加時に保持されているため、新規作成は不要
+      // リストが完了すると、進行中リストのフィルタから外れて自動的に表示される
       const returnedItemIds: string[] = []
-      if (uncheckedItems.length > 0) {
-        for (const uncheckedItem of uncheckedItems) {
-          const newItemId = crypto.randomUUID()
-          await tx
-            .insert(items)
-            .values({
-              id: newItemId,
-              name: uncheckedItem.name,
-              quantity: uncheckedItem.quantity,
-              memo: uncheckedItem.memo ?? null,
-              userId,
-              groupId: uncheckedItem.groupId ?? list.groupId ?? null,
-              createdAt: now,
-              updatedAt: now,
-            })
-
-          // タグを関連付け
-          const tagIds = uncheckedItem.tagIds ?? uncheckedItem.tags?.map((t) => t.id) ?? []
-          if (tagIds.length > 0) {
-            await tx.insert(itemTags).values(
-              tagIds.map((tagId) => ({
-                itemId: newItemId,
-                tagId,
-              }))
-            )
-          }
-
-          returnedItemIds.push(newItemId)
-        }
-      }
 
       return {
         purchasedCatalogItemIds,
