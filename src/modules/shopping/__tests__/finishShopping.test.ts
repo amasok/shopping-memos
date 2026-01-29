@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect } from "vitest"
 import { ListStatus, canTransition, isInProgress } from "../domain/value-objects/ListStatus"
 import type { ShoppingListWithItems, ListItemWithTags, ShoppingList } from "../domain/entities/ShoppingList"
 
@@ -191,7 +191,8 @@ describe("買い物完了フロー", () => {
 
     function finishShopping(
       list: ShoppingListWithItems,
-      location?: string
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      _location?: string
     ): MockFinishShoppingResult | { error: string } {
       // ステータス確認
       if (!isInProgress(list.status)) {

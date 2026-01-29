@@ -81,7 +81,8 @@ export class DrizzleSyncRepository implements SyncRepository {
     const accessibleGroupIds = userGroupMemberships.map((m) => m.groupId)
 
     // groupIdsパラメータがあればそれでフィルタ
-    const targetGroupIds =
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- TODO: 将来使用予定
+    const _targetGroupIds =
       groupIds.length > 0
         ? groupIds.filter((id) => accessibleGroupIds.includes(id))
         : accessibleGroupIds

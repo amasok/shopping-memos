@@ -64,7 +64,6 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     const mergeKey = `${MERGE_COMPLETED_KEY}-${user.id}`
     const completed = localStorage.getItem(mergeKey) === "true"
     if (completed) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorageから初期状態を読み込む
       setIsMergeCompleted(true)
     }
   }, [user])

@@ -185,7 +185,7 @@ export class SyncEngine {
     entityId: string
     serverData: Record<string, unknown>
   }): Promise<void> {
-    const { entity, entityId, serverData } = conflict
+    const { entity, serverData } = conflict
 
     // 該当する操作をキューから削除
     await db.syncQueue.where("id").equals(conflict.operationId).delete()
