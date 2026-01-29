@@ -1,5 +1,5 @@
 import { db } from "@/infrastructure/db/drizzle/client"
-import { items, shoppingLists, purchaseHistory } from "@/infrastructure/db/drizzle/schema"
+import { items, itemTags, shoppingLists, purchaseHistory } from "@/infrastructure/db/drizzle/schema"
 import { eq, inArray } from "drizzle-orm"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
@@ -53,8 +53,9 @@ export class ShoppingService {
       throw new Error("このステータスから完了に遷移できません")
     }
 
-    // チェック済みアイテムを抽出
+    // チェック済み・未チェックアイテムを抽出
     const checkedItems = list.items.filter((item) => item.checked)
+    const uncheckedItems = list.items.filter((item) => !item.checked)
     const checkedItemIds = checkedItems.map((item) => item.id)
 
     // トランザクションで一括処理
@@ -109,8 +110,42 @@ export class ShoppingService {
         })
         .returning()
 
+      // 4. 未チェックアイテムを「買いたいもの」に戻す（新しいカタログアイテムを作成）
+      const returnedItemIds: string[] = []
+      if (uncheckedItems.length > 0) {
+        for (const uncheckedItem of uncheckedItems) {
+          const newItemId = crypto.randomUUID()
+          await tx
+            .insert(items)
+            .values({
+              id: newItemId,
+              name: uncheckedItem.name,
+              quantity: uncheckedItem.quantity,
+              memo: uncheckedItem.memo ?? null,
+              userId,
+              groupId: uncheckedItem.groupId ?? list.groupId ?? null,
+              createdAt: now,
+              updatedAt: now,
+            })
+
+          // タグを関連付け
+          const tagIds = uncheckedItem.tagIds ?? uncheckedItem.tags?.map((t) => t.id) ?? []
+          if (tagIds.length > 0) {
+            await tx.insert(itemTags).values(
+              tagIds.map((tagId) => ({
+                itemId: newItemId,
+                tagId,
+              }))
+            )
+          }
+
+          returnedItemIds.push(newItemId)
+        }
+      }
+
       return {
         purchasedCatalogItemIds,
+        returnedItemIds,
         history,
       }
     })
@@ -145,6 +180,18 @@ export class ShoppingService {
         entityId: itemId,
         operation: "update",
         payload: { id: itemId, purchasedAt: new Date() },
+      })
+    }
+
+    // 未購入アイテム作成（買いたいものに戻す）
+    for (const itemId of result.returnedItemIds) {
+      await syncRepository.createOperation({
+        id: crypto.randomUUID(),
+        userId,
+        entity: "item",
+        entityId: itemId,
+        operation: "create",
+        payload: { id: itemId },
       })
     }
 
