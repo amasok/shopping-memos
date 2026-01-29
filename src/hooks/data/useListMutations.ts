@@ -55,18 +55,21 @@ export function useListMutations() {
     onSuccess: () => {
       utils.shopping.getList.invalidate()
       utils.shopping.getLists.invalidate()
+      utils.catalog.getItems.invalidate() // リストに追加したアイテムをカタログから除外
     },
   })
   const addNewItemMutation = trpc.shopping.addNewItemToList.useMutation({
     onSuccess: () => {
       utils.shopping.getList.invalidate()
       utils.shopping.getLists.invalidate()
+      utils.catalog.getItems.invalidate() // リストに追加したアイテムをカタログから除外
     },
   })
   const removeItemMutation = trpc.shopping.removeItemFromList.useMutation({
     onSuccess: () => {
       utils.shopping.getList.invalidate()
       utils.shopping.getLists.invalidate()
+      utils.catalog.getItems.invalidate() // リストから外したアイテムをカタログに表示
     },
   })
   const checkItemMutation = trpc.shopping.checkItem.useMutation({
