@@ -1,8 +1,9 @@
 "use client"
 
+import { useState } from "react"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
-import { Button, PageContainer } from "@/components/ui"
+import { Button, ConfirmDialog, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { cn } from "@/lib/utils"
 import { ChevronRight, FileText, LogIn, LogOut, Shield, Tag, User, Users } from "lucide-react"
@@ -33,9 +34,18 @@ const settingItems: SettingItem[] = [
 
 export default function SettingsPage() {
   const { user, isLoading, login, logout } = useAuth()
+  const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false)
 
   const handleLogin = async () => {
     await login()
+  }
+
+  const handleLogoutClick = () => {
+    setIsLogoutDialogOpen(true)
+  }
+
+  const handleLogoutConfirm = async () => {
+    await logout()
   }
 
   return (
@@ -74,7 +84,7 @@ export default function SettingsPage() {
               <Button
                 variant="ghost"
                 className="mt-4 w-full text-red-600 hover:bg-red-50 hover:text-red-700"
-                onClick={logout}
+                onClick={handleLogoutClick}
               >
                 <LogOut className="mr-2 h-5 w-5" />
                 ログアウト
@@ -191,6 +201,17 @@ export default function SettingsPage() {
           </section>
         </div>
       </PageContainer>
+
+      <ConfirmDialog
+        isOpen={isLogoutDialogOpen}
+        onClose={() => setIsLogoutDialogOpen(false)}
+        onConfirm={handleLogoutConfirm}
+        title="ログアウト"
+        message="ログアウトしますか？ローカルデータは保持されます。"
+        confirmLabel="ログアウト"
+        cancelLabel="キャンセル"
+        confirmVariant="danger"
+      />
     </AppLayout>
   )
 }

@@ -38,7 +38,7 @@ function AuthContextProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
-    await signOut({ callbackUrl: "/login" })
+    await signOut({ callbackUrl: "/" })
   }, [])
 
   return (
