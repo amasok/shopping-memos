@@ -57,31 +57,24 @@ export function GroupProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // グループの有効性を確認
+  // グループの有効性を確認（レンダリング中に同期的にチェック）
   // 選択中のグループIDが、ユーザーが所属するグループに含まれているか確認
   // 含まれていなければundefinedにリセット（グループから除外された場合など）
-  useEffect(() => {
-    // ログイン中でなければ何もしない
-    if (!user || isAuthLoading) return
+  const shouldResetGroupId =
+    user &&
+    !isAuthLoading &&
+    !groupsQuery.isLoading &&
+    selectedGroupId &&
+    groupsQuery.data &&
+    !groupsQuery.data.some((g) => g.id === selectedGroupId)
 
-    // グループ一覧の取得中は待機
-    if (groupsQuery.isLoading) return
-
-    // グループが選択されていなければ何もしない
-    if (!selectedGroupId) return
-
-    // グループ一覧が取得できたら有効性を確認
-    if (groupsQuery.data) {
-      const isValid = groupsQuery.data.some((g) => g.id === selectedGroupId)
-      if (!isValid) {
-        console.log(
-          "[GroupContext] Selected group is no longer accessible, resetting to personal mode:",
-          selectedGroupId
-        )
-        setSelectedGroupId(undefined)
-      }
-    }
-  }, [user, isAuthLoading, selectedGroupId, groupsQuery.data, groupsQuery.isLoading, setSelectedGroupId])
+  if (shouldResetGroupId) {
+    console.log(
+      "[GroupContext] Selected group is no longer accessible, resetting to personal mode:",
+      selectedGroupId
+    )
+    setSelectedGroupId(undefined)
+  }
 
   // デバッグ: selectedGroupId の変化を追跡
   useEffect(() => {
