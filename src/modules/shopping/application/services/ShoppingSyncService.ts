@@ -25,8 +25,8 @@ export class ShoppingSyncService {
 
   // === リスト操作 ===
 
-  async createList(input: CreateShoppingListInput, userId: string): Promise<ShoppingList> {
-    const list = await this.shoppingListRepository.create(input)
+  async createList(input: Omit<CreateShoppingListInput, "userId">, userId: string): Promise<ShoppingList> {
+    const list = await this.shoppingListRepository.create({ ...input, userId })
 
     // 同期ログを記録
     await syncRepository.createOperation({

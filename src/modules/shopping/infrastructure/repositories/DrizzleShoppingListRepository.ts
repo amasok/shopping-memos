@@ -38,6 +38,7 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
         id: input.id,
         name: input.name,
         status: ListStatus.IN_PROGRESS,
+        userId: input.userId,
         groupId: input.groupId ?? null,
         createdAt: now,
       })
@@ -75,12 +76,16 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     // groupIdフィルタ:
     // - includeAllGroups: true → フィルタなし（全リスト）
     // - groupIdが指定されている → そのグループのリストのみ
-    // - groupIdがundefined → 個人リスト（groupId IS NULL）のみ
+    // - groupIdがundefined → 個人リスト（groupId IS NULL かつ userId一致）のみ
     if (!query.includeAllGroups) {
       if (query.groupId !== undefined) {
         conditions.push(eq(shoppingLists.groupId, query.groupId))
       } else {
         conditions.push(isNull(shoppingLists.groupId))
+        // 個人データはuserIdでフィルタ（セキュリティ上必須）
+        if (query.userId) {
+          conditions.push(eq(shoppingLists.userId, query.userId))
+        }
       }
     }
 
@@ -200,7 +205,7 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
 
   async canAccess(listId: string, userId: string): Promise<boolean> {
     const list = await db
-      .select({ groupId: shoppingLists.groupId })
+      .select({ groupId: shoppingLists.groupId, ownerId: shoppingLists.userId })
       .from(shoppingLists)
       .where(eq(shoppingLists.id, listId))
 
@@ -208,9 +213,9 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
       return false
     }
 
-    // グループなしのリストは誰でもアクセス可能
+    // グループなしのリストは作成者のみアクセス可能
     if (!list[0].groupId) {
-      return true
+      return list[0].ownerId === userId
     }
 
     // グループメンバーか確認
@@ -245,6 +250,10 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
       conditions.push(eq(shoppingLists.groupId, query.groupId))
     } else {
       conditions.push(isNull(shoppingLists.groupId))
+      // 個人データはuserIdでフィルタ（セキュリティ上必須）
+      if (query.userId) {
+        conditions.push(eq(shoppingLists.userId, query.userId))
+      }
     }
 
     let dbQuery = db

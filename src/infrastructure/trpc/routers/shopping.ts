@@ -1,6 +1,6 @@
 import { TRPCError } from "@trpc/server"
 import { eq } from "drizzle-orm"
-import { router, publicProcedure, protectedProcedure } from "../server"
+import { router, protectedProcedure } from "../server"
 import {
   createListSchema,
   addItemToListSchema,
@@ -24,6 +24,7 @@ import { syncRepository } from "@/modules/sync/infrastructure/repositories/Drizz
 import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-objects/ListStatus"
 import { ShoppingService } from "@/modules/shopping/application/services/ShoppingService"
 import { ShoppingSyncService } from "@/modules/shopping/application/services/ShoppingSyncService"
+import { verifyGroupMembership } from "../middleware/groupAuth"
 
 // サービスインスタンス
 const shoppingService = new ShoppingService(shoppingListRepository)
@@ -38,10 +39,14 @@ export const shoppingRouter = router({
   // === リスト ===
 
   /** 買い物リスト一覧を取得 */
-  getLists: publicProcedure
+  getLists: protectedProcedure
     .input(getListsQuerySchema)
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // グループ指定時はメンバーシップを検証
+      await verifyGroupMembership(input.groupId, ctx.userId)
+
       return shoppingSyncService.getLists({
+        userId: ctx.userId,
         // null を undefined に変換（ドメイン層は null を受け付けない）
         groupId: input.groupId ?? undefined,
         status: input.status as ListStatus | undefined,
@@ -51,9 +56,18 @@ export const shoppingRouter = router({
     }),
 
   /** 買い物リストを取得 */
-  getList: publicProcedure
+  getList: protectedProcedure
     .input(deleteListSchema) // idのみ
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // アクセス権確認
+      const canAccess = await shoppingSyncService.canAccessList(input.id, ctx.userId)
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "このリストにアクセスする権限がありません",
+        })
+      }
+
       const list = await shoppingSyncService.getList(input.id)
       if (!list) {
         throw new TRPCError({
@@ -65,9 +79,18 @@ export const shoppingRouter = router({
     }),
 
   /** リスト内アイテムを取得 */
-  getListItems: publicProcedure
+  getListItems: protectedProcedure
     .input(getListItemsQuerySchema)
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // アクセス権確認
+      const canAccess = await shoppingSyncService.canAccessList(input.listId, ctx.userId)
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "このリストにアクセスする権限がありません",
+        })
+      }
+
       const list = await shoppingSyncService.getList(input.listId)
       if (!list) {
         throw new TRPCError({
@@ -82,6 +105,9 @@ export const shoppingRouter = router({
   createList: protectedProcedure
     .input(createListSchema)
     .mutation(async ({ input, ctx }) => {
+      // グループ指定時はメンバーシップを検証
+      await verifyGroupMembership(input.groupId, ctx.userId)
+
       const listId = crypto.randomUUID()
 
       // リストを作成（同期ログ記録付き）
@@ -383,10 +409,14 @@ export const shoppingRouter = router({
   // === 履歴（purchasedAtが入っているリスト） ===
 
   /** 購入履歴一覧を取得 */
-  getHistory: publicProcedure
+  getHistory: protectedProcedure
     .input(getHistoryQuerySchema)
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // グループ指定時はメンバーシップを検証
+      await verifyGroupMembership(input.groupId, ctx.userId)
+
       return shoppingSyncService.getHistory({
+        userId: ctx.userId,
         groupId: input.groupId ?? undefined,
         limit: input.limit,
         offset: input.offset,
@@ -394,9 +424,18 @@ export const shoppingRouter = router({
     }),
 
   /** 購入履歴を取得 */
-  getHistoryById: publicProcedure
+  getHistoryById: protectedProcedure
     .input(deleteHistorySchema) // idのみ
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // アクセス権確認
+      const canAccess = await shoppingSyncService.canAccessHistory(input.id, ctx.userId)
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "この履歴にアクセスする権限がありません",
+        })
+      }
+
       const history = await shoppingSyncService.getHistoryById(input.id)
       if (!history) {
         throw new TRPCError({

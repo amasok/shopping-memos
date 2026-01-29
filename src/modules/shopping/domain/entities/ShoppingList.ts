@@ -36,6 +36,7 @@ export interface ShoppingListWithItems extends ShoppingList {
 export interface CreateShoppingListInput {
   id: string
   name: string
+  userId: string
   groupId?: string | null
 }
 
@@ -55,6 +56,7 @@ export interface UpdateShoppingListInput {
  * 買い物リスト取得クエリ
  */
 export interface GetShoppingListsQuery {
+  userId?: string
   groupId?: string
   status?: ListStatus
   includeCompleted?: boolean
@@ -66,6 +68,7 @@ export interface GetShoppingListsQuery {
  * 購入履歴取得クエリ（purchasedAtが入っているリスト）
  */
 export interface GetPurchaseHistoryQuery {
+  userId?: string
   groupId?: string
   limit?: number
   offset?: number

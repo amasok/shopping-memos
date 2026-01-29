@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server"
-import { router, publicProcedure, protectedProcedure } from "../server"
+import { router, protectedProcedure } from "../server"
 import {
   createItemSchema,
   updateItemSchema,
@@ -13,6 +13,7 @@ import {
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
 import { CatalogSyncService } from "@/modules/catalog/application/services/CatalogSyncService"
+import { verifyGroupMembership } from "../middleware/groupAuth"
 
 // 同期サービスインスタンス
 const catalogSyncService = new CatalogSyncService(itemRepository, tagRepository)
@@ -29,6 +30,9 @@ export const catalogRouter = router({
   getItems: protectedProcedure
     .input(getItemsQuerySchema)
     .query(async ({ input, ctx }) => {
+      // グループ指定時はメンバーシップを検証
+      await verifyGroupMembership(input.groupId, ctx.userId)
+
       // デバッグログ
       if (process.env.NODE_ENV !== "production") {
         console.log("[catalog.getItems] input:", {
@@ -49,9 +53,18 @@ export const catalogRouter = router({
     }),
 
   /** アイテムを取得 */
-  getItem: publicProcedure
+  getItem: protectedProcedure
     .input(deleteItemSchema) // idのみ
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // アクセス権確認
+      const canAccess = await catalogSyncService.canAccessItem(input.id, ctx.userId)
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "このアイテムにアクセスする権限がありません",
+        })
+      }
+
       const item = await catalogSyncService.getItem(input.id)
       if (!item) {
         throw new TRPCError({
@@ -66,6 +79,9 @@ export const catalogRouter = router({
   createItem: protectedProcedure
     .input(createItemSchema)
     .mutation(async ({ input, ctx }) => {
+      // グループ指定時はメンバーシップを検証
+      await verifyGroupMembership(input.groupId, ctx.userId)
+
       return catalogSyncService.createItem(
         {
           id: crypto.randomUUID(),
@@ -160,6 +176,9 @@ export const catalogRouter = router({
   getTags: protectedProcedure
     .input(getTagsQuerySchema)
     .query(async ({ input, ctx }) => {
+      // グループ指定時はメンバーシップを検証
+      await verifyGroupMembership(input.groupId, ctx.userId)
+
       return catalogSyncService.getTags({
         userId: ctx.userId,
         // null を undefined に変換（ドメイン層は null を受け付けない）
@@ -168,9 +187,18 @@ export const catalogRouter = router({
     }),
 
   /** タグを取得 */
-  getTag: publicProcedure
+  getTag: protectedProcedure
     .input(deleteTagSchema) // idのみ
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // アクセス権確認
+      const canAccess = await catalogSyncService.canAccessTag(input.id, ctx.userId)
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "このタグにアクセスする権限がありません",
+        })
+      }
+
       const tag = await catalogSyncService.getTag(input.id)
       if (!tag) {
         throw new TRPCError({
@@ -185,6 +213,9 @@ export const catalogRouter = router({
   createTag: protectedProcedure
     .input(createTagSchema)
     .mutation(async ({ input, ctx }) => {
+      // グループ指定時はメンバーシップを検証
+      await verifyGroupMembership(input.groupId, ctx.userId)
+
       return catalogSyncService.createTag(
         {
           id: crypto.randomUUID(),
