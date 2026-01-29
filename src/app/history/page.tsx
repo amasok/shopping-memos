@@ -6,12 +6,11 @@ import { Header } from "@/components/layouts/Header"
 import { Badge, BottomSheet, Button, EmptyState, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
-import { type ShoppingItem } from "@/lib/db"
 import { cn } from "@/lib/utils"
 import { ChevronDown, ChevronUp, History, RotateCcw, ShoppingBag, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-import { useGroups, useHistory, useItems, useTags, useHistoryMutations } from "@/hooks/data"
+import { useGroups, useHistory, useTags, useHistoryMutations } from "@/hooks/data"
 
 function formatDate(date: Date): string {
   const month = date.getMonth() + 1
@@ -31,20 +30,11 @@ export default function HistoryPage() {
   // サーバーファースト対応のhooksを使用
   const { groups, isLoading: isGroupsLoading } = useGroups()
   const { history, isLoading: isHistoryLoading } = useHistory()
-  const { items: purchasedItems, isLoading: isItemsLoading } = useItems({ purchasedOnly: true, includePurchased: true })
   const { tags, isLoading: isTagsLoading } = useTags()
   const { revertHistory, deleteHistory, isReverting, isDeleting } = useHistoryMutations()
 
-  const isLoading = isHistoryLoading || isItemsLoading || isTagsLoading || (user && isGroupsLoading)
+  const isLoading = isHistoryLoading || isTagsLoading || (user && isGroupsLoading)
   const isProcessing = isReverting || isDeleting
-
-  // アイテムIDからアイテムを引くマップ
-  const itemMap = new Map<string, ShoppingItem>()
-  if (purchasedItems) {
-    for (const item of purchasedItems) {
-      itemMap.set(item.id, item)
-    }
-  }
 
   // タグIDからタグ名を引くマップ
   const tagMap = new Map(tags?.map((tag) => [tag.id, tag]) ?? [])
@@ -107,10 +97,8 @@ export default function HistoryPage() {
           <ul className="space-y-3">
             {history?.map((record) => {
               const isExpanded = expandedId === record.id
-              // itemIdsからアイテムを取得
-              const items = (record.itemIds ?? [])
-                .map((id) => itemMap.get(id))
-                .filter((item): item is ShoppingItem => item !== undefined)
+              // サーバーからlistItemsが返されるのでそれを使用
+              const items = record.listItems ?? []
 
               return (
                 <li key={record.id}>

@@ -1,9 +1,16 @@
 "use client"
 
 import { useLiveQuery } from "dexie-react-hooks"
-import { db, type PurchaseHistory } from "@/lib/db"
+import { db, type PurchaseHistory, type ListItem } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useDataSource } from "./useDataSource"
+
+/**
+ * 履歴にlistItemsを付与した型
+ */
+export interface PurchaseHistoryWithItems extends PurchaseHistory {
+  listItems: ListItem[]
+}
 
 interface UseHistoryOptions {
   groupId?: string
@@ -16,7 +23,7 @@ interface UseHistoryOptions {
  * グループ選択時: サーバーから取得
  * 個人モード: ローカルDBから取得
  *
- * 返り値は常にPurchaseHistory型に正規化される
+ * 返り値は常にPurchaseHistoryWithItems型に正規化される（listItems付き）
  */
 export function useHistory(options: UseHistoryOptions = {}) {
   const { groupId, limit, offset } = options
@@ -27,7 +34,7 @@ export function useHistory(options: UseHistoryOptions = {}) {
   // 渡されていない場合はコンテキストのselectedGroupIdを使用
   const effectiveGroupId = "groupId" in options ? groupId : selectedGroupId
 
-  // ローカル（Dexie）クエリ
+  // ローカル（Dexie）クエリ - listItems付きで取得
   const localHistory = useLiveQuery(
     async () => {
       if (useServer) return undefined
@@ -44,7 +51,23 @@ export function useHistory(options: UseHistoryOptions = {}) {
         result = result.slice(0, limit)
       }
 
-      return result
+      // 各履歴にlistItemsを付与
+      const historyWithItems: PurchaseHistoryWithItems[] = await Promise.all(
+        result.map(async (h) => {
+          // itemIdsに含まれるlistItemsを取得
+          const listItems = await db.listItems
+            .where("id")
+            .anyOf(h.itemIds ?? [])
+            .toArray()
+
+          return {
+            ...h,
+            listItems,
+          }
+        })
+      )
+
+      return historyWithItems
     },
     [useServer, effectiveGroupId, limit, offset]
   )
@@ -63,14 +86,26 @@ export function useHistory(options: UseHistoryOptions = {}) {
   )
 
   if (useServer) {
-    // サーバーから取得した履歴をPurchaseHistory型に変換
-    const normalizedHistory: PurchaseHistory[] = (serverQuery.data ?? []).map((h) => ({
+    // サーバーから取得した履歴をPurchaseHistoryWithItems型に変換
+    const normalizedHistory: PurchaseHistoryWithItems[] = (serverQuery.data ?? []).map((h) => ({
       id: h.id,
       listId: h.listId,
       location: h.location ?? undefined,
       itemIds: h.itemIds ?? [],
       groupId: h.groupId ?? undefined,
       purchasedAt: h.purchasedAt,
+      // サーバーからはlistItemsが返される
+      listItems: (h.listItems ?? []).map((item) => ({
+        id: item.id,
+        listId: item.listId,
+        name: item.name,
+        quantity: item.quantity,
+        memo: item.memo ?? undefined,
+        tagIds: item.tagIds ?? [],
+        checked: item.checked,
+        createdAt: item.createdAt,
+        groupId: item.groupId ?? undefined,
+      })),
     }))
 
     return {

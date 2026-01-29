@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server"
+import { eq, and, isNull } from "drizzle-orm"
 import { router, publicProcedure, protectedProcedure } from "../server"
 import {
   createListSchema,
@@ -15,6 +16,8 @@ import {
   deleteListSchema,
   removeListItemSchema,
 } from "@/shared/schemas"
+import { db } from "@/infrastructure/db/drizzle/client"
+import { items } from "@/infrastructure/db/drizzle/schema"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
 import { purchaseHistoryRepository } from "@/modules/shopping/infrastructure/repositories/DrizzlePurchaseHistoryRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
@@ -380,16 +383,36 @@ export const shoppingRouter = router({
 
   // === 履歴 ===
 
-  /** 購入履歴一覧を取得 */
+  /** 購入履歴一覧を取得（listItems付き） */
   getHistory: publicProcedure
     .input(getHistoryQuerySchema)
     .query(async ({ input }) => {
-      return shoppingSyncService.getHistory({
+      const historyRecords = await shoppingSyncService.getHistory({
         // null を undefined に変換（ドメイン層は null を受け付けない）
         groupId: input.groupId ?? undefined,
         limit: input.limit,
         offset: input.offset,
       })
+
+      // 各履歴にlistItemsを付与
+      const historyWithItems = await Promise.all(
+        historyRecords.map(async (history) => {
+          // 履歴に紐づくリストを取得（リストアイテム付き）
+          const list = await shoppingSyncService.getList(history.listId)
+
+          // itemIdsに含まれるリストアイテムのみ抽出
+          const listItems = list?.items.filter((item) =>
+            history.itemIds?.includes(item.id)
+          ) ?? []
+
+          return {
+            ...history,
+            listItems,
+          }
+        })
+      )
+
+      return historyWithItems
     }),
 
   /** 購入履歴を取得 */
@@ -428,29 +451,51 @@ export const shoppingRouter = router({
         })
       }
 
-      // 指定されたアイテムのpurchasedAtをnullに戻す
+      // 指定されたリストアイテムに対応するカタログアイテムのpurchasedAtをnullに戻す
+      // history.itemIds にはリストアイテムのIDが格納されている
       const revertedItemIds: string[] = []
-      for (const itemId of input.itemIds) {
-        // 履歴に含まれるアイテムか確認
-        if (!history.itemIds?.includes(itemId)) {
+      for (const listItemId of input.itemIds) {
+        // 履歴に含まれるリストアイテムか確認
+        if (!history.itemIds?.includes(listItemId)) {
           continue
         }
 
-        const item = await itemRepository.findById(itemId)
-        if (item) {
-          // アイテムのpurchasedAtをnullに戻す
-          await itemRepository.markAsUnpurchased(itemId)
-          revertedItemIds.push(itemId)
+        // リストアイテムを取得して名前を特定
+        const listItem = await shoppingSyncService.getItem(listItemId)
+        if (!listItem) {
+          continue
+        }
 
-          // 同期ログを記録
-          await syncRepository.createOperation({
-            id: crypto.randomUUID(),
-            userId: ctx.userId,
-            entity: "item",
-            entityId: itemId,
-            operation: "update",
-            payload: { id: itemId, purchasedAt: null },
-          })
+        // 同名のカタログアイテムを検索（グループIDも一致するもの）
+        // finishShopping と同じロジック
+        const conditions = [eq(items.name, listItem.name)]
+        if (history.groupId) {
+          conditions.push(eq(items.groupId, history.groupId))
+        } else {
+          conditions.push(isNull(items.groupId))
+        }
+
+        const catalogItems = await db
+          .select({ id: items.id, purchasedAt: items.purchasedAt })
+          .from(items)
+          .where(and(...conditions))
+
+        // 購入済みのカタログアイテムを未購入に戻す
+        for (const catalogItem of catalogItems) {
+          if (catalogItem.purchasedAt) {
+            await itemRepository.markAsUnpurchased(catalogItem.id)
+            revertedItemIds.push(catalogItem.id)
+
+            // 同期ログを記録
+            await syncRepository.createOperation({
+              id: crypto.randomUUID(),
+              userId: ctx.userId,
+              entity: "item",
+              entityId: catalogItem.id,
+              operation: "update",
+              payload: { id: catalogItem.id, purchasedAt: null },
+            })
+          }
         }
       }
 
