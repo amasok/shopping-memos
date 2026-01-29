@@ -14,9 +14,8 @@ export { useLists, useList, useListsWithItems } from "./useLists"
 export { useListMutations } from "./useListMutations"
 
 // 履歴（クエリ + ミューテーション）
-export { useHistory, useHistoryById } from "./useHistory"
+export { useHistory } from "./useHistory"
 export { useHistoryMutations } from "./useHistoryMutations"
 
-// グループ（クエリ + ミューテーション）
+// グループ（クエリ）
 export { useGroups, useGroup } from "./useGroups"
-export { useGroupMutations } from "./useGroupMutations"
