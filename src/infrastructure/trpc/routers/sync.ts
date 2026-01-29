@@ -1,4 +1,3 @@
-import { TRPCError } from "@trpc/server"
 import { router, protectedProcedure } from "../server"
 import {
   syncPushInputSchema,
@@ -7,6 +6,7 @@ import {
 } from "@/shared/schemas/sync"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
+import { dataMergeService } from "@/modules/sync/application/services/DataMergeService"
 import type { SyncConflict } from "@/modules/sync/domain/entities/SyncOperation"
 
 /**
@@ -122,74 +122,63 @@ export const syncRouter = router({
   merge: protectedProcedure
     .input(syncMergeInputSchema)
     .mutation(async ({ input, ctx }) => {
-      // ユーザーのデフォルトグループを取得（または作成）
-      const userGroups = await groupRepository.findByUserId(ctx.userId)
-
-      if (userGroups.length === 0) {
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: "ユーザーにグループがありません。先にグループを作成してください。",
-        })
-      }
-
-      const defaultGroupId = userGroups[0].id
-      const idMappings: Array<{
-        entity: string
-        localId: string
-        serverId: string
-      }> = []
-
-      // 各エンティティをマージ（簡易版: すべてサーバーにコピー）
-      // 実際の実装では重複チェックと競合解決が必要
       const { data } = input
 
-      // 操作をバッチで記録
-      const operations = [
-        ...data.items.map((item) => ({
-          id: crypto.randomUUID(),
-          userId: ctx.userId,
-          entity: "item" as const,
-          entityId: (item as { id: string }).id,
-          operation: "create" as const,
-          payload: { ...item, groupId: defaultGroupId },
-        })),
-        ...data.tags.map((tag) => ({
-          id: crypto.randomUUID(),
-          userId: ctx.userId,
-          entity: "tag" as const,
-          entityId: (tag as { id: string }).id,
-          operation: "create" as const,
-          payload: { ...tag, groupId: defaultGroupId },
-        })),
-        ...data.lists.map((list) => ({
-          id: crypto.randomUUID(),
-          userId: ctx.userId,
-          entity: "list" as const,
-          entityId: (list as { id: string }).id,
-          operation: "create" as const,
-          payload: { ...list, groupId: defaultGroupId },
-        })),
-        ...data.listItems.map((listItem) => ({
-          id: crypto.randomUUID(),
-          userId: ctx.userId,
-          entity: "listItem" as const,
-          entityId: (listItem as { id: string }).id,
-          operation: "create" as const,
-          payload: { ...listItem, groupId: defaultGroupId },
-        })),
-        ...data.history.map((history) => ({
-          id: crypto.randomUUID(),
-          userId: ctx.userId,
-          entity: "history" as const,
-          entityId: (history as { id: string }).id,
-          operation: "create" as const,
-          payload: { ...history, groupId: defaultGroupId },
-        })),
-      ]
+      // 型アサーション用のヘルパー
+      type RawItem = { id?: string; name?: string; quantity?: number; memo?: string | null; tagIds?: string[]; purchasedAt?: string | null; createdAt?: string }
+      type RawTag = { id?: string; name?: string; createdAt?: string }
+      type RawList = { id?: string; name?: string; status?: string; createdAt?: string; completedAt?: string | null }
+      type RawListItem = { id?: string; listId?: string; name?: string; quantity?: number; memo?: string | null; tagIds?: string[]; checked?: boolean; createdAt?: string }
+      type RawHistory = { id?: string; listId?: string; location?: string | null; itemIds?: string[]; purchasedAt?: string }
 
-      if (operations.length > 0) {
-        await syncRepository.createOperations(operations)
+      // DataMergeServiceを使用してデータをマージ
+      const mergeResult = await dataMergeService.merge(ctx.userId, {
+        items: (data.items as RawItem[]).map((item) => ({
+          id: item.id ?? "",
+          name: item.name ?? "",
+          quantity: item.quantity ?? 1,
+          memo: item.memo,
+          tagIds: item.tagIds ?? [],
+          purchasedAt: item.purchasedAt ? new Date(item.purchasedAt) : null,
+          createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
+        })),
+        tags: (data.tags as RawTag[]).map((tag) => ({
+          id: tag.id ?? "",
+          name: tag.name ?? "",
+          createdAt: tag.createdAt ? new Date(tag.createdAt) : new Date(),
+        })),
+        lists: (data.lists as RawList[]).map((list) => ({
+          id: list.id ?? "",
+          name: list.name ?? "",
+          status: (list.status ?? "in_progress") as "in_progress" | "completed",
+          createdAt: list.createdAt ? new Date(list.createdAt) : new Date(),
+          completedAt: list.completedAt ? new Date(list.completedAt) : null,
+        })),
+        listItems: (data.listItems as RawListItem[]).map((listItem) => ({
+          id: listItem.id ?? "",
+          listId: listItem.listId ?? "",
+          name: listItem.name ?? "",
+          quantity: listItem.quantity ?? 1,
+          memo: listItem.memo,
+          tagIds: listItem.tagIds ?? [],
+          checked: listItem.checked ?? false,
+          createdAt: listItem.createdAt ? new Date(listItem.createdAt) : new Date(),
+        })),
+        history: (data.history as RawHistory[]).map((history) => ({
+          id: history.id ?? "",
+          listId: history.listId ?? "",
+          location: history.location,
+          itemIds: history.itemIds ?? [],
+          purchasedAt: history.purchasedAt ? new Date(history.purchasedAt) : new Date(),
+        })),
+      })
+
+      if (!mergeResult.success && mergeResult.errors.length > 0) {
+        console.error("Merge errors:", mergeResult.errors)
       }
+
+      // ユーザーのグループを取得
+      const userGroups = await groupRepository.findByUserId(ctx.userId)
 
       // サーバーデータを取得して返す
       const serverChanges = await syncRepository.getChangedEntities(
@@ -197,7 +186,7 @@ export const syncRouter = router({
       )
 
       return {
-        idMappings,
+        idMappings: [] as Array<{ entity: string; localId: string; serverId: string }>,
         serverData: {
           items: serverChanges.items,
           tags: serverChanges.tags,
@@ -205,6 +194,11 @@ export const syncRouter = router({
           listItems: serverChanges.listItems,
           history: serverChanges.history,
           syncedAt: new Date(),
+        },
+        mergeResult: {
+          success: mergeResult.success,
+          mergedCounts: mergeResult.mergedCounts,
+          errors: mergeResult.errors,
         },
       }
     }),
