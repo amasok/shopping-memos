@@ -85,6 +85,9 @@ export default function HomePage() {
 
   const hasItems = (items?.length ?? 0) > 0
   const hasFilteredItems = filteredItems.length > 0
+  const hasLists = (lists?.length ?? 0) > 0
+  // カタログにアイテムがないが、リストにアイテムがある場合もコンテンツを表示
+  const hasContent = hasItems || hasLists
 
   const handleOpenAdd = () => {
     setEditingItem(null)
@@ -127,7 +130,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {!hasItems ? (
+        {!hasContent ? (
           <EmptyState
             icon={<ShoppingCart className="h-16 w-16" />}
             title="買いたいものがありません"
