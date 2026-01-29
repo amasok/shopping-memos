@@ -5,12 +5,6 @@ import { Header } from "@/components/layouts/Header"
 import { BottomSheet, Button, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { type GroupMember } from "@/lib/db"
-import {
-  deleteGroup,
-  leaveGroup,
-  removeGroupMember,
-  updateGroupName,
-} from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useGroup } from "@/hooks/data"
@@ -56,8 +50,19 @@ export default function GroupDetailPage() {
   const myMembership = members?.find((m) => m.userId === user?.id)
   const isOwner = myMembership?.role === "owner"
 
-  // 招待コード再生成のmutation
+  // tRPC mutations
   const regenerateInviteCodeMutation = trpc.identity.regenerateInviteCode.useMutation({
+    onSuccess: () => {
+      refetchGroup()
+    },
+  })
+  const updateGroupMutation = trpc.identity.updateGroup.useMutation({
+    onSuccess: () => {
+      refetchGroup()
+    },
+  })
+  const deleteGroupMutation = trpc.identity.deleteGroup.useMutation()
+  const removeMemberMutation = trpc.identity.removeMember.useMutation({
     onSuccess: () => {
       refetchGroup()
     },
@@ -71,8 +76,12 @@ export default function GroupDetailPage() {
 
   const handleSaveName = async () => {
     if (!editName.trim()) return
-    await updateGroupName(groupId, editName.trim())
-    setIsEditingName(false)
+    try {
+      await updateGroupMutation.mutateAsync({ id: groupId, name: editName.trim() })
+      setIsEditingName(false)
+    } catch (error) {
+      console.error("Failed to update group name:", error)
+    }
   }
 
   const handleRegenerateCode = async () => {
@@ -112,7 +121,7 @@ export default function GroupDetailPage() {
   const handleDeleteGroup = async () => {
     setIsProcessing(true)
     try {
-      await deleteGroup(groupId)
+      await deleteGroupMutation.mutateAsync({ id: groupId })
       router.push("/groups")
     } catch (error) {
       console.error("Failed to delete group:", error)
@@ -124,7 +133,8 @@ export default function GroupDetailPage() {
     if (!user) return
     setIsProcessing(true)
     try {
-      await leaveGroup(groupId, user.id)
+      // 自分自身を削除 = グループ退出
+      await removeMemberMutation.mutateAsync({ groupId, userId: user.id })
       router.push("/groups")
     } catch (error) {
       console.error("Failed to leave group:", error)
@@ -136,7 +146,7 @@ export default function GroupDetailPage() {
     if (!removeMemberTarget) return
     setIsProcessing(true)
     try {
-      await removeGroupMember(removeMemberTarget.id)
+      await removeMemberMutation.mutateAsync({ groupId, userId: removeMemberTarget.userId })
       setRemoveMemberTarget(null)
     } catch (error) {
       console.error("Failed to remove member:", error)
