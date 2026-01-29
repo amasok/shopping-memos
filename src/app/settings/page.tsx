@@ -61,7 +61,7 @@ export default function SettingsPage() {
         <div className="space-y-6">
           {/* ユーザー情報 or ログイン促進 */}
           {isLoading ? (
-            <div className="rounded-xl bg-white p-4 shadow-sm">
+            <div className="rounded-xl bg-card p-4 shadow-sm">
               <div className="flex items-center justify-center py-4">
                 <div
                   className="h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
@@ -70,7 +70,7 @@ export default function SettingsPage() {
               </div>
             </div>
           ) : user ? (
-            <div className="rounded-xl bg-white p-4 shadow-sm">
+            <div className="rounded-xl bg-card p-4 shadow-sm">
               <div className="flex items-center gap-3">
                 {user.avatarUrl ? (
                   <Image
@@ -134,7 +134,7 @@ export default function SettingsPage() {
             <h2 className="mb-3 text-sm font-semibold text-gray-500">
               テーマ
             </h2>
-            <div className="rounded-xl bg-white p-4 shadow-sm">
+            <div className="rounded-xl bg-card p-4 shadow-sm">
               <div className="flex items-center gap-3 mb-4">
                 <div
                   className="flex h-10 w-10 items-center justify-center rounded-full"
@@ -191,7 +191,7 @@ export default function SettingsPage() {
             <h2 className="mb-3 text-sm font-semibold text-gray-500">
               設定
             </h2>
-            <ul className="divide-y divide-gray-100 rounded-xl bg-white shadow-sm">
+            <ul className="divide-y divide-gray-100 rounded-xl bg-card shadow-sm">
               {settingItems.map((item) => (
                 <li key={item.href}>
                   <Link
@@ -228,7 +228,7 @@ export default function SettingsPage() {
             <h2 className="mb-3 text-sm font-semibold text-gray-500">
               アプリ情報
             </h2>
-            <ul className="divide-y divide-gray-100 rounded-xl bg-white shadow-sm">
+            <ul className="divide-y divide-gray-100 rounded-xl bg-card shadow-sm">
               <li>
                 <Link
                   href="/privacy"

@@ -11,7 +11,8 @@
   --theme-primary-rgb: 249, 115, 22;
   --theme-accent: #f59e0b;
   --theme-accent-light: #fef3c7;
-  --theme-surface: #fffbf5;
+  --theme-surface: #fef7ee;
+  --theme-card: #ffffff;
 }
 
 /* Orange Theme (Default) */
@@ -22,18 +23,20 @@
   --theme-primary-rgb: 249, 115, 22;
   --theme-accent: #f59e0b;
   --theme-accent-light: #fef3c7;
-  --theme-surface: #fffbf5;
+  --theme-surface: #fef7ee;
+  --theme-card: #ffffff;
 }
 
 /* Terracotta Theme */
 [data-theme="terracotta"] {
   --theme-primary: #d97706;
   --theme-primary-hover: #b45309;
-  --theme-primary-light: #fefce8;
+  --theme-primary-light: #fef9e7;
   --theme-primary-rgb: 217, 119, 6;
   --theme-accent: #f43f5e;
   --theme-accent-light: #fff1f2;
-  --theme-surface: #fafaf9;
+  --theme-surface: #faf6f0;
+  --theme-card: #fffefa;
 }
 
 /* Coral Theme */
@@ -44,7 +47,8 @@
   --theme-primary-rgb: 244, 63, 94;
   --theme-accent: #fb923c;
   --theme-accent-light: #ffedd5;
-  --theme-surface: #fffbf8;
+  --theme-surface: #fef5f5;
+  --theme-card: #ffffff;
 }
 
 /* Blue Theme (Classic) */
@@ -55,7 +59,8 @@
   --theme-primary-rgb: 59, 130, 246;
   --theme-accent: #8b5cf6;
   --theme-accent-light: #f5f3ff;
-  --theme-surface: #f8fafc;
+  --theme-surface: #f0f5ff;
+  --theme-card: #ffffff;
 }
 
 @theme inline {
@@ -67,6 +72,7 @@
   --color-accent: var(--theme-accent);
   --color-accent-light: var(--theme-accent-light);
   --color-surface: var(--theme-surface);
+  --color-card: var(--theme-card);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
