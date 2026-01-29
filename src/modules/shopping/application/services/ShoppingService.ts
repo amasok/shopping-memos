@@ -1,5 +1,6 @@
 import { db } from "@/infrastructure/db/drizzle/client"
-import { items, shoppingLists } from "@/infrastructure/db/drizzle/schema"
+import { items, shoppingLists, listItems } from "@/infrastructure/db/drizzle/schema"
+import { inArray } from "drizzle-orm"
 import { eq } from "drizzle-orm"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
@@ -49,9 +50,11 @@ export class ShoppingService {
       throw new Error("このステータスから完了に遷移できません")
     }
 
-    // チェック済みアイテムを抽出
+    // チェック済み・未チェックアイテムを抽出
     const checkedItems = list.items.filter((item) => item.checked)
+    const uncheckedItems = list.items.filter((item) => !item.checked)
     const checkedItemIds = checkedItems.map((item) => item.id)
+    const uncheckedItemIds = uncheckedItems.map((item) => item.id)
 
     // トランザクションで一括処理
     const result = await db.transaction(async (tx) => {
@@ -92,14 +95,17 @@ export class ShoppingService {
         }
       }
 
-      // 3. 未チェックアイテムは自動的に「買いたいもの」に戻る
-      // カタログアイテムはリスト追加時に保持されているため、新規作成は不要
-      // リストが完了すると、進行中リストのフィルタから外れて自動的に表示される
-      const returnedItemIds: string[] = []
+      // 3. 未チェックアイテムをlist_itemsから削除（履歴には購入済みのみ残す）
+      // カタログアイテムはリスト追加時に保持されているため、自動的に「買いたいもの」に戻る
+      if (uncheckedItemIds.length > 0) {
+        await tx
+          .delete(listItems)
+          .where(inArray(listItems.id, uncheckedItemIds))
+      }
 
       return {
         purchasedCatalogItemIds,
-        returnedItemIds,
+        deletedListItemIds: uncheckedItemIds,
       }
     })
 
@@ -123,18 +129,6 @@ export class ShoppingService {
         entityId: itemId,
         operation: "update",
         payload: { id: itemId, purchasedAt: new Date() },
-      })
-    }
-
-    // 未購入アイテム作成（買いたいものに戻す）
-    for (const itemId of result.returnedItemIds) {
-      await syncRepository.createOperation({
-        id: crypto.randomUUID(),
-        userId,
-        entity: "item",
-        entityId: itemId,
-        operation: "create",
-        payload: { id: itemId },
       })
     }
 
