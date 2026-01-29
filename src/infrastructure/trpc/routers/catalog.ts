@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server"
+import { eq, and, isNull } from "drizzle-orm"
 import { router, protectedProcedure } from "../server"
 import {
   createItemSchema,
@@ -10,6 +11,8 @@ import {
   deleteTagSchema,
   getTagsQuerySchema,
 } from "@/shared/schemas"
+import { db } from "@/infrastructure/db/drizzle/client"
+import { shoppingLists, listItems } from "@/infrastructure/db/drizzle/schema"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
 import { CatalogSyncService } from "@/modules/catalog/application/services/CatalogSyncService"
@@ -42,7 +45,9 @@ export const catalogRouter = router({
           includePurchased: input.includePurchased,
         })
       }
-      return catalogSyncService.getItems({
+
+      // カタログアイテムを取得
+      const items = await catalogSyncService.getItems({
         userId: ctx.userId,
         // null を undefined に変換（ドメイン層は null を受け付けない）
         groupId: input.groupId ?? undefined,
@@ -50,6 +55,27 @@ export const catalogRouter = router({
         searchText: input.searchText,
         includePurchased: input.includePurchased,
       })
+
+      // 進行中のリストに含まれるアイテム名を取得（除外用）
+      // グループ指定時はグループのリスト、個人時はユーザーのリスト
+      const listConditions = [eq(shoppingLists.status, "in_progress")]
+      if (input.groupId) {
+        listConditions.push(eq(shoppingLists.groupId, input.groupId))
+      } else {
+        listConditions.push(isNull(shoppingLists.groupId))
+        listConditions.push(eq(shoppingLists.userId, ctx.userId))
+      }
+
+      const activeListItems = await db
+        .select({ name: listItems.name })
+        .from(listItems)
+        .innerJoin(shoppingLists, eq(listItems.listId, shoppingLists.id))
+        .where(and(...listConditions))
+
+      const namesInActiveLists = new Set(activeListItems.map((item) => item.name))
+
+      // 進行中リストに含まれるアイテムを除外
+      return items.filter((item) => !namesInActiveLists.has(item.name))
     }),
 
   /** アイテムを取得 */

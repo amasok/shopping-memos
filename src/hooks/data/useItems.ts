@@ -33,6 +33,17 @@ export function useItems(options: UseItemsOptions = {}) {
     async () => {
       if (useServer) return undefined // サーバー使用時は実行しない
 
+      // 進行中のリストに含まれるアイテム名を取得（除外用）
+      const activeLists = await db.lists
+        .filter((list) => list.status === "in_progress" && list.groupId === effectiveGroupId)
+        .toArray()
+      const activeListIds = activeLists.map((list) => list.id)
+
+      const activeListItems = await db.listItems
+        .filter((item) => activeListIds.includes(item.listId))
+        .toArray()
+      const namesInActiveLists = new Set(activeListItems.map((item) => item.name))
+
       const query = db.items.orderBy("createdAt").reverse()
 
       const filtered = await query.filter((item) => {
@@ -46,6 +57,8 @@ export function useItems(options: UseItemsOptions = {}) {
         if (tagIds && tagIds.length > 0) {
           if (!tagIds.some((tagId) => item.tagIds.includes(tagId))) return false
         }
+        // 進行中リストに含まれるアイテムを除外
+        if (namesInActiveLists.has(item.name)) return false
         return true
       }).toArray()
 
