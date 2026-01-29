@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server"
-import { eq, and, isNull } from "drizzle-orm"
+import { eq } from "drizzle-orm"
 import { router, publicProcedure, protectedProcedure } from "../server"
 import {
   createListSchema,
@@ -466,19 +466,12 @@ export const shoppingRouter = router({
           continue
         }
 
-        // 同名のカタログアイテムを検索（グループIDも一致するもの）
-        // finishShopping と同じロジック
-        const conditions = [eq(items.name, listItem.name)]
-        if (history.groupId) {
-          conditions.push(eq(items.groupId, history.groupId))
-        } else {
-          conditions.push(isNull(items.groupId))
-        }
-
+        // 同名のカタログアイテムを検索
+        // finishShopping と同じロジック（groupIdでフィルタしない）
         const catalogItems = await db
           .select({ id: items.id, purchasedAt: items.purchasedAt })
           .from(items)
-          .where(and(...conditions))
+          .where(eq(items.name, listItem.name))
 
         // 購入済みのカタログアイテムを未購入に戻す
         for (const catalogItem of catalogItems) {
