@@ -84,22 +84,23 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
 
     try {
       // IndexedDB からすべてのデータを取得
-      const [localItems, localTags, localLists, localListItems, localHistory] =
+      const [localItems, localTags, localLists, localListItems] =
         await Promise.all([
           db.items.toArray(),
           db.tags.toArray(),
           db.lists.toArray(),
           db.listItems.toArray(),
-          db.history.toArray(),
         ])
+
+      // 履歴はlistsのpurchasedAtが設定されているもの
+      const localHistory = localLists.filter((list) => !!list.purchasedAt)
 
       // ローカルにデータがなければマージ不要
       if (
         localItems.length === 0 &&
         localTags.length === 0 &&
         localLists.length === 0 &&
-        localListItems.length === 0 &&
-        localHistory.length === 0
+        localListItems.length === 0
       ) {
         localStorage.setItem(mergeKey, "true")
         setIsMerging(false)
@@ -131,6 +132,8 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
             status: list.status,
             createdAt: list.createdAt.toISOString(),
             completedAt: list.completedAt?.toISOString() ?? null,
+            purchasedAt: list.purchasedAt?.toISOString() ?? null,
+            location: list.location ?? null,
           })),
           listItems: localListItems.map((listItem) => ({
             id: listItem.id,
@@ -142,12 +145,12 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
             checked: listItem.checked,
             createdAt: listItem.createdAt.toISOString(),
           })),
-          history: localHistory.map((history) => ({
-            id: history.id,
-            listId: history.listId,
-            location: history.location ?? null,
-            itemIds: history.itemIds,
-            purchasedAt: history.purchasedAt.toISOString(),
+          // 履歴はlistsのpurchasedAtが設定されているもの（listId = list.id）
+          history: localHistory.map((list) => ({
+            id: list.id,
+            listId: list.id,
+            location: list.location ?? null,
+            purchasedAt: list.purchasedAt!.toISOString(),
           })),
         },
       })

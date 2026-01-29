@@ -19,7 +19,6 @@ import {
 import { db } from "@/infrastructure/db/drizzle/client"
 import { items } from "@/infrastructure/db/drizzle/schema"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
-import { purchaseHistoryRepository } from "@/modules/shopping/infrastructure/repositories/DrizzlePurchaseHistoryRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-objects/ListStatus"
@@ -27,8 +26,8 @@ import { ShoppingService } from "@/modules/shopping/application/services/Shoppin
 import { ShoppingSyncService } from "@/modules/shopping/application/services/ShoppingSyncService"
 
 // サービスインスタンス
-const shoppingService = new ShoppingService(shoppingListRepository, purchaseHistoryRepository)
-const shoppingSyncService = new ShoppingSyncService(shoppingListRepository, purchaseHistoryRepository)
+const shoppingService = new ShoppingService(shoppingListRepository)
+const shoppingSyncService = new ShoppingSyncService(shoppingListRepository)
 
 /**
  * Shopping コンテキストのルーター
@@ -381,38 +380,17 @@ export const shoppingRouter = router({
       }
     }),
 
-  // === 履歴 ===
+  // === 履歴（purchasedAtが入っているリスト） ===
 
-  /** 購入履歴一覧を取得（listItems付き） */
+  /** 購入履歴一覧を取得 */
   getHistory: publicProcedure
     .input(getHistoryQuerySchema)
     .query(async ({ input }) => {
-      const historyRecords = await shoppingSyncService.getHistory({
-        // null を undefined に変換（ドメイン層は null を受け付けない）
+      return shoppingSyncService.getHistory({
         groupId: input.groupId ?? undefined,
         limit: input.limit,
         offset: input.offset,
       })
-
-      // 各履歴にlistItemsを付与
-      const historyWithItems = await Promise.all(
-        historyRecords.map(async (history) => {
-          // 履歴に紐づくリストを取得（リストアイテム付き）
-          const list = await shoppingSyncService.getList(history.listId)
-
-          // itemIdsに含まれるリストアイテムのみ抽出
-          const listItems = list?.items.filter((item) =>
-            history.itemIds?.includes(item.id)
-          ) ?? []
-
-          return {
-            ...history,
-            listItems,
-          }
-        })
-      )
-
-      return historyWithItems
     }),
 
   /** 購入履歴を取得 */
@@ -429,11 +407,11 @@ export const shoppingRouter = router({
       return history
     }),
 
-  /** 履歴からアイテムを戻す（purchasedAtをnullに） */
+  /** 履歴からリストに戻す */
   revertHistory: protectedProcedure
     .input(revertHistorySchema)
     .mutation(async ({ input, ctx }) => {
-      // アクセス権確認
+      // アクセス権確認（listIdとして扱う）
       const canAccess = await shoppingSyncService.canAccessHistory(input.historyId, ctx.userId)
       if (!canAccess) {
         throw new TRPCError({
@@ -442,7 +420,7 @@ export const shoppingRouter = router({
         })
       }
 
-      // 履歴を取得
+      // 履歴（リスト）を取得
       const history = await shoppingSyncService.getHistoryById(input.historyId)
       if (!history) {
         throw new TRPCError({
@@ -451,23 +429,10 @@ export const shoppingRouter = router({
         })
       }
 
-      // 指定されたリストアイテムに対応するカタログアイテムのpurchasedAtをnullに戻す
-      // history.itemIds にはリストアイテムのIDが格納されている
+      // リストに含まれるアイテムのカタログアイテムを未購入に戻す
       const revertedItemIds: string[] = []
-      for (const listItemId of input.itemIds) {
-        // 履歴に含まれるリストアイテムか確認
-        if (!history.itemIds?.includes(listItemId)) {
-          continue
-        }
-
-        // リストアイテムを取得して名前を特定
-        const listItem = await shoppingSyncService.getItem(listItemId)
-        if (!listItem) {
-          continue
-        }
-
+      for (const listItem of history.items) {
         // 同名のカタログアイテムを検索
-        // finishShopping と同じロジック（groupIdでフィルタしない）
         const catalogItems = await db
           .select({ id: items.id, purchasedAt: items.purchasedAt })
           .from(items)
@@ -492,23 +457,17 @@ export const shoppingRouter = router({
         }
       }
 
-      // 同期ログを記録（履歴は削除しない、アイテムを戻すだけ）
-      await syncRepository.createOperation({
-        id: crypto.randomUUID(),
-        userId: ctx.userId,
-        entity: "history",
-        entityId: input.historyId,
-        operation: "update",
-        payload: { id: input.historyId, revertedItemIds },
-      })
+      // リストを未購入に戻す
+      const list = await shoppingSyncService.revertHistory(input.historyId, ctx.userId)
 
       return {
         success: true,
+        list,
         revertedItemIds,
       }
     }),
 
-  /** 履歴を削除（アイテムは戻さない） */
+  /** 履歴を削除（リストとアイテムも削除） */
   deleteHistory: protectedProcedure
     .input(deleteHistorySchema)
     .mutation(async ({ input, ctx }) => {
@@ -521,7 +480,41 @@ export const shoppingRouter = router({
         })
       }
 
+      // 履歴（リスト）を取得
+      const history = await shoppingSyncService.getHistoryById(input.id)
+      if (!history) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "履歴が見つかりません",
+        })
+      }
+
+      // リストに含まれるアイテムに対応するカタログアイテムを削除
+      for (const listItem of history.items) {
+        // 同名のカタログアイテムを検索して削除
+        const catalogItems = await db
+          .select({ id: items.id })
+          .from(items)
+          .where(eq(items.name, listItem.name))
+
+        for (const catalogItem of catalogItems) {
+          await itemRepository.delete(catalogItem.id)
+
+          // 同期ログを記録
+          await syncRepository.createOperation({
+            id: crypto.randomUUID(),
+            userId: ctx.userId,
+            entity: "item",
+            entityId: catalogItem.id,
+            operation: "delete",
+            payload: { id: catalogItem.id },
+          })
+        }
+      }
+
+      // リストを削除（list_itemsはcascadeで削除される）
       await shoppingSyncService.deleteHistory(input.id, ctx.userId)
+
       return { success: true }
     }),
 })

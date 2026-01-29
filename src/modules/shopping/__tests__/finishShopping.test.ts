@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { ListStatus, canTransition, isInProgress } from "../domain/value-objects/ListStatus"
-import type { ShoppingListWithItems, ListItemWithTags } from "../domain/entities/ShoppingList"
-import type { PurchaseHistory } from "../domain/entities/PurchaseHistory"
+import type { ShoppingListWithItems, ListItemWithTags, ShoppingList } from "../domain/entities/ShoppingList"
 
 describe("買い物完了フロー", () => {
   describe("ステータス遷移", () => {
@@ -147,35 +146,38 @@ describe("買い物完了フロー", () => {
     })
   })
 
-  describe("PurchaseHistory エンティティ", () => {
-    it("購入履歴を作成できる", () => {
-      const history: PurchaseHistory = {
-        id: "history-1",
-        listId: "list-1",
-        location: "スーパー",
-        itemIds: ["item-1", "item-3"],
+  describe("購入履歴（purchasedAtが設定されたリスト）", () => {
+    it("購入履歴としてのリストを作成できる", () => {
+      const list: ShoppingList = {
+        id: "list-1",
+        name: "買い物リスト",
+        status: ListStatus.COMPLETED,
         groupId: "group-1",
+        createdAt: new Date(),
+        completedAt: new Date(),
         purchasedAt: new Date(),
+        location: "スーパー",
       }
 
-      expect(history.id).toBe("history-1")
-      expect(history.listId).toBe("list-1")
-      expect(history.location).toBe("スーパー")
-      expect(history.itemIds).toHaveLength(2)
+      expect(list.id).toBe("list-1")
+      expect(list.purchasedAt).toBeDefined()
+      expect(list.location).toBe("スーパー")
     })
 
     it("場所なしの購入履歴を作成できる", () => {
-      const history: PurchaseHistory = {
-        id: "history-2",
-        listId: "list-2",
-        location: null,
-        itemIds: ["item-1"],
+      const list: ShoppingList = {
+        id: "list-2",
+        name: "買い物リスト",
+        status: ListStatus.COMPLETED,
         groupId: null,
+        createdAt: new Date(),
+        completedAt: new Date(),
         purchasedAt: new Date(),
+        location: undefined,
       }
 
-      expect(history.location).toBeNull()
-      expect(history.groupId).toBeNull()
+      expect(list.location).toBeUndefined()
+      expect(list.groupId).toBeNull()
     })
   })
 

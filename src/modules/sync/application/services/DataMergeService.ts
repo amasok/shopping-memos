@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   items,
@@ -5,7 +6,6 @@ import {
   itemTags,
   shoppingLists,
   listItems,
-  purchaseHistory,
   syncOperations,
 } from "@/infrastructure/db/drizzle/schema"
 
@@ -31,6 +31,8 @@ interface LocalList {
   status: "in_progress" | "completed"
   createdAt: Date
   completedAt?: Date | null
+  purchasedAt?: Date | null
+  location?: string | null
 }
 
 interface LocalListItem {
@@ -48,7 +50,6 @@ interface LocalHistory {
   id: string
   listId: string
   location?: string | null
-  itemIds: string[]
   purchasedAt: Date
 }
 
@@ -189,6 +190,8 @@ export class DataMergeService {
               groupId,
               createdAt: list.createdAt,
               completedAt: list.completedAt ?? null,
+              purchasedAt: list.purchasedAt ?? null,
+              location: list.location ?? null,
             })
             mergedCounts.lists++
 
@@ -237,27 +240,31 @@ export class DataMergeService {
           }
         }
 
-        // 5. 履歴をマージ
+        // 5. 履歴をマージ（リストのpurchasedAtを更新）
         for (const history of data.history) {
           try {
-            await tx.insert(purchaseHistory).values({
-              id: history.id,
-              listId: history.listId,
-              location: history.location ?? null,
-              itemIds: history.itemIds,
-              userId, // 作成者を設定
-              groupId,
-              purchasedAt: history.purchasedAt,
-            })
+            // 履歴データをリストのpurchasedAt/locationとして反映
+            await tx
+              .update(shoppingLists)
+              .set({
+                purchasedAt: history.purchasedAt,
+                location: history.location ?? null,
+              })
+              .where(eq(shoppingLists.id, history.listId))
             mergedCounts.history++
 
             await tx.insert(syncOperations).values({
               id: crypto.randomUUID(),
               userId,
-              entity: "history",
-              entityId: history.id,
-              operation: "create",
-              payload: JSON.stringify({ ...history, groupId }),
+              entity: "list",
+              entityId: history.listId,
+              operation: "update",
+              payload: JSON.stringify({
+                id: history.listId,
+                purchasedAt: history.purchasedAt,
+                location: history.location,
+                groupId,
+              }),
               createdAt: now,
             })
           } catch {

@@ -28,6 +28,8 @@ export interface ShoppingList {
   groupId?: string  // グループに紐付け（任意）
   createdAt: Date
   completedAt?: Date
+  purchasedAt?: Date  // 購入日時（購入履歴として表示）
+  location?: string   // 購入場所
 }
 
 export interface ListItem {
@@ -42,14 +44,8 @@ export interface ListItem {
   createdAt: Date
 }
 
-export interface PurchaseHistory {
-  id: string
-  listId: string
-  location?: string
-  itemIds: string[]  // 購入したアイテムのID配列
-  groupId?: string  // グループに紐付け（任意）
-  purchasedAt: Date
-}
+// PurchaseHistory は廃止
+// 購入履歴は ShoppingList.purchasedAt が入っているレコードとして表示
 
 export interface Group {
   id: string
@@ -87,7 +83,6 @@ class ShoppingMemosDB extends Dexie {
   items!: EntityTable<ShoppingItem, "id">
   lists!: EntityTable<ShoppingList, "id">
   listItems!: EntityTable<ListItem, "id">
-  history!: EntityTable<PurchaseHistory, "id">
   groups!: EntityTable<Group, "id">
   groupMembers!: EntityTable<GroupMember, "id">
   syncQueue!: EntityTable<SyncQueueItem, "id">
@@ -178,6 +173,27 @@ class ShoppingMemosDB extends Dexie {
       groups: "id, ownerId, inviteCode, createdAt",
       groupMembers: "id, groupId, userId",
       syncQueue: "id, entity, createdAt, retryCount",
+    })
+
+    // v8: 購入履歴をリストに統合（historyテーブル廃止）
+    this.version(8).stores({
+      tags: "id, name, groupId, createdAt",
+      items: "id, name, groupId, createdAt, purchasedAt, *tagIds",
+      lists: "id, status, groupId, createdAt, purchasedAt",
+      listItems: "id, listId, groupId, checked, *tagIds",
+      history: null, // historyテーブルを削除
+      groups: "id, ownerId, inviteCode, createdAt",
+      groupMembers: "id, groupId, userId",
+      syncQueue: "id, entity, createdAt, retryCount",
+    }).upgrade(async (tx) => {
+      // 既存のhistoryからlists.purchasedAtを設定
+      const histories = await tx.table("history").toArray()
+      for (const history of histories) {
+        await tx.table("lists").update(history.listId, {
+          purchasedAt: history.purchasedAt,
+          location: history.location,
+        })
+      }
     })
   }
 }

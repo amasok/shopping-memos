@@ -129,7 +129,7 @@ export const syncRouter = router({
       type RawTag = { id?: string; name?: string; createdAt?: string }
       type RawList = { id?: string; name?: string; status?: string; createdAt?: string; completedAt?: string | null }
       type RawListItem = { id?: string; listId?: string; name?: string; quantity?: number; memo?: string | null; tagIds?: string[]; checked?: boolean; createdAt?: string }
-      type RawHistory = { id?: string; listId?: string; location?: string | null; itemIds?: string[]; purchasedAt?: string }
+      type RawHistory = { id?: string; listId?: string; location?: string | null; purchasedAt?: string }
 
       // DataMergeServiceを使用してデータをマージ
       const mergeResult = await dataMergeService.merge(ctx.userId, {
@@ -168,7 +168,6 @@ export const syncRouter = router({
           id: history.id ?? "",
           listId: history.listId ?? "",
           location: history.location,
-          itemIds: history.itemIds ?? [],
           purchasedAt: history.purchasedAt ? new Date(history.purchasedAt) : new Date(),
         })),
       })

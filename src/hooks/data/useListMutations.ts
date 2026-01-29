@@ -273,23 +273,13 @@ export function useListMutations() {
 
       const listItems = await db.listItems.where("listId").equals(listId).toArray()
       const checkedItems = listItems.filter((item) => item.checked)
+      const uncheckedItems = listItems.filter((item) => !item.checked)
 
       if (checkedItems.length === 0) {
         throw new Error("購入済みのアイテムがありません")
       }
 
       const now = new Date()
-
-      // 履歴作成
-      const historyId = crypto.randomUUID()
-      await db.history.add({
-        id: historyId,
-        listId,
-        location,
-        itemIds: checkedItems.map((item) => item.id),
-        groupId: list.groupId,
-        purchasedAt: now,
-      })
 
       // カタログアイテムのpurchasedAtを更新（名前でマッチング）
       for (const listItem of checkedItems) {
@@ -301,16 +291,34 @@ export function useListMutations() {
         }
       }
 
-      // リストを完了状態に
+      // 未チェックアイテムを「買いたいもの」に戻す（新しいカタログアイテムを作成）
+      for (const uncheckedItem of uncheckedItems) {
+        const newItemId = crypto.randomUUID()
+        await db.items.add({
+          id: newItemId,
+          name: uncheckedItem.name,
+          quantity: uncheckedItem.quantity,
+          memo: uncheckedItem.memo,
+          tagIds: uncheckedItem.tagIds ?? [],
+          groupId: uncheckedItem.groupId ?? list.groupId,
+          createdAt: now,
+          updatedAt: now,
+          purchasedAt: undefined,
+        })
+      }
+
+      // リストを完了状態に + 購入日時/場所を設定（履歴として表示される）
       await db.lists.update(listId, {
         status: "completed",
         completedAt: now,
+        purchasedAt: now,
+        location,
       })
 
       return {
-        historyId,
+        historyId: listId, // 履歴IDはリストID
         purchasedCount: checkedItems.length,
-        skippedCount: listItems.length - checkedItems.length,
+        skippedCount: uncheckedItems.length,
       }
     },
     [useServer, finishMutation]

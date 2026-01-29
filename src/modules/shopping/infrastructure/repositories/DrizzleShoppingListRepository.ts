@@ -1,4 +1,4 @@
-import { eq, and, inArray, isNull } from "drizzle-orm"
+import { eq, and, inArray, isNull, isNotNull, desc } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   shoppingLists,
@@ -13,6 +13,7 @@ import type {
   CreateShoppingListInput,
   UpdateShoppingListInput,
   GetShoppingListsQuery,
+  GetPurchaseHistoryQuery,
   ListItemWithTags,
 } from "../../domain/entities/ShoppingList"
 import type {
@@ -119,6 +120,12 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     }
     if (input.completedAt !== undefined) {
       updateData.completedAt = input.completedAt
+    }
+    if (input.purchasedAt !== undefined) {
+      updateData.purchasedAt = input.purchasedAt
+    }
+    if (input.location !== undefined) {
+      updateData.location = input.location
     }
 
     const [updated] = await db
@@ -227,6 +234,84 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     }
 
     return this.canAccess(item.listId, userId)
+  }
+
+  // === 購入履歴操作 ===
+
+  async findPurchaseHistory(query: GetPurchaseHistoryQuery): Promise<ShoppingListWithItems[]> {
+    const conditions = [isNotNull(shoppingLists.purchasedAt)]
+
+    if (query.groupId !== undefined) {
+      conditions.push(eq(shoppingLists.groupId, query.groupId))
+    } else {
+      conditions.push(isNull(shoppingLists.groupId))
+    }
+
+    let dbQuery = db
+      .select()
+      .from(shoppingLists)
+      .where(and(...conditions))
+      .orderBy(desc(shoppingLists.purchasedAt))
+      .$dynamic()
+
+    if (query.limit) {
+      dbQuery = dbQuery.limit(query.limit)
+    }
+    if (query.offset) {
+      dbQuery = dbQuery.offset(query.offset)
+    }
+
+    const listsResult = await dbQuery
+
+    const result: ShoppingListWithItems[] = []
+    for (const list of listsResult) {
+      const items = await this.getListItemsWithTags(list.id)
+      result.push({
+        ...list,
+        status: list.status as ListStatus,
+        items,
+      })
+    }
+
+    return result
+  }
+
+  async markAsPurchased(id: string, location?: string): Promise<ShoppingList> {
+    const now = new Date()
+
+    const [updated] = await db
+      .update(shoppingLists)
+      .set({
+        purchasedAt: now,
+        location: location ?? null,
+        status: ListStatus.COMPLETED,
+        completedAt: now,
+      })
+      .where(eq(shoppingLists.id, id))
+      .returning()
+
+    return {
+      ...updated,
+      status: updated.status as ListStatus,
+    }
+  }
+
+  async markAsUnpurchased(id: string): Promise<ShoppingList> {
+    const [updated] = await db
+      .update(shoppingLists)
+      .set({
+        purchasedAt: null,
+        location: null,
+        status: ListStatus.IN_PROGRESS,
+        completedAt: null,
+      })
+      .where(eq(shoppingLists.id, id))
+      .returning()
+
+    return {
+      ...updated,
+      status: updated.status as ListStatus,
+    }
   }
 
   // === プライベートメソッド ===

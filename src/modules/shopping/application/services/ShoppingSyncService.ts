@@ -1,22 +1,18 @@
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
-import type { PurchaseHistoryRepository } from "../../domain/repositories/PurchaseHistoryRepository"
 import type {
   ShoppingList,
   ShoppingListWithItems,
   CreateShoppingListInput,
   UpdateShoppingListInput,
   GetShoppingListsQuery,
+  GetPurchaseHistoryQuery,
 } from "../../domain/entities/ShoppingList"
 import type {
   ListItem,
   CreateListItemInput,
   UpdateListItemInput,
 } from "../../domain/entities/ListItem"
-import type {
-  PurchaseHistory,
-  GetPurchaseHistoryQuery,
-} from "../../domain/entities/PurchaseHistory"
 
 /**
  * Shopping同期サービス
@@ -24,8 +20,7 @@ import type {
  */
 export class ShoppingSyncService {
   constructor(
-    private shoppingListRepository: ShoppingListRepository,
-    private purchaseHistoryRepository: PurchaseHistoryRepository
+    private shoppingListRepository: ShoppingListRepository
   ) {}
 
   // === リスト操作 ===
@@ -145,31 +140,54 @@ export class ShoppingSyncService {
     return this.shoppingListRepository.canAccessItem(itemId, userId)
   }
 
-  // === 履歴操作 ===
+  // === 購入履歴操作（purchasedAtが入っているリスト） ===
 
-  async getHistory(query: GetPurchaseHistoryQuery): Promise<PurchaseHistory[]> {
-    return this.purchaseHistoryRepository.findMany(query)
+  async getHistory(query: GetPurchaseHistoryQuery): Promise<ShoppingListWithItems[]> {
+    return this.shoppingListRepository.findPurchaseHistory(query)
   }
 
-  async getHistoryById(id: string): Promise<PurchaseHistory | null> {
-    return this.purchaseHistoryRepository.findById(id)
+  async getHistoryById(id: string): Promise<ShoppingListWithItems | null> {
+    const list = await this.shoppingListRepository.findById(id)
+    // purchasedAtが入っているリストのみ履歴として返す
+    if (list && list.purchasedAt) {
+      return list
+    }
+    return null
   }
 
   async deleteHistory(id: string, userId: string): Promise<void> {
-    await this.purchaseHistoryRepository.delete(id)
+    // 履歴削除 = リスト削除（cascade でlist_itemsも削除される）
+    await this.shoppingListRepository.delete(id)
 
     // 同期ログを記録
     await syncRepository.createOperation({
       id: crypto.randomUUID(),
       userId,
-      entity: "history",
+      entity: "list",
       entityId: id,
       operation: "delete",
       payload: { id },
     })
   }
 
-  async canAccessHistory(historyId: string, userId: string): Promise<boolean> {
-    return this.purchaseHistoryRepository.canAccess(historyId, userId)
+  async revertHistory(id: string, userId: string): Promise<ShoppingList> {
+    // リストを未購入に戻す
+    const list = await this.shoppingListRepository.markAsUnpurchased(id)
+
+    // 同期ログを記録
+    await syncRepository.createOperation({
+      id: crypto.randomUUID(),
+      userId,
+      entity: "list",
+      entityId: id,
+      operation: "update",
+      payload: { id, purchasedAt: null, status: list.status },
+    })
+
+    return list
+  }
+
+  async canAccessHistory(listId: string, userId: string): Promise<boolean> {
+    return this.shoppingListRepository.canAccess(listId, userId)
   }
 }

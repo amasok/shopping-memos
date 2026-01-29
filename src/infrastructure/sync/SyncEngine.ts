@@ -6,7 +6,6 @@ import {
   type Tag,
   type ShoppingList,
   type ListItem,
-  type PurchaseHistory,
 } from "@/lib/db"
 import type { SyncEntity, SyncOperationType } from "@/modules/sync/domain/entities/SyncOperation"
 
@@ -200,13 +199,12 @@ export class SyncEngine {
         await db.tags.put(serverData as Parameters<typeof db.tags.put>[0])
         break
       case "list":
+      case "history":
+        // historyはlistのpurchasedAtが設定されているもの
         await db.lists.put(serverData as Parameters<typeof db.lists.put>[0])
         break
       case "listItem":
         await db.listItems.put(serverData as Parameters<typeof db.listItems.put>[0])
-        break
-      case "history":
-        await db.history.put(serverData as Parameters<typeof db.history.put>[0])
         break
     }
   }
@@ -249,8 +247,9 @@ export class SyncEngine {
       if (changes.listItems.length > 0) {
         await db.listItems.bulkPut(changes.listItems as unknown as ListItem[])
       }
+      // historyはlistsのpurchasedAtが設定されているものなので、listsと一緒にマージされる
       if (changes.history.length > 0) {
-        await db.history.bulkPut(changes.history as unknown as PurchaseHistory[])
+        await db.lists.bulkPut(changes.history as unknown as ShoppingList[])
       }
 
       // 最終同期日時を保存
@@ -295,12 +294,14 @@ export class SyncEngine {
 
     try {
       // ローカルデータを収集
+      const allLists = await db.lists.toArray()
       const localData = {
         items: (await db.items.toArray()) as unknown as Array<Record<string, unknown>>,
         tags: (await db.tags.toArray()) as unknown as Array<Record<string, unknown>>,
-        lists: (await db.lists.toArray()) as unknown as Array<Record<string, unknown>>,
+        lists: allLists as unknown as Array<Record<string, unknown>>,
         listItems: (await db.listItems.toArray()) as unknown as Array<Record<string, unknown>>,
-        history: (await db.history.toArray()) as unknown as Array<Record<string, unknown>>,
+        // historyはlistsのpurchasedAtが設定されているもの
+        history: allLists.filter((list) => !!list.purchasedAt) as unknown as Array<Record<string, unknown>>,
       }
 
       // サーバーにマージリクエスト
@@ -325,8 +326,9 @@ export class SyncEngine {
       if (serverData.listItems.length > 0) {
         await db.listItems.bulkPut(serverData.listItems as unknown as ListItem[])
       }
+      // historyはlistsのpurchasedAtが設定されているものなので、listsと一緒にマージされる
       if (serverData.history.length > 0) {
-        await db.history.bulkPut(serverData.history as unknown as PurchaseHistory[])
+        await db.lists.bulkPut(serverData.history as unknown as ShoppingList[])
       }
 
       // 同期キューをクリア
@@ -386,10 +388,11 @@ export class SyncEngine {
           break
         }
         case "history": {
-          const historyItem = await db.history.get(localId)
-          if (historyItem) {
-            await db.history.delete(localId)
-            await db.history.add({ ...historyItem, id: serverId })
+          // historyはlistsのpurchasedAtが設定されているものなので、listと同様に処理
+          const historyList = await db.lists.get(localId)
+          if (historyList) {
+            await db.lists.delete(localId)
+            await db.lists.add({ ...historyList, id: serverId })
           }
           break
         }

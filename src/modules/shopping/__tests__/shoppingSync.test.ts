@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from "vitest"
 import { ListStatus } from "../domain/value-objects/ListStatus"
 import type { ShoppingList } from "../domain/entities/ShoppingList"
 import type { ListItem } from "../domain/entities/ListItem"
-import type { PurchaseHistory } from "../domain/entities/PurchaseHistory"
 
 describe("ShoppingSyncService テスト", () => {
   describe("リスト操作の同期ログ", () => {
@@ -207,29 +206,31 @@ describe("ShoppingSyncService テスト", () => {
       syncOperations.push(op)
     }
 
-    it("履歴作成時に同期ログが記録される", () => {
-      const history: PurchaseHistory = {
-        id: "history-1",
-        listId: "list-1",
-        location: "スーパー",
-        itemIds: ["item-1"],
+    it("買い物完了時に同期ログが記録される（リストにpurchasedAtを設定）", () => {
+      const list: ShoppingList = {
+        id: "list-1",
+        name: "買い物リスト",
+        status: ListStatus.COMPLETED,
         groupId: null,
+        createdAt: new Date(),
+        completedAt: new Date(),
         purchasedAt: new Date(),
+        location: "スーパー",
       }
       const userId = "user-1"
 
       createSyncOperation({
         id: crypto.randomUUID(),
         userId,
-        entity: "history",
-        entityId: history.id,
-        operation: "create",
-        payload: history,
+        entity: "list",
+        entityId: list.id,
+        operation: "update",
+        payload: { id: list.id, purchasedAt: list.purchasedAt, location: list.location },
       })
 
       expect(syncOperations).toHaveLength(1)
-      expect(syncOperations[0].entity).toBe("history")
-      expect(syncOperations[0].operation).toBe("create")
+      expect(syncOperations[0].entity).toBe("list")
+      expect(syncOperations[0].operation).toBe("update")
     })
 
     it("履歴削除時に同期ログが記録される", () => {

@@ -39,10 +39,10 @@ export default function HistoryPage() {
   // タグIDからタグ名を引くマップ
   const tagMap = new Map(tags?.map((tag) => [tag.id, tag]) ?? [])
 
-  const handleRevertToList = async (historyId: string, itemIds: string[], e: React.MouseEvent) => {
+  const handleRevertToList = async (historyId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      await revertHistory(historyId, itemIds)
+      await revertHistory(historyId)
       router.push("/lists")
     } catch (error) {
       console.error("Failed to revert history:", error)
@@ -97,7 +97,6 @@ export default function HistoryPage() {
           <ul className="space-y-3">
             {history?.map((record) => {
               const isExpanded = expandedId === record.id
-              // サーバーからlistItemsが返されるのでそれを使用
               const items = record.listItems ?? []
 
               return (
@@ -122,10 +121,10 @@ export default function HistoryPage() {
                           </div>
                           <div>
                             <p className="font-semibold text-gray-900">
-                              {record.location || "買い物"}
+                              {record.location || record.name || "買い物"}
                             </p>
                             <p className="text-sm text-gray-500">
-                              {formatDate(record.purchasedAt)} · {record.itemIds?.length ?? 0}点
+                              {record.purchasedAt && formatDate(record.purchasedAt)} · {items.length}点
                             </p>
                             {!isExpanded && items.length > 0 && (
                               <p className="mt-1 text-sm text-gray-400">
@@ -154,7 +153,7 @@ export default function HistoryPage() {
                             variant="secondary"
                             size="sm"
                             className="flex-1"
-                            onClick={(e) => handleRevertToList(record.id, record.itemIds ?? [], e)}
+                            onClick={(e) => handleRevertToList(record.id, e)}
                             disabled={isProcessing || items.length === 0}
                           >
                             <RotateCcw className="mr-1 h-4 w-4" />

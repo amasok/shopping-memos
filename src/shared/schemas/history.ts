@@ -11,10 +11,9 @@ export const getHistoryQuerySchema = z
 
 export type GetHistoryQuery = z.infer<typeof getHistoryQuerySchema>
 
-// 履歴からアイテムを戻す
+// 履歴からリストに戻す
 export const revertHistorySchema = z.object({
   historyId: z.string().uuid(),
-  itemIds: z.array(z.string().uuid()).min(1, "アイテムを1つ以上選択してください"),
 })
 
 export type RevertHistoryInput = z.infer<typeof revertHistorySchema>

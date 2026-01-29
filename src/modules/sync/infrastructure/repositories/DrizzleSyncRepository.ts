@@ -1,4 +1,4 @@
-import { eq, and, gte, inArray, isNull } from "drizzle-orm"
+import { eq, and, gte, inArray, isNull, isNotNull } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   syncOperations,
@@ -6,7 +6,6 @@ import {
   tags,
   shoppingLists,
   listItems,
-  purchaseHistory,
   groupMembers,
 } from "@/infrastructure/db/drizzle/schema"
 import type { SyncRepository } from "../../domain/repositories/SyncRepository"
@@ -200,14 +199,16 @@ export class DrizzleSyncRepository implements SyncRepository {
                 )
               )
           : Promise.resolve([]),
+        // 履歴はshoppingListsのpurchasedAtが入っているレコード
         groupIds.length > 0
           ? db
               .select()
-              .from(purchaseHistory)
+              .from(shoppingLists)
               .where(
                 and(
-                  inArray(purchaseHistory.groupId, groupIds),
-                  gte(purchaseHistory.purchasedAt, sinceDate)
+                  inArray(shoppingLists.groupId, groupIds),
+                  isNotNull(shoppingLists.purchasedAt),
+                  gte(shoppingLists.purchasedAt, sinceDate)
                 )
               )
           : Promise.resolve([]),

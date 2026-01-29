@@ -3,6 +3,7 @@ import type { ListItem } from "./ListItem"
 
 /**
  * 買い物リスト
+ * purchasedAtが入っていれば購入履歴として表示
  */
 export interface ShoppingList {
   id: string
@@ -11,6 +12,8 @@ export interface ShoppingList {
   groupId: string | null
   createdAt: Date
   completedAt: Date | null
+  purchasedAt: Date | null  // 購入日時（購入履歴として表示）
+  location: string | null   // 購入場所
 }
 
 /**
@@ -44,6 +47,8 @@ export interface UpdateShoppingListInput {
   name?: string
   status?: ListStatus
   completedAt?: Date | null
+  purchasedAt?: Date | null
+  location?: string | null
 }
 
 /**
@@ -55,4 +60,13 @@ export interface GetShoppingListsQuery {
   includeCompleted?: boolean
   /** trueの場合、groupIdフィルタを無視して全リストを返す */
   includeAllGroups?: boolean
+}
+
+/**
+ * 購入履歴取得クエリ（purchasedAtが入っているリスト）
+ */
+export interface GetPurchaseHistoryQuery {
+  groupId?: string
+  limit?: number
+  offset?: number
 }

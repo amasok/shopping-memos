@@ -209,6 +209,7 @@ export const itemTags = pgTable(
  * ステータス: in_progress（進行中）、completed（完了）
  * userId: 作成者（必須）
  * groupId: グループ（オプション、nullなら個人リスト）
+ * purchasedAt: 購入日時（入っていれば購入履歴として表示）
  */
 export const shoppingLists = pgTable(
   "shopping_lists",
@@ -220,11 +221,14 @@ export const shoppingLists = pgTable(
     groupId: text("group_id").references(() => groups.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     completedAt: timestamp("completed_at"),
+    purchasedAt: timestamp("purchased_at"), // 購入日時（購入履歴として表示）
+    location: text("location"), // 購入場所
   },
   (table) => [
     index("shopping_lists_user_idx").on(table.userId),
     index("shopping_lists_group_idx").on(table.groupId),
     index("shopping_lists_status_idx").on(table.status),
+    index("shopping_lists_purchased_idx").on(table.purchasedAt),
   ]
 )
 
@@ -255,31 +259,8 @@ export const listItems = pgTable(
   ]
 )
 
-/**
- * 購入履歴
- * userId: 作成者（必須）
- * groupId: グループ（オプション、nullなら個人履歴）
- */
-export const purchaseHistory = pgTable(
-  "purchase_history",
-  {
-    id: text("id").primaryKey(),
-    listId: text("list_id")
-      .notNull()
-      .unique()
-      .references(() => shoppingLists.id, { onDelete: "cascade" }),
-    location: text("location"),
-    itemIds: text("item_ids").array(), // 購入したアイテムのID
-    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
-    groupId: text("group_id"),
-    purchasedAt: timestamp("purchased_at").defaultNow().notNull(),
-  },
-  (table) => [
-    index("purchase_history_user_idx").on(table.userId),
-    index("purchase_history_group_idx").on(table.groupId),
-    index("purchase_history_purchased_idx").on(table.purchasedAt),
-  ]
-)
+// purchase_history テーブルは廃止
+// 購入履歴は shopping_lists.purchased_at が入っているレコードとして表示
 
 // ============================================================
 // 同期エンジン

@@ -4,6 +4,7 @@ import type {
   CreateShoppingListInput,
   UpdateShoppingListInput,
   GetShoppingListsQuery,
+  GetPurchaseHistoryQuery,
 } from "../entities/ShoppingList"
 import type { ListItem, CreateListItemInput, UpdateListItemInput } from "../entities/ListItem"
 
@@ -71,4 +72,21 @@ export interface ShoppingListRepository {
    * ユーザーがリストアイテムにアクセスできるか確認
    */
   canAccessItem(itemId: string, userId: string): Promise<boolean>
+
+  // === 購入履歴操作 ===
+
+  /**
+   * 購入履歴一覧を取得（purchasedAtが入っているリスト）
+   */
+  findPurchaseHistory(query: GetPurchaseHistoryQuery): Promise<ShoppingListWithItems[]>
+
+  /**
+   * リストを購入完了にする
+   */
+  markAsPurchased(id: string, location?: string): Promise<ShoppingList>
+
+  /**
+   * リストを未購入に戻す
+   */
+  markAsUnpurchased(id: string): Promise<ShoppingList>
 }

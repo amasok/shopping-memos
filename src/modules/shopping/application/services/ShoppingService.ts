@@ -1,16 +1,13 @@
 import { db } from "@/infrastructure/db/drizzle/client"
-import { items, itemTags, shoppingLists, purchaseHistory } from "@/infrastructure/db/drizzle/schema"
-import { eq, inArray } from "drizzle-orm"
+import { items, itemTags, shoppingLists } from "@/infrastructure/db/drizzle/schema"
+import { eq } from "drizzle-orm"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
-import type { PurchaseHistoryRepository } from "../../domain/repositories/PurchaseHistoryRepository"
 import type { ShoppingListWithItems } from "../../domain/entities/ShoppingList"
-import type { PurchaseHistory } from "../../domain/entities/PurchaseHistory"
 import { ListStatus, isInProgress, canTransition } from "../../domain/value-objects/ListStatus"
 
 export interface FinishShoppingResult {
   list: ShoppingListWithItems
-  history: PurchaseHistory
   purchasedItemIds: string[]
 }
 
@@ -20,18 +17,17 @@ export interface FinishShoppingResult {
  */
 export class ShoppingService {
   constructor(
-    private shoppingListRepository: ShoppingListRepository,
-    private purchaseHistoryRepository: PurchaseHistoryRepository
+    private shoppingListRepository: ShoppingListRepository
   ) {}
 
   /**
    * 買い物を完了する
    *
    * ビジネスルール:
-   * - チェック済みアイテムのみ履歴に記録
+   * - チェック済みアイテムのみ購入済みとして記録
    * - チェック済みアイテムはCatalog.ItemのpurchasedAtを設定
-   * - 未チェックアイテムはそのままCatalogに残る
-   * - リストのステータスはin_progress → completedの一方通行
+   * - 未チェックアイテムは新しいカタログアイテムとして作成（買いたいものに戻す）
+   * - リストのpurchasedAtを設定（購入履歴として表示）
    */
   async finishShopping(
     listId: string,
@@ -60,22 +56,23 @@ export class ShoppingService {
 
     // トランザクションで一括処理
     const result = await db.transaction(async (tx) => {
-      // 1. リストのステータスを完了に更新
       const now = new Date()
+
+      // 1. リストを購入完了に更新（purchasedAtを設定）
       await tx
         .update(shoppingLists)
         .set({
           status: ListStatus.COMPLETED,
           completedAt: now,
+          purchasedAt: now,
+          location: location ?? null,
         })
         .where(eq(shoppingLists.id, listId))
 
       // 2. チェック済みアイテムに対応するCatalog.ItemのpurchasedAtを設定
-      // リストアイテムの名前からCatalog.Itemを特定（同じグループ内で同名のアイテム）
       const purchasedCatalogItemIds: string[] = []
 
       if (checkedItems.length > 0) {
-        // グループ内の同名アイテムを購入済みにする
         for (const checkedItem of checkedItems) {
           const catalogItems = await tx
             .select({ id: items.id })
@@ -96,21 +93,7 @@ export class ShoppingService {
         }
       }
 
-      // 3. 購入履歴を作成
-      const historyId = crypto.randomUUID()
-      const [history] = await tx
-        .insert(purchaseHistory)
-        .values({
-          id: historyId,
-          listId,
-          location: location ?? null,
-          itemIds: checkedItemIds,
-          groupId: list.groupId,
-          purchasedAt: now,
-        })
-        .returning()
-
-      // 4. 未チェックアイテムを「買いたいもの」に戻す（新しいカタログアイテムを作成）
+      // 3. 未チェックアイテムを「買いたいもの」に戻す（新しいカタログアイテムを作成）
       const returnedItemIds: string[] = []
       if (uncheckedItems.length > 0) {
         for (const uncheckedItem of uncheckedItems) {
@@ -146,29 +129,18 @@ export class ShoppingService {
       return {
         purchasedCatalogItemIds,
         returnedItemIds,
-        history,
       }
     })
 
     // 同期ログを記録（トランザクション外）
-    // リスト完了
+    // リスト購入完了
     await syncRepository.createOperation({
       id: crypto.randomUUID(),
       userId,
       entity: "list",
       entityId: listId,
       operation: "update",
-      payload: { id: listId, status: ListStatus.COMPLETED },
-    })
-
-    // 履歴作成
-    await syncRepository.createOperation({
-      id: crypto.randomUUID(),
-      userId,
-      entity: "history",
-      entityId: result.history.id,
-      operation: "create",
-      payload: { ...result.history },
+      payload: { id: listId, status: ListStatus.COMPLETED, purchasedAt: new Date() },
     })
 
     // 購入済みアイテム更新
@@ -203,7 +175,6 @@ export class ShoppingService {
 
     return {
       list: updatedList,
-      history: result.history,
       purchasedItemIds: checkedItemIds,
     }
   }

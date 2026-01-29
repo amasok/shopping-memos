@@ -3,7 +3,6 @@ import {
   generateId,
   type ShoppingList,
   type ListItem,
-  type PurchaseHistory,
 } from "./index"
 
 // Shopping Lists
@@ -184,122 +183,109 @@ export async function removeListItemAndReturnToItems(id: string): Promise<void> 
   })
 }
 
-// Purchase History
-export async function getHistory(): Promise<PurchaseHistory[]> {
-  return db.history.orderBy("purchasedAt").reverse().toArray()
+// Purchase History（purchasedAtが設定されているリスト）
+export async function getHistory(): Promise<ShoppingList[]> {
+  return db.lists
+    .filter((list) => !!list.purchasedAt)
+    .reverse()
+    .sortBy("purchasedAt")
 }
 
 // グループIDで購入履歴を取得
-export async function getHistoryByGroupId(groupId: string | undefined): Promise<PurchaseHistory[]> {
+export async function getHistoryByGroupId(groupId: string | undefined): Promise<ShoppingList[]> {
   if (groupId === undefined) {
     // 個人の履歴（グループに紐付いていないもの）
-    return db.history
-      .filter((h) => h.groupId === undefined)
+    return db.lists
+      .filter((list) => list.groupId === undefined && !!list.purchasedAt)
       .reverse()
       .sortBy("purchasedAt")
   }
-  return db.history.where("groupId").equals(groupId).reverse().sortBy("purchasedAt")
+  return db.lists
+    .filter((list) => list.groupId === groupId && !!list.purchasedAt)
+    .reverse()
+    .sortBy("purchasedAt")
 }
 
 export async function getHistoryById(
   id: string
-): Promise<PurchaseHistory | undefined> {
-  return db.history.get(id)
-}
-
-export async function createHistory(
-  listId: string,
-  location: string | undefined,
-  itemIds: string[],
-  groupId?: string
-): Promise<PurchaseHistory> {
-  const history: PurchaseHistory = {
-    id: generateId(),
-    listId,
-    location,
-    itemIds,
-    groupId,
-    purchasedAt: new Date(),
+): Promise<ShoppingList | undefined> {
+  const list = await db.lists.get(id)
+  // purchasedAtが設定されているもののみ履歴として返す
+  if (list && list.purchasedAt) {
+    return list
   }
-  await db.history.add(history)
-  return history
+  return undefined
 }
 
-// 購入履歴を買い物リストに戻す
+// 購入履歴を買い物リストに戻す（purchasedAtをnullに）
 export async function revertHistoryToList(historyId: string): Promise<ShoppingList> {
   return db.transaction(
     "rw",
-    [db.history, db.lists, db.listItems, db.items],
+    [db.lists, db.listItems, db.items],
     async () => {
-      const history = await db.history.get(historyId)
-      if (!history) {
+      const list = await db.lists.get(historyId)
+      if (!list || !list.purchasedAt) {
         throw new Error("History not found")
       }
 
-      // 購入済みアイテムを取得
-      const purchasedItems = await db.items.bulkGet(history.itemIds)
-      const validItems = purchasedItems.filter((item) => item !== undefined)
+      // リストに含まれるアイテムの名前でカタログアイテムを検索して未購入に戻す
+      const listItems = await db.listItems.where("listId").equals(historyId).toArray()
+      for (const listItem of listItems) {
+        const catalogItems = await db.items
+          .filter((item) => item.name === listItem.name && !!item.purchasedAt)
+          .toArray()
+        for (const item of catalogItems) {
+          await db.items.update(item.id, { purchasedAt: undefined })
+        }
+      }
 
-      // 新しい買い物リストを作成（グループも保持）
-      const list: ShoppingList = {
-        id: generateId(),
-        name: history.location || "買い物リスト",
+      // リストを未購入に戻す
+      await db.lists.update(historyId, {
+        purchasedAt: undefined,
+        location: undefined,
         status: "in_progress",
-        groupId: history.groupId,
-        createdAt: new Date(),
-      }
-      await db.lists.add(list)
+        completedAt: undefined,
+      })
 
-      // アイテムをListItemとして追加（グループも保持）
-      if (validItems.length > 0) {
-        const now = new Date()
-        const listItems: ListItem[] = validItems.map((item) => ({
-          id: generateId(),
-          listId: list.id,
-          name: item!.name,
-          quantity: item!.quantity,
-          memo: item!.memo,
-          tagIds: item!.tagIds ?? [],
-          groupId: item!.groupId ?? history.groupId,
-          checked: false,
-          createdAt: now,
-        }))
-        await db.listItems.bulkAdd(listItems)
-      }
-
-      // 購入済みアイテムを削除
-      await db.items.bulkDelete(history.itemIds)
-
-      // 履歴を削除
-      await db.history.delete(historyId)
-
-      return list
+      const updatedList = await db.lists.get(historyId)
+      return updatedList!
     }
   )
 }
 
-// 購入履歴を削除（アイテムも一緒に削除）
+// 購入履歴を削除（リストとアイテムも一緒に削除）
 export async function deleteHistory(historyId: string): Promise<void> {
-  await db.transaction("rw", [db.history, db.items], async () => {
-    const history = await db.history.get(historyId)
-    if (!history) return
+  await db.transaction("rw", [db.lists, db.listItems, db.items], async () => {
+    const list = await db.lists.get(historyId)
+    if (!list || !list.purchasedAt) return
 
-    // 紐付くアイテムを削除
-    await db.items.bulkDelete(history.itemIds)
+    // リストに含まれるアイテムの名前でカタログアイテムを検索して削除
+    const listItems = await db.listItems.where("listId").equals(historyId).toArray()
+    for (const listItem of listItems) {
+      const catalogItems = await db.items
+        .filter((item) => item.name === listItem.name)
+        .toArray()
+      for (const item of catalogItems) {
+        await db.items.delete(item.id)
+      }
+    }
 
-    // 履歴を削除
-    await db.history.delete(historyId)
+    // リストアイテムを削除
+    await db.listItems.where("listId").equals(historyId).delete()
+
+    // リストを削除
+    await db.lists.delete(historyId)
   })
 }
 
-// 買い物完了処理（リスト完了 + 履歴作成 + 未チェックアイテムを買いたいものに戻す）
+// 買い物完了処理（リスト完了 + 購入日時設定 + 未チェックアイテムを買いたいものに戻す）
 export async function finishShopping(
   listId: string,
   location?: string
 ): Promise<{ purchasedItems: ListItem[]; unpurchasedItems: ListItem[] }> {
   return db.transaction(
     "rw",
-    [db.lists, db.listItems, db.history, db.items],
+    [db.lists, db.listItems, db.items],
     async () => {
       // リストを取得してgroupIdを確認
       const list = await db.lists.get(listId)
@@ -311,28 +297,14 @@ export async function finishShopping(
 
       const now = new Date()
 
-      // 購入済みアイテムをShoppingItemとして保存（purchasedAt付き、グループも保持）
-      const purchasedItemIds: string[] = []
-      if (purchasedItems.length > 0) {
-        const purchasedShoppingItems = purchasedItems.map((item) => {
-          const id = generateId()
-          purchasedItemIds.push(id)
-          return {
-            id,
-            name: item.name,
-            quantity: item.quantity,
-            memo: item.memo,
-            tagIds: item.tagIds ?? [],
-            groupId: item.groupId ?? groupId,
-            purchasedAt: now,
-            createdAt: now,
-            updatedAt: now,
-          }
-        })
-        await db.items.bulkAdd(purchasedShoppingItems)
-
-        // 購入履歴を作成（アイテムIDを参照、グループも保持）
-        await createHistory(listId, location, purchasedItemIds, groupId)
+      // 購入済みアイテム名でカタログアイテムのpurchasedAtを更新
+      for (const listItem of purchasedItems) {
+        const catalogItems = await db.items
+          .filter((item) => item.name === listItem.name && !item.purchasedAt)
+          .toArray()
+        for (const item of catalogItems) {
+          await db.items.update(item.id, { purchasedAt: now })
+        }
       }
 
       // 未チェックアイテムを「買いたいもの」に戻す（purchasedAtなし、グループも保持）
@@ -351,11 +323,13 @@ export async function finishShopping(
         )
       }
 
-      // リストのアイテムを削除
-      await db.listItems.where("listId").equals(listId).delete()
-
-      // リストを完了
-      await completeList(listId)
+      // リストを完了 + 購入日時/場所を設定（履歴として表示される）
+      await db.lists.update(listId, {
+        status: "completed",
+        completedAt: now,
+        purchasedAt: now,
+        location,
+      })
 
       return { purchasedItems, unpurchasedItems }
     }
