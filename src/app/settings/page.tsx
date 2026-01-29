@@ -35,7 +35,7 @@ const settingItems: SettingItem[] = [
 
 export default function SettingsPage() {
   const { user, isLoading, login, logout } = useAuth()
-  const { theme, setTheme } = useTheme()
+  const { theme, setTheme, isHydrated } = useTheme()
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false)
 
   const handleLogin = async () => {
@@ -149,7 +149,8 @@ export default function SettingsPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {THEMES.map((t) => {
-                  const isSelected = theme === t.id
+                  // ハイドレーション後のみ選択状態を表示（SSRとの不一致を防ぐ）
+                  const isSelected = isHydrated && theme === t.id
                   return (
                     <button
                       key={t.id}
