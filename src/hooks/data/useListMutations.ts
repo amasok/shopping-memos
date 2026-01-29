@@ -54,21 +54,25 @@ export function useListMutations() {
   const addItemMutation = trpc.shopping.addItemToList.useMutation({
     onSuccess: () => {
       utils.shopping.getList.invalidate()
+      utils.shopping.getLists.invalidate()
     },
   })
   const addNewItemMutation = trpc.shopping.addNewItemToList.useMutation({
     onSuccess: () => {
       utils.shopping.getList.invalidate()
+      utils.shopping.getLists.invalidate()
     },
   })
   const removeItemMutation = trpc.shopping.removeItemFromList.useMutation({
     onSuccess: () => {
       utils.shopping.getList.invalidate()
+      utils.shopping.getLists.invalidate()
     },
   })
   const checkItemMutation = trpc.shopping.checkItem.useMutation({
     onSuccess: () => {
       utils.shopping.getList.invalidate()
+      utils.shopping.getLists.invalidate()
     },
   })
   const finishMutation = trpc.shopping.finishShopping.useMutation({
