@@ -113,6 +113,33 @@ export async function getGroupsByUserId(userId: string): Promise<Group[]> {
   return groups.filter((g): g is Group => g !== undefined)
 }
 
+// 招待コードでグループに参加
+export async function joinGroupByInviteCode(
+  inviteCode: string,
+  userId: string,
+  userName: string,
+  userEmail: string
+): Promise<{ success: boolean; group?: Group; error?: string }> {
+  // 招待コードからグループを検索
+  const group = await getGroupByInviteCode(inviteCode.toUpperCase())
+  if (!group) {
+    return { success: false, error: "招待コードが見つかりません" }
+  }
+
+  // すでにメンバーかどうかチェック
+  const existingMember = await db.groupMembers
+    .where(["groupId", "userId"])
+    .equals([group.id, userId])
+    .first()
+  if (existingMember) {
+    return { success: false, error: "すでにこのグループのメンバーです" }
+  }
+
+  // メンバーとして追加
+  await addGroupMember(group.id, userId, userName, userEmail)
+  return { success: true, group }
+}
+
 // 招待コード生成（6文字の英数字）
 function generateInviteCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // 紛らわしい文字を除外

@@ -5,10 +5,10 @@ import { Header } from "@/components/layouts/Header"
 import { BottomSheet, Button, EmptyState, Input, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { db, type Group } from "@/lib/db"
-import { createGroup, getGroupsByUserId } from "@/lib/db/groups"
+import { createGroup, getGroupsByUserId, joinGroupByInviteCode } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
 import { useLiveQuery } from "dexie-react-hooks"
-import { ChevronRight, LogIn, Plus, Users } from "lucide-react"
+import { ChevronRight, LogIn, Plus, UserPlus, Users } from "lucide-react"
 import Link from "next/link"
 import { useState } from "react"
 
@@ -17,6 +17,10 @@ export default function GroupsPage() {
   const [isCreateSheetOpen, setIsCreateSheetOpen] = useState(false)
   const [newGroupName, setNewGroupName] = useState("")
   const [isCreating, setIsCreating] = useState(false)
+  const [isJoinSheetOpen, setIsJoinSheetOpen] = useState(false)
+  const [inviteCode, setInviteCode] = useState("")
+  const [isJoining, setIsJoining] = useState(false)
+  const [joinError, setJoinError] = useState<string | null>(null)
 
   // ユーザーが所属するグループを取得
   const groups = useLiveQuery(
@@ -46,6 +50,33 @@ export default function GroupsPage() {
       console.error("Failed to create group:", error)
     } finally {
       setIsCreating(false)
+    }
+  }
+
+  const handleJoinGroup = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!user || !inviteCode.trim()) return
+
+    setIsJoining(true)
+    setJoinError(null)
+    try {
+      const result = await joinGroupByInviteCode(
+        inviteCode.trim(),
+        user.id,
+        user.name,
+        user.email
+      )
+      if (result.success) {
+        setInviteCode("")
+        setIsJoinSheetOpen(false)
+      } else {
+        setJoinError(result.error ?? "参加に失敗しました")
+      }
+    } catch (error) {
+      console.error("Failed to join group:", error)
+      setJoinError("参加に失敗しました")
+    } finally {
+      setIsJoining(false)
     }
   }
 
@@ -96,11 +127,21 @@ export default function GroupsPage() {
       <Header title="グループ管理" showBackButton backHref="/settings" />
       <PageContainer>
         <div className="space-y-4">
-          {/* 作成ボタン */}
-          <Button className="w-full" onClick={() => setIsCreateSheetOpen(true)}>
-            <Plus className="mr-2 h-5 w-5" />
-            グループを作成
-          </Button>
+          {/* 作成・参加ボタン */}
+          <div className="flex gap-3">
+            <Button className="flex-1" onClick={() => setIsCreateSheetOpen(true)}>
+              <Plus className="mr-2 h-5 w-5" />
+              作成
+            </Button>
+            <Button
+              variant="secondary"
+              className="flex-1"
+              onClick={() => setIsJoinSheetOpen(true)}
+            >
+              <UserPlus className="mr-2 h-5 w-5" />
+              参加
+            </Button>
+          </div>
 
           {/* グループ一覧 */}
           {!hasGroups ? (
@@ -140,6 +181,47 @@ export default function GroupsPage() {
             disabled={!newGroupName.trim() || isCreating}
           >
             {isCreating ? "作成中..." : "作成"}
+          </Button>
+        </form>
+      </BottomSheet>
+
+      {/* グループ参加シート */}
+      <BottomSheet
+        isOpen={isJoinSheetOpen}
+        onClose={() => {
+          setIsJoinSheetOpen(false)
+          setInviteCode("")
+          setJoinError(null)
+        }}
+        title="グループに参加"
+      >
+        <form onSubmit={handleJoinGroup} className="space-y-6">
+          <div>
+            <Input
+              label="招待コード"
+              name="inviteCode"
+              value={inviteCode}
+              onChange={(e) => {
+                setInviteCode(e.target.value.toUpperCase())
+                setJoinError(null)
+              }}
+              placeholder="例: ABC123"
+              autoFocus
+              maxLength={6}
+            />
+            <p className="mt-2 text-sm text-gray-500">
+              グループの管理者から共有された6桁のコードを入力してください
+            </p>
+            {joinError && (
+              <p className="mt-2 text-sm text-red-600">{joinError}</p>
+            )}
+          </div>
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={inviteCode.trim().length !== 6 || isJoining}
+          >
+            {isJoining ? "参加中..." : "参加"}
           </Button>
         </form>
       </BottomSheet>
