@@ -62,6 +62,8 @@ export interface GetShoppingListsQuery {
   includeCompleted?: boolean
   /** trueの場合、groupIdフィルタを無視して全リストを返す */
   includeAllGroups?: boolean
+  /** includeAllGroups時にアクセス可能なグループIDのリスト */
+  accessibleGroupIds?: string[]
 }
 
 /**

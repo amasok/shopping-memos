@@ -1,4 +1,4 @@
-import { eq, and, inArray, isNull, isNotNull, desc } from "drizzle-orm"
+import { eq, and, or, inArray, isNull, isNotNull, desc } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   shoppingLists,
@@ -74,10 +74,30 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     const conditions = []
 
     // groupIdフィルタ:
-    // - includeAllGroups: true → フィルタなし（全リスト）
+    // - includeAllGroups: true → アクセス可能なグループ + 個人リストのみ
     // - groupIdが指定されている → そのグループのリストのみ
     // - groupIdがundefined → 個人リスト（groupId IS NULL かつ userId一致）のみ
-    if (!query.includeAllGroups) {
+    if (query.includeAllGroups) {
+      // includeAllGroups時: アクセス可能なグループ + 個人リストのみ
+      const accessConditions = []
+
+      // 個人リスト（自分が作成したもの）
+      if (query.userId) {
+        accessConditions.push(
+          and(isNull(shoppingLists.groupId), eq(shoppingLists.userId, query.userId))
+        )
+      }
+
+      // アクセス可能なグループのリスト
+      if (query.accessibleGroupIds && query.accessibleGroupIds.length > 0) {
+        accessConditions.push(inArray(shoppingLists.groupId, query.accessibleGroupIds))
+      }
+
+      // どちらかの条件に一致するもの
+      if (accessConditions.length > 0) {
+        conditions.push(or(...accessConditions))
+      }
+    } else {
       if (query.groupId !== undefined) {
         conditions.push(eq(shoppingLists.groupId, query.groupId))
       } else {

@@ -21,6 +21,7 @@ import { items } from "@/infrastructure/db/drizzle/schema"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
+import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
 import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-objects/ListStatus"
 import { ShoppingService } from "@/modules/shopping/application/services/ShoppingService"
 import { ShoppingSyncService } from "@/modules/shopping/application/services/ShoppingSyncService"
@@ -45,6 +46,13 @@ export const shoppingRouter = router({
       // グループ指定時はメンバーシップを検証
       await verifyGroupMembership(input.groupId, ctx.userId)
 
+      // includeAllGroups時はアクセス可能なグループIDを取得
+      let accessibleGroupIds: string[] | undefined
+      if (input.includeAllGroups) {
+        const userGroups = await groupRepository.findByUserId(ctx.userId)
+        accessibleGroupIds = userGroups.map((g) => g.id)
+      }
+
       return shoppingSyncService.getLists({
         userId: ctx.userId,
         // null を undefined に変換（ドメイン層は null を受け付けない）
@@ -52,6 +60,7 @@ export const shoppingRouter = router({
         status: input.status as ListStatus | undefined,
         includeCompleted: input.includeCompleted,
         includeAllGroups: input.includeAllGroups,
+        accessibleGroupIds,
       })
     }),
 
