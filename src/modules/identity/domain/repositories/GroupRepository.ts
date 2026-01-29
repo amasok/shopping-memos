@@ -1,4 +1,4 @@
-import type { Group, CreateGroupInput, UpdateGroupInput } from "../entities/Group"
+import type { Group, GroupWithMemberCount, CreateGroupInput, UpdateGroupInput } from "../entities/Group"
 import type {
   GroupMember,
   GroupMemberWithUser,
@@ -21,8 +21,8 @@ export interface GroupRepository {
   /** 招待コードでグループを取得 */
   findByInviteCode(inviteCode: string): Promise<Group | null>
 
-  /** ユーザーが所属するグループ一覧を取得 */
-  findByUserId(userId: string): Promise<Group[]>
+  /** ユーザーが所属するグループ一覧を取得（メンバー数付き） */
+  findByUserId(userId: string): Promise<GroupWithMemberCount[]>
 
   /** グループを更新 */
   update(input: UpdateGroupInput): Promise<Group>

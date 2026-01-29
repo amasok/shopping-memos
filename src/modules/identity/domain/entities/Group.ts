@@ -11,6 +11,14 @@ export interface Group {
 }
 
 /**
+ * メンバー数付きグループ
+ * 一覧表示用
+ */
+export interface GroupWithMemberCount extends Group {
+  memberCount: number
+}
+
+/**
  * グループ作成時の入力
  */
 export interface CreateGroupInput {

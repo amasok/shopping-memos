@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm"
+import { eq, and, sql } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   groups,
@@ -7,7 +7,7 @@ import {
   users,
 } from "@/infrastructure/db/drizzle/schema"
 import type { GroupRepository } from "../../domain/repositories/GroupRepository"
-import type { Group, CreateGroupInput, UpdateGroupInput } from "../../domain/entities/Group"
+import type { Group, GroupWithMemberCount, CreateGroupInput, UpdateGroupInput } from "../../domain/entities/Group"
 
 /**
  * 6文字の招待コードを生成
@@ -72,7 +72,17 @@ export class DrizzleGroupRepository implements GroupRepository {
     return result[0] ?? null
   }
 
-  async findByUserId(userId: string): Promise<Group[]> {
+  async findByUserId(userId: string): Promise<GroupWithMemberCount[]> {
+    // メンバー数をサブクエリで取得
+    const memberCountSubquery = db
+      .select({
+        groupId: groupMembers.groupId,
+        count: sql<number>`count(*)::int`.as("count"),
+      })
+      .from(groupMembers)
+      .groupBy(groupMembers.groupId)
+      .as("member_counts")
+
     const result = await db
       .select({
         id: groups.id,
@@ -80,12 +90,17 @@ export class DrizzleGroupRepository implements GroupRepository {
         inviteCode: groups.inviteCode,
         createdAt: groups.createdAt,
         updatedAt: groups.updatedAt,
+        memberCount: memberCountSubquery.count,
       })
       .from(groups)
       .innerJoin(groupMembers, eq(groups.id, groupMembers.groupId))
+      .leftJoin(memberCountSubquery, eq(groups.id, memberCountSubquery.groupId))
       .where(eq(groupMembers.userId, userId))
 
-    return result
+    return result.map((row) => ({
+      ...row,
+      memberCount: row.memberCount ?? 0,
+    }))
   }
 
   async update(input: UpdateGroupInput): Promise<Group> {

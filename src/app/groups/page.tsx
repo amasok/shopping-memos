@@ -9,7 +9,6 @@ import { addGroupMember } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useGroups } from "@/hooks/data"
-import { useLiveQuery } from "dexie-react-hooks"
 import { ChevronRight, LogIn, Plus, UserPlus, Users } from "lucide-react"
 import Link from "next/link"
 import { useState } from "react"
@@ -274,15 +273,7 @@ export default function GroupsPage() {
   )
 }
 
-function GroupListItem({ group }: { group: { id: string; name: string } }) {
-  // メンバー数を取得
-  const members = useLiveQuery(
-    () => db.groupMembers.where("groupId").equals(group.id).toArray(),
-    [group.id]
-  )
-
-  const memberCount = members?.length ?? 0
-
+function GroupListItem({ group }: { group: { id: string; name: string; memberCount: number } }) {
   return (
     <li>
       <Link
@@ -298,7 +289,7 @@ function GroupListItem({ group }: { group: { id: string; name: string } }) {
           </div>
           <div>
             <p className="font-semibold text-gray-900">{group.name}</p>
-            <p className="text-sm text-gray-500">{memberCount}人のメンバー</p>
+            <p className="text-sm text-gray-500">{group.memberCount}人のメンバー</p>
           </div>
         </div>
         <ChevronRight className="h-5 w-5 text-gray-400" />
