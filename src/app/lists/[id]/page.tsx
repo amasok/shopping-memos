@@ -5,7 +5,7 @@ import { Header } from "@/components/layouts/Header"
 import { ItemSelector, type NewItemInput } from "@/components/features/items/ItemSelector"
 import { BottomSheet, Button, Checkbox, LoadingPage, PageContainer, SwipeToRemove } from "@/components/ui"
 import { cn } from "@/lib/utils"
-import { useList, useItems, useTags, useListMutations, useItemMutations } from "@/hooks/data"
+import { useList, useItems, useTags, useListMutations } from "@/hooks/data"
 import {
   CheckCircle,
   MoreVertical,
@@ -44,7 +44,6 @@ export default function ShoppingListPage() {
 
   // ミューテーション
   const { checkItem, removeItemFromList, addItemToList, addNewItemToList, updateList, deleteList, finishShopping } = useListMutations()
-  const { deleteItem } = useItemMutations()
 
   const isLoading = isListLoading || isItemsLoading || isTagsLoading
 
@@ -137,14 +136,10 @@ export default function ShoppingListPage() {
     selectedItemIds: string[]
     newItems: NewItemInput[]
   }) => {
-    // 既存アイテムをリストに追加
+    // 既存アイテムをリストに追加（スナップショットを作成）
+    // カタログアイテムは削除しない - リストから外した時に戻れるようにする
     for (const itemId of data.selectedItemIds) {
       await addItemToList({ listId, itemId })
-    }
-
-    // 買いたいものから削除
-    for (const itemId of data.selectedItemIds) {
-      await deleteItem(itemId)
     }
 
     // 新規アイテムをリストに追加

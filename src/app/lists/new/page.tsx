@@ -7,7 +7,7 @@ import { Header } from "@/components/layouts/Header"
 import { Input, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
-import { useGroups, useItems, useTags, useListMutations, useItemMutations } from "@/hooks/data"
+import { useGroups, useItems, useTags, useListMutations } from "@/hooks/data"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useEffect, useState } from "react"
 
@@ -42,7 +42,6 @@ function NewListPageContent() {
   const { items, isLoading: isItemsLoading } = useItems({ groupId: selectedGroupId, includePurchased: false })
   const { tags, isLoading: isTagsLoading } = useTags({ groupId: selectedGroupId })
   const { createList } = useListMutations()
-  const { deleteItem } = useItemMutations()
 
   const isLoading = isItemsLoading || isTagsLoading
 
@@ -63,10 +62,7 @@ function NewListPageContent() {
       itemIds: data.selectedItemIds,
     })
 
-    // 買いたいものから選択されたアイテムを削除
-    for (const itemId of data.selectedItemIds) {
-      await deleteItem(itemId)
-    }
+    // カタログアイテムは削除しない - リストから外した時に戻れるようにする
 
     // 新規アイテムがある場合はリスト詳細ページに遷移してから追加
     // (addNewItemToListはlistIdが必要なので、リスト作成後にリダイレクト)
