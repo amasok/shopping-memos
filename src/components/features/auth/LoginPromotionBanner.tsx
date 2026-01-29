@@ -46,8 +46,8 @@ export function LoginPromotionBanner() {
   return (
     <div
       className={cn(
-        "fixed bottom-16 left-0 right-0 z-10",
-        "mx-4 mb-2"
+        "fixed bottom-36 left-0 right-0 z-10",
+        "mx-4"
       )}
     >
       <div className="relative rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 p-4 shadow-lg">

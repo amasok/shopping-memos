@@ -42,13 +42,9 @@ export default function HomePage() {
     () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt && item.groupId === selectedGroupId).toArray(),
     [selectedGroupId]
   )
-  // タグはグループ選択時も個人タグ（共通）を含めて表示
-  // グループ選択時: そのグループのタグ + 個人タグ
-  // 個人モード時: 個人タグのみ
+  // 選択中のグループのタグのみ表示
   const tags = useLiveQuery(
-    () => db.tags.filter((tag) =>
-      tag.groupId === selectedGroupId || (selectedGroupId !== undefined && tag.groupId === undefined)
-    ).toArray(),
+    () => db.tags.filter((tag) => tag.groupId === selectedGroupId).toArray(),
     [selectedGroupId]
   )
   // リストも選択されたグループでフィルタ
@@ -374,6 +370,7 @@ export default function HomePage() {
           item={editingItem}
           onClose={handleCloseSheet}
           allowContinue={!editingItem}
+          defaultGroupId={selectedGroupId}
         />
       </BottomSheet>
     </AppLayout>

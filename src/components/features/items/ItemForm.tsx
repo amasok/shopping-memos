@@ -17,21 +17,29 @@ export interface ItemFormProps {
   onSaved?: () => void
   onDeleted?: () => void
   allowContinue?: boolean
+  defaultGroupId?: string
 }
 
-export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = false }: ItemFormProps) {
+export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = false, defaultGroupId }: ItemFormProps) {
   const { user } = useAuth()
   const [name, setName] = useState("")
   const [quantity, setQuantity] = useState(1)
   const [memo, setMemo] = useState("")
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
-  const [selectedGroupId, setSelectedGroupId] = useState<string | undefined>(undefined)
+  const [selectedGroupId, setSelectedGroupId] = useState<string | undefined>(defaultGroupId)
   const [isAddingTag, setIsAddingTag] = useState(false)
   const [newTagName, setNewTagName] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
-  const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
+  // 選択中のグループのタグのみ表示（グループのアイテムには個人タグは使えない）
+  const tags = useLiveQuery(
+    async () => {
+      const result = await db.tags.filter((tag) => tag.groupId === selectedGroupId).toArray()
+      return result.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+    },
+    [selectedGroupId]
+  )
 
   // ログイン中の場合のみグループを取得
   const groups = useLiveQuery(
@@ -60,7 +68,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
       setQuantity(1)
       setMemo("")
       setSelectedTagIds([])
-      setSelectedGroupId(undefined)
+      setSelectedGroupId(defaultGroupId)
     }
     setIsAddingTag(false)
     setNewTagName("")
