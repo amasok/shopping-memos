@@ -1,6 +1,8 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
+import { useAuth } from "./AuthContext"
+import { trpc } from "@/infrastructure/trpc/client"
 
 const STORAGE_KEY = "selectedGroupId"
 
@@ -10,6 +12,8 @@ const isDev = process.env.NODE_ENV !== "production"
 type GroupContextType = {
   selectedGroupId: string | undefined
   setSelectedGroupId: (groupId: string | undefined) => void
+  /** グループIDが有効かどうかを確認中 */
+  isValidating: boolean
 }
 
 const GroupContext = createContext<GroupContextType | undefined>(undefined)
@@ -32,15 +36,16 @@ export function GroupProvider({ children }: { children: ReactNode }) {
     return undefined
   })
 
-  // デバッグ: selectedGroupId の変化を追跡
-  useEffect(() => {
-    if (isDev) {
-      console.log("[GroupContext] selectedGroupId changed:", selectedGroupId)
-    }
-  }, [selectedGroupId])
+  // ログイン状態を取得
+  const { user, isLoading: isAuthLoading } = useAuth()
+
+  // グループ一覧を取得（ログイン中のみ）
+  const groupsQuery = trpc.identity.getGroups.useQuery(undefined, {
+    enabled: !!user && !isAuthLoading,
+  })
 
   // 変更時にlocalStorageに保存
-  const setSelectedGroupId = (groupId: string | undefined) => {
+  const setSelectedGroupId = useCallback((groupId: string | undefined) => {
     if (isDev) {
       console.log("[GroupContext] setSelectedGroupId called:", groupId)
     }
@@ -50,10 +55,46 @@ export function GroupProvider({ children }: { children: ReactNode }) {
     } else {
       localStorage.setItem(STORAGE_KEY, groupId)
     }
-  }
+  }, [])
+
+  // グループの有効性を確認
+  // 選択中のグループIDが、ユーザーが所属するグループに含まれているか確認
+  // 含まれていなければundefinedにリセット（グループから除外された場合など）
+  useEffect(() => {
+    // ログイン中でなければ何もしない
+    if (!user || isAuthLoading) return
+
+    // グループ一覧の取得中は待機
+    if (groupsQuery.isLoading) return
+
+    // グループが選択されていなければ何もしない
+    if (!selectedGroupId) return
+
+    // グループ一覧が取得できたら有効性を確認
+    if (groupsQuery.data) {
+      const isValid = groupsQuery.data.some((g) => g.id === selectedGroupId)
+      if (!isValid) {
+        console.log(
+          "[GroupContext] Selected group is no longer accessible, resetting to personal mode:",
+          selectedGroupId
+        )
+        setSelectedGroupId(undefined)
+      }
+    }
+  }, [user, isAuthLoading, selectedGroupId, groupsQuery.data, groupsQuery.isLoading, setSelectedGroupId])
+
+  // デバッグ: selectedGroupId の変化を追跡
+  useEffect(() => {
+    if (isDev) {
+      console.log("[GroupContext] selectedGroupId changed:", selectedGroupId)
+    }
+  }, [selectedGroupId])
+
+  // バリデーション中かどうか
+  const isValidating = !!user && !isAuthLoading && groupsQuery.isLoading && !!selectedGroupId
 
   return (
-    <GroupContext.Provider value={{ selectedGroupId, setSelectedGroupId }}>
+    <GroupContext.Provider value={{ selectedGroupId, setSelectedGroupId, isValidating }}>
       {children}
     </GroupContext.Provider>
   )
