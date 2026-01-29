@@ -438,9 +438,9 @@ interface SyncState {
 
 ### Phase 2-1: 基盤
 
-- [ ] SyncQueueをDexieに追加
-- [ ] SyncEngineの基本実装
-- [ ] オンライン/オフライン検出
+- [x] SyncQueueをDexieに追加
+- [x] SyncEngineの基本実装
+- [x] オンライン/オフライン検出
 
 ### Phase 2-2: Push同期
 
@@ -459,6 +459,43 @@ interface SyncState {
 - [ ] 初回ログイン時のマージ
 - [ ] IDマッピング
 - [ ] 競合解決
+
+## 現在の実装状況（2025年1月時点）
+
+### 実装済みファイル
+
+| ファイル | 説明 | 状況 |
+|---------|------|------|
+| `src/infrastructure/sync/SyncEngine.ts` | 同期エンジン本体 | 基盤のみ実装 |
+| `src/contexts/SyncContext.tsx` | React Context | 未統合（TODOあり） |
+| `src/lib/db/index.ts` | SyncQueueテーブル | Dexieに定義済み |
+
+### 未完了の統合作業
+
+SyncEngine/SyncContextは基盤として実装されていますが、以下の理由でアプリに統合されていません：
+
+1. **tRPCとの接続が未実装**
+   - `pushFn`, `pullFn`, `mergeFn`をtRPCクライアントから渡す必要がある
+   - SyncContext内にTODOコメントとして残っている
+
+2. **現在の実装方式との相違**
+   - 現在は「サーバーファースト方式」を採用
+   - グループ選択時: サーバーから直接取得
+   - 個人モード: IndexedDB直接操作
+   - SyncEngineは「オフラインファースト方式」を想定
+
+3. **プロバイダーへの組み込みが必要**
+   - `src/app/providers.tsx`にSyncProviderを追加する必要がある
+
+### 今後の選択肢
+
+| 選択肢 | 説明 |
+|--------|------|
+| **A: オフラインファースト移行** | 全操作をSyncEngine経由に変更。グループ機能もオフライン対応に |
+| **B: ハイブリッド** | 個人モードのみSyncEngineを使用。グループはサーバーファースト維持 |
+| **C: 現状維持** | サーバーファーストを継続。SyncEngineは将来の参考として保持 |
+
+現時点では**C: 現状維持**を選択。グループ機能の安定化を優先。
 
 ## 影響
 
