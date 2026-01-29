@@ -5,8 +5,9 @@ import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Button, ConfirmDialog, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
+import { useTheme, THEMES, type ThemeType } from "@/contexts/ThemeContext"
 import { cn } from "@/lib/utils"
-import { ChevronRight, FileText, LogIn, LogOut, Shield, Tag, User, Users } from "lucide-react"
+import { Check, ChevronRight, FileText, LogIn, LogOut, Palette, Shield, Tag, User, Users } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
 
@@ -34,6 +35,7 @@ const settingItems: SettingItem[] = [
 
 export default function SettingsPage() {
   const { user, isLoading, login, logout } = useAuth()
+  const { theme, setTheme } = useTheme()
   const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false)
 
   const handleLogin = async () => {
@@ -48,6 +50,10 @@ export default function SettingsPage() {
     await logout()
   }
 
+  const handleThemeChange = (newTheme: ThemeType) => {
+    setTheme(newTheme)
+  }
+
   return (
     <AppLayout>
       <Header title="設定" />
@@ -57,7 +63,10 @@ export default function SettingsPage() {
           {isLoading ? (
             <div className="rounded-xl bg-white p-4 shadow-sm">
               <div className="flex items-center justify-center py-4">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+                <div
+                  className="h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
+                  style={{ borderColor: "var(--theme-primary)", borderTopColor: "transparent" }}
+                />
               </div>
             </div>
           ) : user ? (
@@ -72,8 +81,11 @@ export default function SettingsPage() {
                     className="h-12 w-12 rounded-full"
                   />
                 ) : (
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-100">
-                    <User className="h-6 w-6 text-blue-600" />
+                  <div
+                    className="flex h-12 w-12 items-center justify-center rounded-full"
+                    style={{ backgroundColor: "var(--theme-primary-light)" }}
+                  >
+                    <User className="h-6 w-6" style={{ color: "var(--theme-primary)" }} />
                   </div>
                 )}
                 <div className="flex-1">
@@ -91,16 +103,22 @@ export default function SettingsPage() {
               </Button>
             </div>
           ) : (
-            <div className="rounded-xl bg-blue-50 p-4">
+            <div
+              className="rounded-xl p-4"
+              style={{ backgroundColor: "var(--theme-primary-light)" }}
+            >
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
-                  <LogIn className="h-5 w-5 text-blue-600" />
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-full"
+                  style={{ backgroundColor: "var(--theme-accent-light)" }}
+                >
+                  <LogIn className="h-5 w-5" style={{ color: "var(--theme-primary)" }} />
                 </div>
                 <div className="flex-1">
-                  <p className="font-semibold text-blue-900">
+                  <p className="font-semibold text-gray-900">
                     ログインして同期
                   </p>
-                  <p className="mt-1 text-sm text-blue-700">
+                  <p className="mt-1 text-sm text-gray-600">
                     Googleアカウントでログインすると、デバイス間でデータを同期できます
                   </p>
                   <Button className="mt-3" size="sm" onClick={handleLogin}>
@@ -110,6 +128,62 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+
+          {/* テーマ設定 */}
+          <section>
+            <h2 className="mb-3 text-sm font-semibold text-gray-500">
+              テーマ
+            </h2>
+            <div className="rounded-xl bg-white p-4 shadow-sm">
+              <div className="flex items-center gap-3 mb-4">
+                <div
+                  className="flex h-10 w-10 items-center justify-center rounded-full"
+                  style={{ backgroundColor: "var(--theme-primary-light)" }}
+                >
+                  <Palette className="h-5 w-5" style={{ color: "var(--theme-primary)" }} />
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-900">カラーテーマ</p>
+                  <p className="text-sm text-gray-500">アプリの配色を変更</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {THEMES.map((t) => {
+                  const isSelected = theme === t.id
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => handleThemeChange(t.id)}
+                      className={cn(
+                        "relative flex items-center gap-3 rounded-xl p-3 transition-all",
+                        "border-2",
+                        isSelected
+                          ? "border-gray-900 bg-gray-50"
+                          : "border-gray-200 hover:border-gray-300"
+                      )}
+                    >
+                      <div
+                        className="h-8 w-8 rounded-full shadow-inner"
+                        style={{ backgroundColor: t.color }}
+                      />
+                      <div className="text-left">
+                        <p className="text-sm font-semibold text-gray-900">{t.name}</p>
+                        <p className="text-xs text-gray-500">{t.description}</p>
+                      </div>
+                      {isSelected && (
+                        <div
+                          className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full"
+                          style={{ backgroundColor: t.color }}
+                        >
+                          <Check className="h-3 w-3 text-white" strokeWidth={3} />
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </section>
 
           {/* 設定項目 */}
           <section>

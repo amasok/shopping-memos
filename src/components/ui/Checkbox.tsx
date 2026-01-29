@@ -34,12 +34,14 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(
           />
           <div
             className={cn(
-              "flex h-6 w-6 items-center justify-center rounded-md border-2 transition-colors",
-              "peer-focus:ring-2 peer-focus:ring-blue-500/20",
-              checked
-                ? "border-blue-600 bg-blue-600"
-                : "border-gray-300 bg-white"
+              "flex h-6 w-6 items-center justify-center rounded-lg border-2 transition-all",
+              checked ? "border-transparent" : "border-gray-300 bg-white"
             )}
+            style={
+              checked
+                ? { backgroundColor: "var(--theme-primary)", borderColor: "var(--theme-primary)" }
+                : undefined
+            }
           >
             {checked && <Check className="h-4 w-4 text-white" strokeWidth={3} />}
           </div>

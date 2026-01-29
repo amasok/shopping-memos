@@ -48,7 +48,7 @@ export function BottomNav() {
   ]
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-10 border-t border-gray-200 bg-white">
+    <nav className="fixed bottom-0 left-0 right-0 z-10 border-t border-gray-200 bg-white/95 backdrop-blur-sm">
       <div className="mx-auto max-w-lg">
         <ul className="flex items-center justify-around">
           {navItems.map((item) => {
@@ -60,17 +60,20 @@ export function BottomNav() {
                   className={cn(
                     "relative flex min-h-[56px] min-w-[64px] flex-col items-center justify-center gap-1 px-3 py-2",
                     "transition-colors",
-                    "focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500",
+                    "focus:outline-none",
                     isActive
-                      ? "text-blue-600"
-                      : "text-gray-500 hover:text-gray-900"
+                      ? "text-[var(--theme-primary)]"
+                      : "text-gray-400 hover:text-gray-600"
                   )}
                   aria-current={isActive ? "page" : undefined}
                 >
                   <span className="relative">
                     {item.icon}
                     {item.showBadge && (
-                      <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                      <span
+                        className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                        style={{ backgroundColor: "var(--theme-accent)" }}
+                      >
                         {activeListCount}
                       </span>
                     )}

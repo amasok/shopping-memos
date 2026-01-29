@@ -3,11 +3,70 @@
 :root {
   --background: #ffffff;
   --foreground: #1a1a1a;
+
+  /* Theme Colors - Default: Orange */
+  --theme-primary: #f97316;
+  --theme-primary-hover: #ea580c;
+  --theme-primary-light: #fff7ed;
+  --theme-primary-rgb: 249, 115, 22;
+  --theme-accent: #f59e0b;
+  --theme-accent-light: #fef3c7;
+  --theme-surface: #fffbf5;
+}
+
+/* Orange Theme (Default) */
+[data-theme="orange"] {
+  --theme-primary: #f97316;
+  --theme-primary-hover: #ea580c;
+  --theme-primary-light: #fff7ed;
+  --theme-primary-rgb: 249, 115, 22;
+  --theme-accent: #f59e0b;
+  --theme-accent-light: #fef3c7;
+  --theme-surface: #fffbf5;
+}
+
+/* Terracotta Theme */
+[data-theme="terracotta"] {
+  --theme-primary: #d97706;
+  --theme-primary-hover: #b45309;
+  --theme-primary-light: #fefce8;
+  --theme-primary-rgb: 217, 119, 6;
+  --theme-accent: #f43f5e;
+  --theme-accent-light: #fff1f2;
+  --theme-surface: #fafaf9;
+}
+
+/* Coral Theme */
+[data-theme="coral"] {
+  --theme-primary: #f43f5e;
+  --theme-primary-hover: #e11d48;
+  --theme-primary-light: #fff1f2;
+  --theme-primary-rgb: 244, 63, 94;
+  --theme-accent: #fb923c;
+  --theme-accent-light: #ffedd5;
+  --theme-surface: #fffbf8;
+}
+
+/* Blue Theme (Classic) */
+[data-theme="blue"] {
+  --theme-primary: #3b82f6;
+  --theme-primary-hover: #2563eb;
+  --theme-primary-light: #eff6ff;
+  --theme-primary-rgb: 59, 130, 246;
+  --theme-accent: #8b5cf6;
+  --theme-accent-light: #f5f3ff;
+  --theme-surface: #f8fafc;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-primary: var(--theme-primary);
+  --color-primary-hover: var(--theme-primary-hover);
+  --color-primary-light: var(--theme-primary-light);
+  --color-accent: var(--theme-accent);
+  --color-accent-light: var(--theme-accent-light);
+  --color-surface: var(--theme-surface);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -20,7 +79,7 @@
 }
 
 body {
-  background: var(--background);
+  background: var(--theme-surface);
   color: var(--foreground);
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont,
     "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
