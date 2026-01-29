@@ -20,7 +20,9 @@ import { db } from "@/infrastructure/db/drizzle/client"
 import { items } from "@/infrastructure/db/drizzle/schema"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
+import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
+import { CatalogSyncService } from "@/modules/catalog/application/services/CatalogSyncService"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
 import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-objects/ListStatus"
 import { ShoppingService } from "@/modules/shopping/application/services/ShoppingService"
@@ -30,6 +32,7 @@ import { verifyGroupMembership } from "../middleware/groupAuth"
 // サービスインスタンス
 const shoppingService = new ShoppingService(shoppingListRepository)
 const shoppingSyncService = new ShoppingSyncService(shoppingListRepository)
+const catalogSyncService = new CatalogSyncService(itemRepository, tagRepository)
 
 /**
  * Shopping コンテキストのルーター
@@ -297,7 +300,22 @@ export const shoppingRouter = router({
         })
       }
 
-      // リストにアイテムを追加（直接入力、同期ログ記録付き）
+      // カタログにもアイテムを作成（リストから外した時に「買いたいもの」に戻れるようにする）
+      const catalogItemId = crypto.randomUUID()
+      await catalogSyncService.createItem(
+        {
+          id: catalogItemId,
+          name: input.name,
+          quantity: input.quantity ?? 1,
+          memo: input.memo,
+          userId: ctx.userId,
+          groupId: list.groupId ?? undefined,
+          tagIds: input.tagIds ?? [],
+        },
+        ctx.userId
+      )
+
+      // リストにアイテムを追加（スナップショット、同期ログ記録付き）
       return shoppingSyncService.addItem(
         {
           id: crypto.randomUUID(),

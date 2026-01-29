@@ -221,6 +221,20 @@ export function useListMutations() {
       // ローカル: リストのgroupIdを取得
       const list = await db.lists.get(input.listId)
       const now = new Date()
+
+      // カタログにもアイテムを作成（リストから外した時に「買いたいもの」に戻れるようにする）
+      await db.items.add({
+        id: crypto.randomUUID(),
+        name: input.name,
+        quantity: input.quantity ?? 1,
+        memo: input.memo,
+        tagIds: input.tagIds ?? [],
+        groupId: list?.groupId,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      // リストにアイテムを追加（スナップショット）
       await db.listItems.add({
         id: crypto.randomUUID(),
         listId: input.listId,
