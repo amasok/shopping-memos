@@ -3,21 +3,9 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Badge, BottomSheet, Button, Checkbox, LoadingPage, PageContainer, SwipeToRemove } from "@/components/ui"
-import { db, type ShoppingItem, type Tag } from "@/lib/db"
-import { deleteItems } from "@/lib/db/items"
-import { createTag } from "@/lib/db/tags"
-import {
-  addListItem,
-  addListItems,
-  deleteList,
-  finishShopping,
-  getListItems,
-  removeListItemAndReturnToItems,
-  toggleListItem,
-  updateList,
-} from "@/lib/db/lists"
+import { type ShoppingItem, type Tag } from "@/lib/db"
 import { cn } from "@/lib/utils"
-import { useLiveQuery } from "dexie-react-hooks"
+import { useList, useItems, useTags, useListMutations, useItemMutations, useTagMutations } from "@/hooks/data"
 import {
   CheckCircle,
   Minus,
@@ -45,41 +33,21 @@ export default function ShoppingListPage() {
   const [deleteItemHandling, setDeleteItemHandling] = useState<"return" | "delete">("return")
   const [showEmptyListConfirm, setShowEmptyListConfirm] = useState(false)
 
-  const list = useLiveQuery(() => db.lists.get(listId), [listId])
-  const listItems = useLiveQuery(
-    () => db.listItems.where("listId").equals(listId).toArray(),
-    [listId]
-  )
+  // サーバーファースト対応のhooksを使用
+  const { list, items: listItems, isLoading: isListLoading, refetch: refetchList } = useList({ listId })
 
-  // リストのgroupIdを取得
-  const listGroupId = list?.groupId
+  // リストのgroupIdを取得（null → undefined に変換）
+  const listGroupId = list?.groupId ?? undefined
 
   // 買いたいもの一覧（リストに追加するため）- 未購入のみ、リストと同じグループのみ
-  const items = useLiveQuery(
-    () =>
-      db.items
-        .orderBy("createdAt")
-        .reverse()
-        .filter((item) => !item.purchasedAt && item.groupId === listGroupId)
-        .toArray(),
-    [listGroupId]
-  )
-  // タグ一覧（リストと同じグループ + 個人タグ）
-  const tags = useLiveQuery(
-    () =>
-      db.tags
-        .filter((tag) =>
-          tag.groupId === listGroupId || (listGroupId !== undefined && tag.groupId === undefined)
-        )
-        .toArray(),
-    [listGroupId]
-  )
+  const { items, isLoading: isItemsLoading } = useItems({ groupId: listGroupId, includePurchased: false })
+  // タグ一覧（リストと同じグループ）
+  const { tags, isLoading: isTagsLoading } = useTags({ groupId: listGroupId })
 
-  const isLoading =
-    list === undefined ||
-    listItems === undefined ||
-    items === undefined ||
-    tags === undefined
+  // ミューテーション
+  const { checkItem, removeItemFromList, updateList, deleteList, finishShopping } = useListMutations()
+
+  const isLoading = isListLoading || isItemsLoading || isTagsLoading
 
   // リスト名編集の初期化（listが変わった時のみ同期）
   const [prevListName, setPrevListName] = useState<string | undefined>(undefined)
@@ -98,32 +66,35 @@ export default function ShoppingListPage() {
     uncheckedItems.length === 0 && (listItems?.length ?? 0) > 0
 
   const handleToggle = async (id: string, checked: boolean) => {
-    await toggleListItem(id, !checked)
+    await checkItem(id, !checked)
+    refetchList()
   }
 
   const handleRemove = async (id: string) => {
-    await removeListItemAndReturnToItems(id)
+    await removeItemFromList(id)
+    refetchList()
 
-    // 空になったかチェック
-    const remainingItems = await getListItems(listId)
-    if (remainingItems.length === 0) {
+    // 空になったかチェック（更新後のデータで確認）
+    const remainingCount = (listItems?.length ?? 1) - 1
+    if (remainingCount === 0) {
       setShowEmptyListConfirm(true)
     }
   }
 
   const handleSaveName = async () => {
     if (!editName.trim()) return
-    await updateList(listId, { name: editName.trim() })
+    await updateList({ id: listId, name: editName.trim() })
+    refetchList()
     setIsEditingName(false)
   }
 
   const handleDeleteList = async () => {
-    await deleteList(listId, deleteItemHandling)
+    await deleteList(listId)
     router.push("/lists")
   }
 
   const handleDeleteEmptyList = async () => {
-    await deleteList(listId, "delete")
+    await deleteList(listId)
     router.push("/lists")
   }
 
@@ -424,6 +395,7 @@ export default function ShoppingListPage() {
           existingItems={items ?? []}
           tags={tags ?? []}
           onClose={() => setIsAddSheetOpen(false)}
+          onItemAdded={refetchList}
         />
       </BottomSheet>
 
@@ -534,12 +506,14 @@ function AddItemSheet({
   existingItems,
   tags,
   onClose,
+  onItemAdded,
 }: {
   listId: string
   groupId: string | undefined
   existingItems: ShoppingItem[]
   tags: Tag[]
   onClose: () => void
+  onItemAdded: () => void
 }) {
   const [mode, setMode] = useState<"select" | "new">(
     existingItems.length > 0 ? "select" : "new"
@@ -553,6 +527,11 @@ function AddItemSheet({
   const [isAddingTag, setIsAddingTag] = useState(false)
   const [newTagName, setNewTagName] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // サーバーファースト対応のミューテーション
+  const { addItemToList, addNewItemToList } = useListMutations()
+  const { deleteItem } = useItemMutations()
+  const { createTag } = useTagMutations()
 
   // タグでフィルタしたアイテム
   const filteredExistingItems =
@@ -590,25 +569,20 @@ function AddItemSheet({
 
     setIsSubmitting(true)
     try {
-      const selected = existingItems.filter((item) =>
-        selectedIds.includes(item.id)
-      )
-
-      // リストに追加（タグ・メモ・グループを保持）
-      await addListItems(
-        listId,
-        selected.map((item) => ({
-          name: item.name,
-          quantity: item.quantity,
-          memo: item.memo,
-          tagIds: item.tagIds,
-          groupId: item.groupId,
-        }))
-      )
+      // リストに追加（既存アイテムをitemIdで参照）
+      for (const itemId of selectedIds) {
+        await addItemToList({
+          listId,
+          itemId,
+        })
+      }
 
       // 買いたいものから削除
-      await deleteItems(selectedIds)
+      for (const itemId of selectedIds) {
+        await deleteItem(itemId)
+      }
 
+      onItemAdded()
       onClose()
     } catch (error) {
       console.error("Failed to add items:", error)
@@ -638,8 +612,10 @@ function AddItemSheet({
         setSelectedTagIds((prev) => [...prev, existing.id])
       }
     } else {
-      const newTag = await createTag(trimmed, groupId)
-      setSelectedTagIds((prev) => [...prev, newTag.id])
+      const newTag = await createTag({ name: trimmed, groupId })
+      if (newTag) {
+        setSelectedTagIds((prev) => [...prev, newTag.id])
+      }
     }
 
     setNewTagName("")
@@ -652,11 +628,18 @@ function AddItemSheet({
 
     setIsSubmitting(true)
     try {
-      await addListItem(listId, name.trim(), quantity, selectedTagIds, memo.trim() || undefined, groupId)
+      await addNewItemToList({
+        listId,
+        name: name.trim(),
+        quantity,
+        tagIds: selectedTagIds,
+        memo: memo.trim() || undefined,
+      })
       setName("")
       setMemo("")
       setQuantity(1)
       setSelectedTagIds([])
+      onItemAdded()
       onClose()
     } catch (error) {
       console.error("Failed to add item:", error)

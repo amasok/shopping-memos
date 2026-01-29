@@ -8,6 +8,20 @@ import {
 } from "@/infrastructure/db/drizzle/schema"
 import type { GroupRepository } from "../../domain/repositories/GroupRepository"
 import type { Group, CreateGroupInput, UpdateGroupInput } from "../../domain/entities/Group"
+
+/**
+ * 6文字の招待コードを生成
+ * 紛らわしい文字（0, O, I, L, 1）を除外
+ */
+function generateInviteCode(): string {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+  let code = ""
+  for (let i = 0; i < 6; i++) {
+    const randomIndex = Math.floor(Math.random() * chars.length)
+    code += chars[randomIndex]
+  }
+  return code
+}
 import type {
   GroupMember,
   GroupMemberWithUser,
@@ -28,6 +42,7 @@ export class DrizzleGroupRepository implements GroupRepository {
     const [group] = await db.insert(groups).values({
       id: input.id,
       name: input.name,
+      inviteCode: generateInviteCode(),
       createdAt: now,
       updatedAt: now,
     }).returning()
@@ -49,11 +64,20 @@ export class DrizzleGroupRepository implements GroupRepository {
     return result[0] ?? null
   }
 
+  async findByInviteCode(inviteCode: string): Promise<Group | null> {
+    const result = await db
+      .select()
+      .from(groups)
+      .where(eq(groups.inviteCode, inviteCode.toUpperCase()))
+    return result[0] ?? null
+  }
+
   async findByUserId(userId: string): Promise<Group[]> {
     const result = await db
       .select({
         id: groups.id,
         name: groups.name,
+        inviteCode: groups.inviteCode,
         createdAt: groups.createdAt,
         updatedAt: groups.updatedAt,
       })
@@ -84,6 +108,19 @@ export class DrizzleGroupRepository implements GroupRepository {
 
   async delete(id: string): Promise<void> {
     await db.delete(groups).where(eq(groups.id, id))
+  }
+
+  async regenerateInviteCode(id: string): Promise<Group> {
+    const [updated] = await db
+      .update(groups)
+      .set({
+        inviteCode: generateInviteCode(),
+        updatedAt: new Date(),
+      })
+      .where(eq(groups.id, id))
+      .returning()
+
+    return updated
   }
 
   // === メンバー ===

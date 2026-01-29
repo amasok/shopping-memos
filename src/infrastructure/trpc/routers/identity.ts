@@ -4,8 +4,10 @@ import {
   createGroupSchema,
   updateGroupSchema,
   deleteGroupSchema,
+  regenerateInviteCodeSchema,
   inviteMemberSchema,
   acceptInviteSchema,
+  joinByInviteCodeSchema,
   removeMemberSchema,
   getGroupMembersQuerySchema,
 } from "@/shared/schemas"
@@ -83,6 +85,22 @@ export const identityRouter = router({
 
       await groupRepository.delete(input.id)
       return { success: true }
+    }),
+
+  /** 招待コードを再生成 */
+  regenerateInviteCode: protectedProcedure
+    .input(regenerateInviteCodeSchema)
+    .mutation(async ({ input, ctx }) => {
+      // オーナーのみ再生成可能
+      const isOwner = await groupRepository.isOwner(input.groupId, ctx.userId)
+      if (!isOwner) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "招待コードの再生成はオーナーのみ可能です",
+        })
+      }
+
+      return groupRepository.regenerateInviteCode(input.groupId)
     }),
 
   // === メンバー ===
@@ -183,6 +201,40 @@ export const identityRouter = router({
 
       // グループ情報を返す
       const group = await groupRepository.findById(invite.groupId)
+      return group
+    }),
+
+  /** 招待コードでグループに参加 */
+  joinByInviteCode: protectedProcedure
+    .input(joinByInviteCodeSchema)
+    .mutation(async ({ input, ctx }) => {
+      // 招待コードでグループを検索
+      const group = await groupRepository.findByInviteCode(input.inviteCode)
+
+      if (!group) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "招待コードが見つかりません",
+        })
+      }
+
+      // 既にメンバーか確認
+      const isMember = await groupRepository.isMember(group.id, ctx.userId)
+      if (isMember) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "既にこのグループのメンバーです",
+        })
+      }
+
+      // メンバーとして追加
+      await groupRepository.addMember({
+        id: crypto.randomUUID(),
+        groupId: group.id,
+        userId: ctx.userId,
+        role: "member",
+      })
+
       return group
     }),
 

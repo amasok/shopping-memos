@@ -8,14 +8,13 @@ import { Header } from "@/components/layouts/Header"
 import { Badge, BottomSheet, EmptyState, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
-import { db, type ShoppingItem } from "@/lib/db"
-import { getGroupsByUserId } from "@/lib/db/groups"
+import { type ShoppingItem } from "@/lib/db"
 import { cn } from "@/lib/utils"
-import { useLiveQuery } from "dexie-react-hooks"
 import { LoginPromotionBanner } from "@/components/features/auth/LoginPromotionBanner"
 import { ClipboardList, Plus, Search, ShoppingCart, X } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useRef, useState } from "react"
+import { useItems, useTags, useListsWithItems, useGroups } from "@/hooks/data"
 
 export default function HomePage() {
   const router = useRouter()
@@ -28,33 +27,13 @@ export default function HomePage() {
   const [showListItems, setShowListItems] = useState(false)
   const longPressTimer = useRef<NodeJS.Timeout | null>(null)
 
-  // ログイン中の場合のみグループを取得
-  const groups = useLiveQuery(
-    async () => {
-      if (!user) return []
-      return getGroupsByUserId(user.id)
-    },
-    [user?.id]
-  )
+  // サーバーファースト対応のhooksを使用
+  const { groups, isLoading: isGroupsLoading } = useGroups()
+  const { items, isLoading: isItemsLoading } = useItems({ groupId: selectedGroupId, includePurchased: false })
+  const { tags, isLoading: isTagsLoading } = useTags({ groupId: selectedGroupId })
+  const { lists, listItems, isLoading: isListsLoading } = useListsWithItems({ status: "in_progress" })
 
-  // 未購入アイテムのみ取得（purchasedAtがundefinedのもの、選択されたグループでフィルタ）
-  const items = useLiveQuery(
-    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt && item.groupId === selectedGroupId).toArray(),
-    [selectedGroupId]
-  )
-  // 選択中のグループのタグのみ表示
-  const tags = useLiveQuery(
-    () => db.tags.filter((tag) => tag.groupId === selectedGroupId).toArray(),
-    [selectedGroupId]
-  )
-  // リストも選択されたグループでフィルタ
-  const lists = useLiveQuery(
-    () => db.lists.filter((list) => list.status === "in_progress" && list.groupId === selectedGroupId).toArray(),
-    [selectedGroupId]
-  )
-  const listItems = useLiveQuery(() => db.listItems.toArray(), [])
-
-  const isLoading = items === undefined || tags === undefined || lists === undefined || listItems === undefined
+  const isLoading = isItemsLoading || isTagsLoading || isListsLoading || (user && isGroupsLoading)
 
   // グループ変更時にタグ選択をリセット
   const handleGroupChange = (groupId: string | undefined) => {
@@ -63,21 +42,22 @@ export default function HomePage() {
   }
 
   // リストアイテムをリストIDでグループ化
-  const listItemsByListId = new Map<string, typeof listItems>()
-  const itemInLists = new Map<string, { listId: string; listName: string }[]>()
+  // サーバーとローカルで型が若干異なるため、共通プロパティのみ使用
+  type ListItemBase = {
+    id: string
+    listId: string
+    name: string
+    quantity: number
+    memo?: string | null
+    tagIds: string[] | null
+    checked: boolean
+  }
+  const listItemsByListId = new Map<string, ListItemBase[]>()
 
   if (lists && listItems) {
     for (const list of lists) {
-      const itemsInList = listItems.filter((li) => li.listId === list.id)
+      const itemsInList = listItems.filter((li) => li.listId === list.id) as ListItemBase[]
       listItemsByListId.set(list.id, itemsInList)
-
-      for (const li of itemsInList) {
-        // アイテム名でマッチング（簡易的な方法）
-        const key = `${li.name}-${li.quantity}`
-        const existing = itemInLists.get(key) ?? []
-        existing.push({ listId: list.id, listName: list.name })
-        itemInLists.set(key, existing)
-      }
     }
   }
 
@@ -290,7 +270,7 @@ export default function HomePage() {
                 {lists.map((list) => {
                   const itemsInList = listItemsByListId.get(list.id) ?? []
                   const filteredListItems = selectedTagId
-                    ? itemsInList.filter((li) => li.tagIds.includes(selectedTagId))
+                    ? itemsInList.filter((li) => li.tagIds?.includes(selectedTagId))
                     : itemsInList
 
                   if (filteredListItems.length === 0) return null

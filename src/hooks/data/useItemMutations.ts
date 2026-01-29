@@ -1,11 +1,17 @@
 "use client"
 
 import { useCallback } from "react"
-import { db, type ShoppingItem } from "@/lib/db"
+import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useDataSource } from "./useDataSource"
 
-type CreateItemInput = Omit<ShoppingItem, "id" | "createdAt" | "purchasedAt">
+type CreateItemInput = {
+  name: string
+  quantity: number
+  memo?: string
+  tagIds: string[]
+  groupId?: string
+}
 type UpdateItemInput = Partial<CreateItemInput> & { id: string }
 
 /**
@@ -51,9 +57,14 @@ export function useItemMutations() {
       const id = crypto.randomUUID()
       const now = new Date()
       await db.items.add({
-        ...input,
         id,
+        name: input.name,
+        quantity: input.quantity,
+        memo: input.memo,
+        tagIds: input.tagIds,
+        groupId: input.groupId,
         createdAt: now,
+        updatedAt: now,
         purchasedAt: undefined,
       })
       return { id }

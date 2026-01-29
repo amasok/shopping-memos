@@ -26,11 +26,22 @@ export const catalogRouter = router({
   // === アイテム ===
 
   /** アイテム一覧を取得 */
-  getItems: publicProcedure
+  getItems: protectedProcedure
     .input(getItemsQuerySchema)
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      // デバッグログ
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[catalog.getItems] input:", {
+          groupId: input.groupId,
+          userId: ctx.userId,
+          tagIds: input.tagIds,
+          includePurchased: input.includePurchased,
+        })
+      }
       return catalogSyncService.getItems({
-        groupId: input.groupId,
+        userId: ctx.userId,
+        // null を undefined に変換（ドメイン層は null を受け付けない）
+        groupId: input.groupId ?? undefined,
         tagIds: input.tagIds,
         searchText: input.searchText,
         includePurchased: input.includePurchased,
@@ -61,6 +72,7 @@ export const catalogRouter = router({
           name: input.name,
           quantity: input.quantity,
           memo: input.memo,
+          userId: ctx.userId,
           groupId: input.groupId,
           tagIds: input.tagIds,
         },
@@ -145,11 +157,13 @@ export const catalogRouter = router({
   // === タグ ===
 
   /** タグ一覧を取得 */
-  getTags: publicProcedure
+  getTags: protectedProcedure
     .input(getTagsQuerySchema)
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       return catalogSyncService.getTags({
-        groupId: input.groupId,
+        userId: ctx.userId,
+        // null を undefined に変換（ドメイン層は null を受け付けない）
+        groupId: input.groupId ?? undefined,
       })
     }),
 
@@ -175,6 +189,7 @@ export const catalogRouter = router({
         {
           id: crypto.randomUUID(),
           name: input.name,
+          userId: ctx.userId,
           groupId: input.groupId,
         },
         ctx.userId

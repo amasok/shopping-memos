@@ -25,7 +25,7 @@ export type DeleteTagInput = z.infer<typeof deleteTagSchema>
 
 // タグ取得クエリ
 export const getTagsQuerySchema = z.object({
-  groupId: z.string().uuid().optional(),
+  groupId: z.string().uuid().nullish(), // undefined または null を許可
 })
 
 export type GetTagsQuery = z.infer<typeof getTagsQuerySchema>

@@ -5,42 +5,93 @@ vi.mock("@/contexts/AuthContext", () => ({
   useAuth: vi.fn(),
 }))
 
+vi.mock("@/contexts/GroupContext", () => ({
+  useGroup: vi.fn(),
+}))
+
 import { useAuth } from "@/contexts/AuthContext"
+import { useGroup } from "@/contexts/GroupContext"
 
 // useDataSourceを直接インポートするとReactフックのルール違反になるため、
 // ロジックのテストのみ行う
 describe("useDataSource ロジック", () => {
-  describe("データソース判定", () => {
-    it("ユーザーがいる場合、サーバーを使用", () => {
+  describe("サーバーファースト方式のデータソース判定", () => {
+    it("グループ選択時かつログイン中: サーバーを使用", () => {
       const mockUseAuth = vi.mocked(useAuth)
+      const mockUseGroup = vi.mocked(useGroup)
+
       mockUseAuth.mockReturnValue({
         user: { id: "user-1", name: "テスト", email: "test@example.com" },
         isLoading: false,
         login: vi.fn(),
         logout: vi.fn(),
       })
+      mockUseGroup.mockReturnValue({
+        selectedGroupId: "group-1",
+        setSelectedGroupId: vi.fn(),
+      })
 
-      const { user, isLoading } = mockUseAuth()
+      const { user } = mockUseAuth()
+      const { selectedGroupId } = mockUseGroup()
 
-      expect(!!user).toBe(true) // useServer
-      expect(!user).toBe(false) // useLocal
-      expect(isLoading).toBe(false)
+      const hasGroupSelected = selectedGroupId !== undefined
+      const isLoggedIn = !!user
+      const useServer = hasGroupSelected && isLoggedIn
+
+      expect(useServer).toBe(true)
+      expect(!useServer).toBe(false) // useLocal
     })
 
-    it("ユーザーがいない場合、ローカルを使用", () => {
+    it("個人モード（グループ未選択）: ローカルを使用", () => {
       const mockUseAuth = vi.mocked(useAuth)
+      const mockUseGroup = vi.mocked(useGroup)
+
+      mockUseAuth.mockReturnValue({
+        user: { id: "user-1", name: "テスト", email: "test@example.com" },
+        isLoading: false,
+        login: vi.fn(),
+        logout: vi.fn(),
+      })
+      mockUseGroup.mockReturnValue({
+        selectedGroupId: undefined,
+        setSelectedGroupId: vi.fn(),
+      })
+
+      const { user } = mockUseAuth()
+      const { selectedGroupId } = mockUseGroup()
+
+      const hasGroupSelected = selectedGroupId !== undefined
+      const isLoggedIn = !!user
+      const useServer = hasGroupSelected && isLoggedIn
+
+      expect(useServer).toBe(false)
+      expect(!useServer).toBe(true) // useLocal
+    })
+
+    it("未ログイン時: ローカルを使用（グループ選択関係なし）", () => {
+      const mockUseAuth = vi.mocked(useAuth)
+      const mockUseGroup = vi.mocked(useGroup)
+
       mockUseAuth.mockReturnValue({
         user: null,
         isLoading: false,
         login: vi.fn(),
         logout: vi.fn(),
       })
+      mockUseGroup.mockReturnValue({
+        selectedGroupId: "group-1", // グループが選択されていても
+        setSelectedGroupId: vi.fn(),
+      })
 
-      const { user, isLoading } = mockUseAuth()
+      const { user } = mockUseAuth()
+      const { selectedGroupId } = mockUseGroup()
 
-      expect(!!user).toBe(false) // useServer
-      expect(!user).toBe(true) // useLocal
-      expect(isLoading).toBe(false)
+      const hasGroupSelected = selectedGroupId !== undefined
+      const isLoggedIn = !!user
+      const useServer = hasGroupSelected && isLoggedIn
+
+      expect(useServer).toBe(false) // 未ログインなのでサーバーは使わない
+      expect(!useServer).toBe(true) // useLocal
     })
 
     it("読み込み中の場合、isAuthLoadingがtrue", () => {

@@ -7,6 +7,7 @@ export interface Item {
   name: string
   quantity: number
   memo: string | null
+  userId: string | null // 作成者
   groupId: string | null
   purchasedAt: Date | null
   createdAt: Date
@@ -21,6 +22,7 @@ export interface CreateItemInput {
   name: string
   quantity: number
   memo?: string
+  userId: string // 作成者（必須）
   groupId?: string
   tagIds?: string[]
 }
@@ -38,9 +40,12 @@ export interface UpdateItemInput {
 
 /**
  * アイテム取得時のクエリ
+ * userId + groupId = null → 個人アイテム
+ * groupId != null → グループアイテム
  */
 export interface GetItemsQuery {
-  groupId?: string
+  userId?: string // 個人アイテム取得時に必要
+  groupId?: string | null // nullを明示的に渡せる
   tagIds?: string[]
   searchText?: string
   includePurchased?: boolean

@@ -4,9 +4,11 @@ import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { BottomSheet, Button, EmptyState, Input, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
-import { db, type Group } from "@/lib/db"
-import { createGroup, getGroupsByUserId, joinGroupByInviteCode } from "@/lib/db/groups"
+import { db } from "@/lib/db"
+import { addGroupMember } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
+import { trpc } from "@/infrastructure/trpc/client"
+import { useGroups } from "@/hooks/data"
 import { useLiveQuery } from "dexie-react-hooks"
 import { ChevronRight, LogIn, Plus, UserPlus, Users } from "lucide-react"
 import Link from "next/link"
@@ -22,20 +24,16 @@ export default function GroupsPage() {
   const [isJoining, setIsJoining] = useState(false)
   const [joinError, setJoinError] = useState<string | null>(null)
 
-  // ユーザーが所属するグループを取得
-  const groups = useLiveQuery(
-    async () => {
-      if (!user) return []
-      return getGroupsByUserId(user.id)
-    },
-    [user?.id]
-  )
+  // ユーザーが所属するグループを取得（サーバーから）
+  const { groups, isLoading: isGroupsLoading, refetch: refetchGroups } = useGroups()
 
-  const isLoading = authLoading || groups === undefined
+  const isLoading = authLoading || isGroupsLoading
 
   const handleLogin = async () => {
     await login()
   }
+
+  const createGroupMutation = trpc.identity.createGroup.useMutation()
 
   const handleCreateGroup = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -43,7 +41,35 @@ export default function GroupsPage() {
 
     setIsCreating(true)
     try {
-      await createGroup(newGroupName.trim(), user.id, user.name, user.email)
+      // サーバーでグループを作成
+      const group = await createGroupMutation.mutateAsync({
+        name: newGroupName.trim(),
+      })
+
+      // ローカルDBにも同期
+      await db.groups.put({
+        id: group.id,
+        name: group.name,
+        ownerId: user.id,
+        inviteCode: group.inviteCode,
+        createdAt: group.createdAt,
+        updatedAt: group.updatedAt,
+      })
+
+      // 自分をオーナーとして追加
+      await db.groupMembers.put({
+        id: crypto.randomUUID(),
+        groupId: group.id,
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        role: "owner",
+        joinedAt: new Date(),
+      })
+
+      // サーバーから最新のグループ一覧を再取得
+      await refetchGroups()
+
       setNewGroupName("")
       setIsCreateSheetOpen(false)
     } catch (error) {
@@ -53,6 +79,8 @@ export default function GroupsPage() {
     }
   }
 
+  const joinGroupMutation = trpc.identity.joinByInviteCode.useMutation()
+
   const handleJoinGroup = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user || !inviteCode.trim()) return
@@ -60,21 +88,38 @@ export default function GroupsPage() {
     setIsJoining(true)
     setJoinError(null)
     try {
-      const result = await joinGroupByInviteCode(
-        inviteCode.trim(),
-        user.id,
-        user.name,
-        user.email
-      )
-      if (result.success) {
-        setInviteCode("")
-        setIsJoinSheetOpen(false)
-      } else {
-        setJoinError(result.error ?? "参加に失敗しました")
-      }
+      // サーバーでグループに参加
+      const group = await joinGroupMutation.mutateAsync({
+        inviteCode: inviteCode.trim(),
+      })
+
+      // ローカルDBにも同期
+      // グループを追加
+      await db.groups.put({
+        id: group.id,
+        name: group.name,
+        ownerId: "", // サーバーではownerIdは別テーブルで管理
+        inviteCode: group.inviteCode,
+        createdAt: group.createdAt,
+        updatedAt: group.updatedAt,
+      })
+
+      // 自分をメンバーとして追加
+      await addGroupMember(group.id, user.id, user.name, user.email)
+
+      // サーバーから最新のグループ一覧を再取得
+      await refetchGroups()
+
+      setInviteCode("")
+      setIsJoinSheetOpen(false)
     } catch (error) {
       console.error("Failed to join group:", error)
-      setJoinError("参加に失敗しました")
+      if (error instanceof Error) {
+        // tRPCエラーメッセージを表示
+        setJoinError(error.message)
+      } else {
+        setJoinError("参加に失敗しました")
+      }
     } finally {
       setIsJoining(false)
     }
@@ -229,7 +274,7 @@ export default function GroupsPage() {
   )
 }
 
-function GroupListItem({ group }: { group: Group }) {
+function GroupListItem({ group }: { group: { id: string; name: string } }) {
   // メンバー数を取得
   const members = useLiveQuery(
     () => db.groupMembers.where("groupId").equals(group.id).toArray(),

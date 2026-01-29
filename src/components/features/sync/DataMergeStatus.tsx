@@ -1,6 +1,6 @@
 "use client"
 
-import { useDataMerge } from "@/hooks/useDataMerge"
+import { useDataMerge } from "@/contexts/DataMergeContext"
 import { cn } from "@/lib/utils"
 import { Cloud, AlertCircle, CheckCircle, RefreshCw } from "lucide-react"
 
@@ -9,15 +9,15 @@ import { Cloud, AlertCircle, CheckCircle, RefreshCw } from "lucide-react"
  * ログイン時にローカルデータをサーバーに同期中の状態を表示
  */
 export function DataMergeStatus() {
-  const { isMerging, isCompleted, error, mergedCounts, retryMerge } = useDataMerge()
+  const { isMerging, isMergeCompleted, error, mergedCounts, retryMerge } = useDataMerge()
 
   // マージ中でなく、エラーもなく、完了済みなら何も表示しない
-  if (!isMerging && !error && isCompleted) {
+  if (!isMerging && !error && isMergeCompleted) {
     return null
   }
 
   // マージ中でもエラーでもない場合（まだ開始していない）は何も表示しない
-  if (!isMerging && !error && !isCompleted) {
+  if (!isMerging && !error && !isMergeCompleted) {
     return null
   }
 
@@ -62,7 +62,7 @@ export function DataMergeStatus() {
           </div>
         )}
 
-        {isCompleted && mergedCounts && (
+        {isMergeCompleted && mergedCounts && (
           <div className="text-center">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
               <CheckCircle className="h-8 w-8 text-green-600" />

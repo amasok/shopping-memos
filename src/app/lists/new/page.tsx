@@ -7,12 +7,8 @@ import { Header } from "@/components/layouts/Header"
 import { Button, Checkbox, Input, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
-import { db } from "@/lib/db"
-import { getGroupsByUserId } from "@/lib/db/groups"
-import { deleteItems } from "@/lib/db/items"
-import { addListItems, createList } from "@/lib/db/lists"
 import { cn } from "@/lib/utils"
-import { useLiveQuery } from "dexie-react-hooks"
+import { useGroups, useItems, useTags, useListMutations, useItemMutations } from "@/hooks/data"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useEffect, useState } from "react"
 
@@ -46,29 +42,14 @@ function NewListPageContent() {
     }
   }, [urlGroupId, setContextGroupId])
 
-  // 未購入アイテムのみ表示（選択されたグループでフィルタ）
-  const items = useLiveQuery(
-    () => db.items.orderBy("createdAt").reverse().filter((item) => !item.purchasedAt && item.groupId === selectedGroupId).toArray(),
-    [selectedGroupId]
-  )
-  // タグはグループ選択時も個人タグ（共通）を含めて表示
-  const tags = useLiveQuery(
-    () => db.tags.filter((tag) =>
-      tag.groupId === selectedGroupId || (selectedGroupId !== undefined && tag.groupId === undefined)
-    ).toArray(),
-    [selectedGroupId]
-  )
+  // サーバーファースト対応のhooksを使用
+  const { groups } = useGroups()
+  const { items, isLoading: isItemsLoading } = useItems({ groupId: selectedGroupId, includePurchased: false })
+  const { tags, isLoading: isTagsLoading } = useTags({ groupId: selectedGroupId })
+  const { createList } = useListMutations()
+  const { deleteItem } = useItemMutations()
 
-  // ログイン中の場合のみグループを取得
-  const groups = useLiveQuery(
-    async () => {
-      if (!user) return []
-      return getGroupsByUserId(user.id)
-    },
-    [user?.id]
-  )
-
-  const isLoading = items === undefined || tags === undefined
+  const isLoading = isItemsLoading || isTagsLoading
 
   // グループ変更時にタグ選択とアイテム選択をリセット（レンダリング中に同期）
   const [prevGroupId, setPrevGroupId] = useState<string | undefined>(selectedGroupId)
@@ -143,29 +124,19 @@ function NewListPageContent() {
     setIsCreating(true)
 
     try {
-      const selectedItems = (items ?? []).filter((item) =>
-        selectedItemIds.includes(item.id)
-      )
-
-      // リストを作成（グループIDを紐付け）
-      const list = await createList(listName || undefined, selectedGroupId)
-
-      // アイテムをリストに追加（タグ・メモ・グループを保持）
-      await addListItems(
-        list.id,
-        selectedItems.map((item) => ({
-          name: item.name,
-          quantity: item.quantity,
-          memo: item.memo,
-          tagIds: item.tagIds,
-          groupId: item.groupId,
-        }))
-      )
+      // リストを作成（itemIdsを渡すと自動的にアイテムが追加される）
+      const list = await createList({
+        name: listName || "買い物リスト",
+        groupId: selectedGroupId,
+        itemIds: selectedItemIds,
+      })
 
       // 買いたいものから選択されたアイテムを削除
-      await deleteItems(selectedItemIds)
+      for (const itemId of selectedItemIds) {
+        await deleteItem(itemId)
+      }
 
-      router.push(`/lists/${list.id}`)
+      router.push(`/lists/${list?.id}`)
     } catch (error) {
       console.error("Failed to create list:", error)
       setIsCreating(false)

@@ -2,34 +2,39 @@
 
 import { useLiveQuery } from "dexie-react-hooks"
 import { db } from "@/lib/db"
-import { getGroupsByUserId } from "@/lib/db/groups"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useDataSource } from "./useDataSource"
 
 /**
  * グループ一覧を取得するフック
- * ログイン時: サーバーから取得
- * 未ログイン時: ローカルDBから取得
+ *
+ * 重要: グループ一覧は「ログイン中」であれば常にサーバーから取得する
+ * （グループ選択状態に関わらず）
+ *
+ * これは、サーバーに存在するグループのみを選択肢として表示するため
  */
 export function useGroups() {
-  const { useServer, isAuthLoading, user } = useDataSource()
+  const { isAuthLoading, user } = useDataSource()
 
-  // ローカル（Dexie）クエリ
+  // ログイン中かどうか
+  const isLoggedIn = !!user
+
+  // ローカル（Dexie）クエリ - 未ログイン時のみ使用
+  // 注意: グループはサーバーサイド機能のため、未ログイン時は常に空配列
   const localGroups = useLiveQuery(
     async () => {
-      if (useServer) return undefined
-      if (!user) return []
-      return getGroupsByUserId(user.id)
+      if (isLoggedIn) return undefined // ログイン中はサーバーを使用
+      return [] // 未ログイン時はグループなし
     },
-    [useServer, user?.id]
+    [isLoggedIn]
   )
 
-  // サーバー（tRPC）クエリ
+  // サーバー（tRPC）クエリ - ログイン中は常に有効
   const serverQuery = trpc.identity.getGroups.useQuery(undefined, {
-    enabled: useServer && !isAuthLoading,
+    enabled: isLoggedIn && !isAuthLoading,
   })
 
-  if (useServer) {
+  if (isLoggedIn) {
     return {
       groups: serverQuery.data ?? [],
       isLoading: serverQuery.isLoading || isAuthLoading,

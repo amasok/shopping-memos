@@ -1,4 +1,4 @@
-import { eq, and, desc } from "drizzle-orm"
+import { eq, and, desc, isNull } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import { purchaseHistory, groupMembers } from "@/infrastructure/db/drizzle/schema"
 import type { PurchaseHistoryRepository } from "../../domain/repositories/PurchaseHistoryRepository"
@@ -42,14 +42,19 @@ export class DrizzlePurchaseHistoryRepository implements PurchaseHistoryReposito
   async findMany(query: GetPurchaseHistoryQuery): Promise<PurchaseHistory[]> {
     const conditions = []
 
-    if (query.groupId) {
+    // groupIdフィルタ:
+    // - groupIdが指定されている → そのグループの履歴のみ
+    // - groupIdがundefined → 個人履歴（groupId IS NULL）のみ
+    if (query.groupId !== undefined) {
       conditions.push(eq(purchaseHistory.groupId, query.groupId))
+    } else {
+      conditions.push(isNull(purchaseHistory.groupId))
     }
 
     let queryBuilder = db
       .select()
       .from(purchaseHistory)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .where(and(...conditions))
       .orderBy(desc(purchaseHistory.purchasedAt))
 
     if (query.limit) {

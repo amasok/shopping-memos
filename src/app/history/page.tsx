@@ -6,14 +6,12 @@ import { Header } from "@/components/layouts/Header"
 import { Badge, BottomSheet, Button, EmptyState, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
-import { db, type ShoppingItem } from "@/lib/db"
-import { getGroupsByUserId } from "@/lib/db/groups"
-import { deleteHistory, revertHistoryToList } from "@/lib/db/lists"
+import { type ShoppingItem } from "@/lib/db"
 import { cn } from "@/lib/utils"
-import { useLiveQuery } from "dexie-react-hooks"
 import { ChevronDown, ChevronUp, History, RotateCcw, ShoppingBag, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
+import { useGroups, useHistory, useItems, useTags, useHistoryMutations } from "@/hooks/data"
 
 function formatDate(date: Date): string {
   const month = date.getMonth() + 1
@@ -29,36 +27,16 @@ export default function HistoryPage() {
   const { selectedGroupId, setSelectedGroupId } = useGroup()
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
-  const [isProcessing, setIsProcessing] = useState(false)
 
-  // ログイン中の場合のみグループを取得
-  const groups = useLiveQuery(
-    async () => {
-      if (!user) return []
-      return getGroupsByUserId(user.id)
-    },
-    [user?.id]
-  )
+  // サーバーファースト対応のhooksを使用
+  const { groups, isLoading: isGroupsLoading } = useGroups()
+  const { history, isLoading: isHistoryLoading } = useHistory()
+  const { items: purchasedItems, isLoading: isItemsLoading } = useItems({ purchasedOnly: true, includePurchased: true })
+  const { tags, isLoading: isTagsLoading } = useTags()
+  const { revertHistory, deleteHistory, isReverting, isDeleting } = useHistoryMutations()
 
-  // 選択されたグループで履歴をフィルタ
-  const history = useLiveQuery(
-    () => db.history.filter((h) => h.groupId === selectedGroupId).reverse().sortBy("purchasedAt"),
-    [selectedGroupId]
-  )
-
-  // 購入済みアイテムを全て取得（選択されたグループでフィルタ）
-  const purchasedItems = useLiveQuery(
-    () => db.items.filter((item) => !!item.purchasedAt && item.groupId === selectedGroupId).toArray(),
-    [selectedGroupId]
-  )
-
-  // タグを取得（選択されたグループでフィルタ）
-  const tags = useLiveQuery(
-    () => db.tags.filter((tag) => tag.groupId === selectedGroupId).toArray(),
-    [selectedGroupId]
-  )
-
-  const isLoading = history === undefined || purchasedItems === undefined || tags === undefined
+  const isLoading = isHistoryLoading || isItemsLoading || isTagsLoading || (user && isGroupsLoading)
+  const isProcessing = isReverting || isDeleting
 
   // アイテムIDからアイテムを引くマップ
   const itemMap = new Map<string, ShoppingItem>()
@@ -71,28 +49,23 @@ export default function HistoryPage() {
   // タグIDからタグ名を引くマップ
   const tagMap = new Map(tags?.map((tag) => [tag.id, tag]) ?? [])
 
-  const handleRevertToList = async (historyId: string, e: React.MouseEvent) => {
+  const handleRevertToList = async (historyId: string, itemIds: string[], e: React.MouseEvent) => {
     e.stopPropagation()
-    setIsProcessing(true)
     try {
-      const list = await revertHistoryToList(historyId)
-      router.push(`/lists/${list.id}`)
+      await revertHistory(historyId, itemIds)
+      router.push("/lists")
     } catch (error) {
       console.error("Failed to revert history:", error)
-      setIsProcessing(false)
     }
   }
 
   const handleDeleteHistory = async () => {
     if (!deleteTargetId) return
-    setIsProcessing(true)
     try {
       await deleteHistory(deleteTargetId)
       setDeleteTargetId(null)
     } catch (error) {
       console.error("Failed to delete history:", error)
-    } finally {
-      setIsProcessing(false)
     }
   }
 
@@ -193,7 +166,7 @@ export default function HistoryPage() {
                             variant="secondary"
                             size="sm"
                             className="flex-1"
-                            onClick={(e) => handleRevertToList(record.id, e)}
+                            onClick={(e) => handleRevertToList(record.id, record.itemIds ?? [], e)}
                             disabled={isProcessing || items.length === 0}
                           >
                             <RotateCcw className="mr-1 h-4 w-4" />

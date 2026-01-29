@@ -18,6 +18,9 @@ export interface GroupRepository {
   /** グループをIDで取得 */
   findById(id: string): Promise<Group | null>
 
+  /** 招待コードでグループを取得 */
+  findByInviteCode(inviteCode: string): Promise<Group | null>
+
   /** ユーザーが所属するグループ一覧を取得 */
   findByUserId(userId: string): Promise<Group[]>
 
@@ -26,6 +29,9 @@ export interface GroupRepository {
 
   /** グループを削除 */
   delete(id: string): Promise<void>
+
+  /** 招待コードを再生成 */
+  regenerateInviteCode(id: string): Promise<Group>
 
   // === メンバー ===
 

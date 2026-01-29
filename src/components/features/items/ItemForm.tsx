@@ -2,14 +2,11 @@
 
 import { Badge, Button, LoadingSpinner } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
-import { db, type ShoppingItem } from "@/lib/db"
-import { getGroupsByUserId } from "@/lib/db/groups"
-import { createItem, deleteItem, updateItem } from "@/lib/db/items"
-import { createTag } from "@/lib/db/tags"
+import { type ShoppingItem } from "@/lib/db"
 import { cn } from "@/lib/utils"
-import { useLiveQuery } from "dexie-react-hooks"
 import { Minus, Plus, Trash2, Users, X } from "lucide-react"
 import { useState } from "react"
+import { useGroups, useTags, useItemMutations, useTagMutations } from "@/hooks/data"
 
 export interface ItemFormProps {
   item?: ShoppingItem | null
@@ -32,25 +29,15 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
-  // 選択中のグループのタグのみ表示（グループのアイテムには個人タグは使えない）
-  const tags = useLiveQuery(
-    async () => {
-      const result = await db.tags.filter((tag) => tag.groupId === selectedGroupId).toArray()
-      return result.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-    },
-    [selectedGroupId]
-  )
-
-  // ログイン中の場合のみグループを取得
-  const groups = useLiveQuery(
-    async () => {
-      if (!user) return []
-      return getGroupsByUserId(user.id)
-    },
-    [user?.id]
-  )
+  // サーバーファースト対応のhooksを使用
+  const { groups, isLoading: isGroupsLoading } = useGroups()
+  const { tags, isLoading: isTagsLoading } = useTags({ groupId: selectedGroupId })
+  const { createItem, updateItem, deleteItem, isCreating, isUpdating, isDeleting } = useItemMutations()
+  const { createTag } = useTagMutations()
 
   const isEditing = !!item
+  const isLoading = isTagsLoading || (user && isGroupsLoading)
+  const isProcessing = isCreating || isUpdating || isDeleting
 
   // アイテムが変更されたらフォームをリセット（レンダリング中に同期）
   const [prevItemId, setPrevItemId] = useState<string | null | undefined>(undefined)
@@ -97,7 +84,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
       }
     } else {
       // 新しいタグを作成（同じグループに紐付け）
-      const newTag = await createTag(trimmed, selectedGroupId)
+      const newTag = await createTag({ name: trimmed, groupId: selectedGroupId })
       setSelectedTagIds((prev) => [...prev, newTag.id])
     }
 
@@ -113,7 +100,8 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
 
     try {
       if (isEditing && item) {
-        await updateItem(item.id, {
+        await updateItem({
+          id: item.id,
           name: name.trim(),
           quantity,
           memo: memo.trim() || undefined,
@@ -161,7 +149,6 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
   }
 
   const isValid = name.trim().length > 0
-  const isLoading = tags === undefined
 
   if (isLoading) {
     return (
@@ -418,7 +405,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
               type="button"
               variant="secondary"
               className="flex-1 text-base font-semibold"
-              disabled={!isValid || isSubmitting}
+              disabled={!isValid || isSubmitting || isProcessing}
               onClick={(e) => handleSubmit(e, true)}
             >
               追加して続ける
@@ -426,18 +413,18 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
             <Button
               type="submit"
               className="flex-1 text-base font-semibold"
-              disabled={!isValid || isSubmitting}
+              disabled={!isValid || isSubmitting || isProcessing}
             >
-              {isSubmitting ? "保存中..." : "追加して閉じる"}
+              {isSubmitting || isProcessing ? "保存中..." : "追加して閉じる"}
             </Button>
           </div>
         ) : (
           <Button
             type="submit"
             className="w-full text-lg font-semibold"
-            disabled={!isValid || isSubmitting}
+            disabled={!isValid || isSubmitting || isProcessing}
           >
-            {isSubmitting ? "保存中..." : isEditing ? "更新" : "追加"}
+            {isSubmitting || isProcessing ? "保存中..." : isEditing ? "更新" : "追加"}
           </Button>
         )}
 
@@ -466,7 +453,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
                     variant="danger"
                     className="flex-1"
                     onClick={handleDelete}
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || isProcessing}
                   >
                     削除する
                   </Button>

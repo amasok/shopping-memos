@@ -8,7 +8,6 @@ import {
   purchaseHistory,
   syncOperations,
 } from "@/infrastructure/db/drizzle/schema"
-import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
 
 interface LocalItem {
   id: string
@@ -99,21 +98,8 @@ export class DataMergeService {
     }
 
     // マージ先グループを決定
-    let groupId = targetGroupId
-    if (!groupId) {
-      const userGroups = await groupRepository.findByUserId(userId)
-      if (userGroups.length === 0) {
-        // グループがない場合は個人用として作成
-        const personalGroup = await groupRepository.createWithOwner({
-          id: crypto.randomUUID(),
-          name: "個人",
-          ownerId: userId,
-        })
-        groupId = personalGroup.id
-      } else {
-        groupId = userGroups[0].id
-      }
-    }
+    // targetGroupIdが指定されていなければ個人アイテムとして扱う（groupId = undefined）
+    const groupId = targetGroupId
 
     const now = new Date()
 
@@ -126,6 +112,7 @@ export class DataMergeService {
             await tx.insert(tags).values({
               id: tag.id,
               name: tag.name,
+              userId, // 作成者を設定
               groupId,
               createdAt: tag.createdAt,
               updatedAt: now,
@@ -156,6 +143,7 @@ export class DataMergeService {
               name: item.name,
               quantity: item.quantity,
               memo: item.memo ?? null,
+              userId, // 作成者を設定
               groupId,
               purchasedAt: item.purchasedAt ?? null,
               createdAt: item.createdAt,
@@ -197,6 +185,7 @@ export class DataMergeService {
               id: list.id,
               name: list.name,
               status: list.status,
+              userId, // 作成者を設定
               groupId,
               createdAt: list.createdAt,
               completedAt: list.completedAt ?? null,
@@ -227,6 +216,7 @@ export class DataMergeService {
               quantity: listItem.quantity,
               memo: listItem.memo ?? null,
               tagIds: listItem.tagIds,
+              userId, // 作成者を設定
               groupId,
               checked: listItem.checked,
               createdAt: listItem.createdAt,
@@ -255,6 +245,7 @@ export class DataMergeService {
               listId: history.listId,
               location: history.location ?? null,
               itemIds: history.itemIds,
+              userId, // 作成者を設定
               groupId,
               purchasedAt: history.purchasedAt,
             })

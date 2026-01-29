@@ -4,16 +4,16 @@ import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { BottomSheet, Button, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
-import { db, type GroupMember } from "@/lib/db"
+import { type GroupMember } from "@/lib/db"
 import {
   deleteGroup,
   leaveGroup,
-  regenerateInviteCode,
   removeGroupMember,
   updateGroupName,
 } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
-import { useLiveQuery } from "dexie-react-hooks"
+import { trpc } from "@/infrastructure/trpc/client"
+import { useGroup } from "@/hooks/data"
 import {
   Check,
   Copy,
@@ -48,17 +48,20 @@ export default function GroupDetailPage() {
   const [removeMemberTarget, setRemoveMemberTarget] = useState<GroupMember | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
 
-  const group = useLiveQuery(() => db.groups.get(groupId), [groupId])
-  const members = useLiveQuery(
-    () => db.groupMembers.where("groupId").equals(groupId).toArray(),
-    [groupId]
-  )
+  // サーバーからグループとメンバーを取得
+  const { group, members, isLoading: isGroupLoading, refetch: refetchGroup } = useGroup({ groupId })
 
-  const isLoading = group === undefined || members === undefined
-  const isOwner = user && group?.ownerId === user.id
-  // myMembership は将来の機能拡張で使用予定
-  const _myMembership = members?.find((m) => m.userId === user?.id)
-  void _myMembership // unused variable警告を抑制
+  const isLoading = isGroupLoading
+  // メンバー情報からオーナーかどうかを判定
+  const myMembership = members?.find((m) => m.userId === user?.id)
+  const isOwner = myMembership?.role === "owner"
+
+  // 招待コード再生成のmutation
+  const regenerateInviteCodeMutation = trpc.identity.regenerateInviteCode.useMutation({
+    onSuccess: () => {
+      refetchGroup()
+    },
+  })
 
   useEffect(() => {
     if (group) {
@@ -75,7 +78,9 @@ export default function GroupDetailPage() {
   const handleRegenerateCode = async () => {
     setIsRegeneratingCode(true)
     try {
-      await regenerateInviteCode(groupId)
+      await regenerateInviteCodeMutation.mutateAsync({ groupId })
+    } catch (error) {
+      console.error("Failed to regenerate invite code:", error)
     } finally {
       setIsRegeneratingCode(false)
     }
@@ -300,41 +305,46 @@ export default function GroupDetailPage() {
               </Button>
             </div>
             <ul className="divide-y divide-gray-100 rounded-xl bg-white shadow-sm">
-              {members?.map((member) => (
-                <li key={member.id} className="flex items-center justify-between p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
-                      <User className="h-5 w-5 text-gray-600" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-semibold text-gray-900">
-                          {member.userName}
-                          {member.userId === user?.id && (
-                            <span className="ml-1 text-sm font-normal text-gray-500">
-                              (あなた)
-                            </span>
-                          )}
-                        </p>
-                        {member.role === "owner" && (
-                          <Crown className="h-4 w-4 text-yellow-500" />
-                        )}
+              {members?.map((member) => {
+                // サーバーからの型は user オブジェクトにネストされている
+                const memberName = "user" in member ? member.user.name : (member as GroupMember).userName
+                const memberEmail = "user" in member ? member.user.email : (member as GroupMember).userEmail
+                return (
+                  <li key={member.id} className="flex items-center justify-between p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
+                        <User className="h-5 w-5 text-gray-600" />
                       </div>
-                      <p className="text-sm text-gray-500">{member.userEmail}</p>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-gray-900">
+                            {memberName}
+                            {member.userId === user?.id && (
+                              <span className="ml-1 text-sm font-normal text-gray-500">
+                                (あなた)
+                              </span>
+                            )}
+                          </p>
+                          {member.role === "owner" && (
+                            <Crown className="h-4 w-4 text-yellow-500" />
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-500">{memberEmail}</p>
+                      </div>
                     </div>
-                  </div>
-                  {isOwner && member.userId !== user?.id && (
-                    <button
-                      type="button"
-                      onClick={() => setRemoveMemberTarget(member)}
-                      className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-red-50 hover:text-red-500"
-                      aria-label="メンバーを削除"
-                    >
-                      <UserMinus className="h-5 w-5" />
-                    </button>
-                  )}
-                </li>
-              ))}
+                    {isOwner && member.userId !== user?.id && (
+                      <button
+                        type="button"
+                        onClick={() => setRemoveMemberTarget(member as GroupMember)}
+                        className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-red-50 hover:text-red-500"
+                        aria-label="メンバーを削除"
+                      >
+                        <UserMinus className="h-5 w-5" />
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           </section>
 

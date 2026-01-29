@@ -1,11 +1,14 @@
 "use client"
 
 import { useCallback } from "react"
-import { db, type Tag } from "@/lib/db"
+import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useDataSource } from "./useDataSource"
 
-type CreateTagInput = Omit<Tag, "id" | "createdAt">
+type CreateTagInput = {
+  name: string
+  groupId?: string
+}
 type UpdateTagInput = Partial<CreateTagInput> & { id: string }
 
 /**
@@ -48,9 +51,11 @@ export function useTagMutations() {
       const id = crypto.randomUUID()
       const now = new Date()
       await db.tags.add({
-        ...input,
         id,
+        name: input.name,
+        groupId: input.groupId,
         createdAt: now,
+        updatedAt: now,
       })
       return { id }
     },

@@ -29,6 +29,7 @@ export class DrizzleItemRepository implements ItemRepository {
         name: input.name,
         quantity: input.quantity,
         memo: input.memo ?? null,
+        userId: input.userId,
         groupId: input.groupId ?? null,
         createdAt: now,
         updatedAt: now,
@@ -78,8 +79,14 @@ export class DrizzleItemRepository implements ItemRepository {
     const conditions = []
 
     // グループフィルタ
+    // groupId が指定されている場合はグループアイテム
+    // groupId が null で userId が指定されている場合は個人アイテム
     if (query.groupId) {
       conditions.push(eq(items.groupId, query.groupId))
+    } else if (query.userId) {
+      // 個人アイテム: groupId = null かつ userId が一致
+      conditions.push(isNull(items.groupId))
+      conditions.push(eq(items.userId, query.userId))
     }
 
     // 購入済み/未購入フィルタ
@@ -210,9 +217,9 @@ export class DrizzleItemRepository implements ItemRepository {
       return false
     }
 
-    // グループなしのアイテムは誰でもアクセス可能（ゲストモード）
+    // グループなしのアイテムは作成者のみアクセス可能
     if (!item.groupId) {
-      return true
+      return item.userId === userId
     }
 
     // グループメンバーか確認

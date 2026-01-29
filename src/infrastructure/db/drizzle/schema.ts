@@ -81,12 +81,17 @@ export const verificationTokens = pgTable(
  * グループ
  * 共有単位
  */
-export const groups = pgTable("groups", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-})
+export const groups = pgTable(
+  "groups",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    inviteCode: text("invite_code").notNull().unique(), // 6文字の招待コード
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("groups_invite_code_idx").on(table.inviteCode)]
+)
 
 /**
  * グループメンバー
@@ -134,6 +139,8 @@ export const inviteLinks = pgTable(
 
 /**
  * アイテム（買いたいもの）
+ * userId: 作成者（必須）
+ * groupId: グループ（オプション、nullなら個人アイテム）
  */
 export const items = pgTable(
   "items",
@@ -142,12 +149,14 @@ export const items = pgTable(
     name: text("name").notNull(),
     quantity: integer("quantity").notNull().default(1),
     memo: text("memo"),
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     groupId: text("group_id").references(() => groups.id, { onDelete: "set null" }),
     purchasedAt: timestamp("purchased_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
+    index("items_user_idx").on(table.userId),
     index("items_group_idx").on(table.groupId),
     index("items_purchased_idx").on(table.purchasedAt),
   ]
@@ -156,17 +165,23 @@ export const items = pgTable(
 /**
  * タグ
  * アイテムの分類用
+ * userId: 作成者（必須）
+ * groupId: グループ（オプション、nullなら個人タグ）
  */
 export const tags = pgTable(
   "tags",
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     groupId: text("group_id").references(() => groups.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
-  (table) => [index("tags_group_idx").on(table.groupId)]
+  (table) => [
+    index("tags_user_idx").on(table.userId),
+    index("tags_group_idx").on(table.groupId),
+  ]
 )
 
 /**
@@ -192,6 +207,8 @@ export const itemTags = pgTable(
 /**
  * 買い物リスト
  * ステータス: in_progress（進行中）、completed（完了）
+ * userId: 作成者（必須）
+ * groupId: グループ（オプション、nullなら個人リスト）
  */
 export const shoppingLists = pgTable(
   "shopping_lists",
@@ -199,11 +216,13 @@ export const shoppingLists = pgTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     status: text("status").notNull().default("in_progress"), // 'in_progress' | 'completed'
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     groupId: text("group_id").references(() => groups.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     completedAt: timestamp("completed_at"),
   },
   (table) => [
+    index("shopping_lists_user_idx").on(table.userId),
     index("shopping_lists_group_idx").on(table.groupId),
     index("shopping_lists_status_idx").on(table.status),
   ]
@@ -212,6 +231,7 @@ export const shoppingLists = pgTable(
 /**
  * リスト内アイテム
  * Catalog.Itemのスナップショット
+ * userId: 作成者（必須）
  */
 export const listItems = pgTable(
   "list_items",
@@ -224,15 +244,21 @@ export const listItems = pgTable(
     quantity: integer("quantity").notNull().default(1),
     memo: text("memo"),
     tagIds: text("tag_ids").array(), // スナップショット（正規化しない）
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     groupId: text("group_id"),
     checked: boolean("checked").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (table) => [index("list_items_list_idx").on(table.listId)]
+  (table) => [
+    index("list_items_list_idx").on(table.listId),
+    index("list_items_user_idx").on(table.userId),
+  ]
 )
 
 /**
  * 購入履歴
+ * userId: 作成者（必須）
+ * groupId: グループ（オプション、nullなら個人履歴）
  */
 export const purchaseHistory = pgTable(
   "purchase_history",
@@ -244,10 +270,12 @@ export const purchaseHistory = pgTable(
       .references(() => shoppingLists.id, { onDelete: "cascade" }),
     location: text("location"),
     itemIds: text("item_ids").array(), // 購入したアイテムのID
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     groupId: text("group_id"),
     purchasedAt: timestamp("purchased_at").defaultNow().notNull(),
   },
   (table) => [
+    index("purchase_history_user_idx").on(table.userId),
     index("purchase_history_group_idx").on(table.groupId),
     index("purchase_history_purchased_idx").on(table.purchasedAt),
   ]

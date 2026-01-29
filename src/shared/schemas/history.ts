@@ -4,7 +4,7 @@ import { paginationSchema, dateRangeSchema } from "./common"
 // 履歴取得クエリ
 export const getHistoryQuerySchema = z
   .object({
-    groupId: z.string().uuid().optional(),
+    groupId: z.string().uuid().nullish(), // undefined または null を許可
   })
   .merge(paginationSchema)
   .merge(dateRangeSchema)

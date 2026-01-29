@@ -31,7 +31,7 @@ export type DeleteItemInput = z.infer<typeof deleteItemSchema>
 
 // アイテム取得クエリ
 export const getItemsQuerySchema = z.object({
-  groupId: z.string().uuid().optional(),
+  groupId: z.string().uuid().nullish(), // undefined または null を許可
   tagIds: z.array(z.string().uuid()).optional(),
   searchText: z
     .string()

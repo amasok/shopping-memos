@@ -15,13 +15,24 @@ export const createListSchema = z.object({
 
 export type CreateListInput = z.infer<typeof createListSchema>
 
-// リストにアイテム追加
+// リストにアイテム追加（既存アイテムを追加）
 export const addItemToListSchema = z.object({
   listId: z.string().uuid(),
   itemId: z.string().uuid(),
 })
 
 export type AddItemToListInput = z.infer<typeof addItemToListSchema>
+
+// リストに新規アイテム追加（直接入力）
+export const addNewItemToListSchema = z.object({
+  listId: z.string().uuid(),
+  name: z.string().min(1, "名前は必須です").max(100, "名前は100文字以内です"),
+  quantity: z.number().int().min(1).default(1),
+  memo: z.string().max(500, "メモは500文字以内です").optional(),
+  tagIds: z.array(z.string().uuid()).optional(),
+})
+
+export type AddNewItemToListInput = z.infer<typeof addNewItemToListSchema>
 
 // アイテムのチェック切り替え
 export const checkItemSchema = z.object({
@@ -41,9 +52,11 @@ export type FinishShoppingInput = z.infer<typeof finishShoppingSchema>
 
 // リスト取得クエリ
 export const getListsQuerySchema = z.object({
-  groupId: z.string().uuid().optional(),
+  groupId: z.string().uuid().nullish(), // undefined または null を許可
   status: listStatusSchema.optional(),
   includeCompleted: z.boolean().optional(),
+  /** trueの場合、groupIdフィルタを無視して全リストを返す */
+  includeAllGroups: z.boolean().optional(),
 })
 
 export type GetListsQuery = z.infer<typeof getListsQuerySchema>

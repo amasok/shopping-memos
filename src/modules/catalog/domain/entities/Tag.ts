@@ -5,6 +5,7 @@
 export interface Tag {
   id: string
   name: string
+  userId: string | null // 作成者
   groupId: string | null
   createdAt: Date
   updatedAt: Date
@@ -16,6 +17,7 @@ export interface Tag {
 export interface CreateTagInput {
   id: string
   name: string
+  userId: string // 作成者（必須）
   groupId?: string
 }
 
@@ -31,7 +33,8 @@ export interface UpdateTagInput {
  * タグ取得時のクエリ
  */
 export interface GetTagsQuery {
-  groupId?: string
+  userId?: string // 個人タグ取得時に必要
+  groupId?: string | null
 }
 
 /**

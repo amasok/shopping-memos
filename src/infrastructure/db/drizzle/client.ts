@@ -16,11 +16,26 @@ const client = postgres(effectiveConnectionString, {
   connect_timeout: 10,
 })
 
+// 開発環境でのSQLロギング
+const isDev = process.env.NODE_ENV !== "production"
+
 /**
  * Drizzle ORMクライアント
  * スキーマを含むため、リレーションクエリが可能
  */
-export const db = drizzle(client, { schema })
+export const db = drizzle(client, {
+  schema,
+  logger: isDev
+    ? {
+        logQuery(query, params) {
+          console.log("\n[SQL]", query)
+          if (params.length > 0) {
+            console.log("[Params]", params)
+          }
+        },
+      }
+    : undefined,
+})
 
 /**
  * DB型（リポジトリのDI用）

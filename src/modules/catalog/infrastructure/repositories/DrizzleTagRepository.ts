@@ -1,4 +1,4 @@
-import { eq, and, sql } from "drizzle-orm"
+import { eq, and, sql, isNull } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import { tags, itemTags, groupMembers } from "@/infrastructure/db/drizzle/schema"
 import type { TagRepository } from "../../domain/repositories/TagRepository"
@@ -22,6 +22,7 @@ export class DrizzleTagRepository implements TagRepository {
       .values({
         id: input.id,
         name: input.name,
+        userId: input.userId,
         groupId: input.groupId ?? null,
         createdAt: now,
         updatedAt: now,
@@ -42,8 +43,14 @@ export class DrizzleTagRepository implements TagRepository {
     const conditions = []
 
     // グループフィルタ
+    // groupId が指定されている場合はグループタグ
+    // groupId が null で userId が指定されている場合は個人タグ
     if (query.groupId) {
       conditions.push(eq(tags.groupId, query.groupId))
+    } else if (query.userId) {
+      // 個人タグ: groupId = null かつ userId が一致
+      conditions.push(isNull(tags.groupId))
+      conditions.push(eq(tags.userId, query.userId))
     }
 
     // タグを取得
@@ -100,9 +107,9 @@ export class DrizzleTagRepository implements TagRepository {
       return false
     }
 
-    // グループなしのタグは誰でもアクセス可能（ゲストモード）
+    // グループなしのタグは作成者のみアクセス可能
     if (!tag.groupId) {
-      return true
+      return tag.userId === userId
     }
 
     // グループメンバーか確認

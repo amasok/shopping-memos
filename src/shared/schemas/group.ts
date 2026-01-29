@@ -27,6 +27,13 @@ export const deleteGroupSchema = z.object({
 
 export type DeleteGroupInput = z.infer<typeof deleteGroupSchema>
 
+// 招待コード再生成
+export const regenerateInviteCodeSchema = z.object({
+  groupId: z.string().uuid(),
+})
+
+export type RegenerateInviteCodeInput = z.infer<typeof regenerateInviteCodeSchema>
+
 // メンバー招待（招待リンク生成）
 export const inviteMemberSchema = z.object({
   groupId: z.string().uuid(),
@@ -34,12 +41,19 @@ export const inviteMemberSchema = z.object({
 
 export type InviteMemberInput = z.infer<typeof inviteMemberSchema>
 
-// 招待承認
+// 招待承認（トークン方式）
 export const acceptInviteSchema = z.object({
   token: z.string().min(1, "トークンは必須です"),
 })
 
 export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>
+
+// 招待コードでグループに参加
+export const joinByInviteCodeSchema = z.object({
+  inviteCode: z.string().length(6, "招待コードは6文字です"),
+})
+
+export type JoinByInviteCodeInput = z.infer<typeof joinByInviteCodeSchema>
 
 // メンバー削除
 export const removeMemberSchema = z.object({

@@ -1,8 +1,7 @@
 "use client"
 
-import { db } from "@/lib/db"
 import { cn } from "@/lib/utils"
-import { useLiveQuery } from "dexie-react-hooks"
+import { useLists } from "@/hooks/data"
 import { ClipboardList, History, Home, Settings } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
@@ -17,11 +16,12 @@ interface NavItem {
 export function BottomNav() {
   const pathname = usePathname()
 
-  // 進行中のリスト数を取得
-  const activeListCount = useLiveQuery(
-    () => db.lists.where("status").equals("in_progress").count(),
-    []
-  )
+  // 進行中のリスト数を取得（全グループ＋個人を含む）
+  const { lists } = useLists({
+    status: "in_progress",
+    includeAllGroups: true,
+  })
+  const activeListCount = lists.length
 
   const navItems: NavItem[] = [
     {

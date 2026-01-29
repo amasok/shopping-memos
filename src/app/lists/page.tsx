@@ -6,34 +6,20 @@ import { Header } from "@/components/layouts/Header"
 import { Button, EmptyState, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
-import { db } from "@/lib/db"
-import { getGroupsByUserId } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
-import { useLiveQuery } from "dexie-react-hooks"
 import { ChevronRight, ClipboardList, Plus, ShoppingBag } from "lucide-react"
 import Link from "next/link"
+import { useGroups, useListsWithItems } from "@/hooks/data"
 
 export default function ListsPage() {
   const { user } = useAuth()
   const { selectedGroupId, setSelectedGroupId } = useGroup()
 
-  // ログイン中の場合のみグループを取得
-  const groups = useLiveQuery(
-    async () => {
-      if (!user) return []
-      return getGroupsByUserId(user.id)
-    },
-    [user?.id]
-  )
+  // サーバーファースト対応のhooksを使用
+  const { groups, isLoading: isGroupsLoading } = useGroups()
+  const { lists, listItems, isLoading: isListsLoading } = useListsWithItems({ status: "in_progress" })
 
-  // 選択されたグループでリストをフィルタ
-  const lists = useLiveQuery(
-    () => db.lists.filter((list) => list.status === "in_progress" && list.groupId === selectedGroupId).toArray(),
-    [selectedGroupId]
-  )
-  const listItems = useLiveQuery(() => db.listItems.toArray(), [])
-
-  const isLoading = lists === undefined || listItems === undefined
+  const isLoading = isListsLoading || (user && isGroupsLoading)
 
   // 各リストのアイテム数とチェック済み数を計算
   const listStats = new Map<string, { total: number; checked: number }>()

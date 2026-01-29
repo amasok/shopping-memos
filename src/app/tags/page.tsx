@@ -6,13 +6,11 @@ import { Header } from "@/components/layouts/Header"
 import { BottomSheet, Button, EmptyState, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useGroup } from "@/contexts/GroupContext"
-import { db, type Tag } from "@/lib/db"
-import { getGroupsByUserId } from "@/lib/db/groups"
-import { createTag, deleteTag, updateTag } from "@/lib/db/tags"
+import { type Tag } from "@/lib/db"
 import { cn } from "@/lib/utils"
-import { useLiveQuery } from "dexie-react-hooks"
 import { Pencil, Plus, Tag as TagIcon, Trash2, X } from "lucide-react"
 import { useState } from "react"
+import { useGroups, useTags, useItems, useTagMutations } from "@/hooks/data"
 
 export default function TagsPage() {
   const { user } = useAuth()
@@ -23,26 +21,14 @@ export default function TagsPage() {
   const [editingTag, setEditingTag] = useState<Tag | null>(null)
   const [isSheetOpen, setIsSheetOpen] = useState(false)
 
-  // ログイン中の場合のみグループを取得
-  const groups = useLiveQuery(
-    async () => {
-      if (!user) return []
-      return getGroupsByUserId(user.id)
-    },
-    [user?.id]
-  )
+  // サーバーファースト対応のhooksを使用
+  const { groups, isLoading: isGroupsLoading } = useGroups()
+  const { tags, isLoading: isTagsLoading } = useTags()
+  const { items, isLoading: isItemsLoading } = useItems({ includePurchased: false })
+  const { createTag, updateTag, deleteTag, isCreating, isUpdating, isDeleting } = useTagMutations()
 
-  // 選択されたグループでタグをフィルタ
-  const tags = useLiveQuery(
-    () => db.tags.filter((tag) => tag.groupId === selectedGroupId).toArray(),
-    [selectedGroupId]
-  )
-  // 未購入アイテムのみカウント対象（選択されたグループでフィルタ）
-  const items = useLiveQuery(
-    () => db.items.filter((item) => !item.purchasedAt && item.groupId === selectedGroupId).toArray(),
-    [selectedGroupId]
-  )
-  const isLoading = tags === undefined || items === undefined
+  const isLoading = isTagsLoading || isItemsLoading || (user && isGroupsLoading)
+  const isProcessing = isCreating || isUpdating || isDeleting
 
   // タグごとのアイテム数をカウント
   const tagItemCounts = new Map<string, number>()
@@ -65,7 +51,7 @@ export default function TagsPage() {
       return
     }
 
-    await createTag(trimmed, selectedGroupId)
+    await createTag({ name: trimmed, groupId: selectedGroupId })
     setNewTagName("")
     setIsAdding(false)
   }
@@ -148,7 +134,7 @@ export default function TagsPage() {
                   }
                 }}
               />
-              <Button onClick={handleAddTag} disabled={!newTagName.trim()}>
+              <Button onClick={handleAddTag} disabled={!newTagName.trim() || isProcessing}>
                 追加
               </Button>
               <button
@@ -176,7 +162,7 @@ export default function TagsPage() {
             <ul className="space-y-2">
               {tags?.map((tag) => {
                 const itemCount = tagItemCounts.get(tag.id) ?? 0
-                const isDeleting = deleteTarget === tag.id
+                const isDeleteConfirm = deleteTarget === tag.id
 
                 return (
                   <li
@@ -195,7 +181,7 @@ export default function TagsPage() {
                       </div>
                     </div>
 
-                    {isDeleting ? (
+                    {isDeleteConfirm ? (
                       <div className="flex flex-col items-end gap-2">
                         {itemCount > 0 && (
                           <p className="text-xs text-red-600">
@@ -207,6 +193,7 @@ export default function TagsPage() {
                             variant="danger"
                             size="sm"
                             onClick={() => handleDeleteTag(tag.id)}
+                            disabled={isProcessing}
                           >
                             削除
                           </Button>
@@ -253,7 +240,12 @@ export default function TagsPage() {
         onClose={handleCloseSheet}
         title="タグを編集"
       >
-        <TagEditForm tag={editingTag} onClose={handleCloseSheet} />
+        <TagEditForm
+          tag={editingTag}
+          onClose={handleCloseSheet}
+          updateTag={updateTag}
+          isUpdating={isUpdating}
+        />
       </BottomSheet>
     </AppLayout>
   )
@@ -263,9 +255,13 @@ export default function TagsPage() {
 function TagEditForm({
   tag,
   onClose,
+  updateTag,
+  isUpdating,
 }: {
   tag: Tag | null
   onClose: () => void
+  updateTag: (input: { id: string; name?: string }) => Promise<unknown>
+  isUpdating: boolean
 }) {
   const [name, setName] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -283,7 +279,7 @@ function TagEditForm({
 
     setIsSubmitting(true)
     try {
-      await updateTag(tag.id, name.trim())
+      await updateTag({ id: tag.id, name: name.trim() })
       onClose()
     } catch (error) {
       console.error("Failed to update tag:", error)
@@ -319,9 +315,9 @@ function TagEditForm({
       <Button
         type="submit"
         className="w-full text-lg font-semibold"
-        disabled={!isValid || isSubmitting}
+        disabled={!isValid || isSubmitting || isUpdating}
       >
-        {isSubmitting ? "更新中..." : "更新"}
+        {isSubmitting || isUpdating ? "更新中..." : "更新"}
       </Button>
     </form>
   )

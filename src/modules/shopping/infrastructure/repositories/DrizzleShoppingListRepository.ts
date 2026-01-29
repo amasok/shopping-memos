@@ -1,4 +1,4 @@
-import { eq, and, inArray } from "drizzle-orm"
+import { eq, and, inArray, isNull } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   shoppingLists,
@@ -71,8 +71,16 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
   async findMany(query: GetShoppingListsQuery): Promise<ShoppingListWithItems[]> {
     const conditions = []
 
-    if (query.groupId) {
-      conditions.push(eq(shoppingLists.groupId, query.groupId))
+    // groupIdフィルタ:
+    // - includeAllGroups: true → フィルタなし（全リスト）
+    // - groupIdが指定されている → そのグループのリストのみ
+    // - groupIdがundefined → 個人リスト（groupId IS NULL）のみ
+    if (!query.includeAllGroups) {
+      if (query.groupId !== undefined) {
+        conditions.push(eq(shoppingLists.groupId, query.groupId))
+      } else {
+        conditions.push(isNull(shoppingLists.groupId))
+      }
     }
 
     if (query.status) {

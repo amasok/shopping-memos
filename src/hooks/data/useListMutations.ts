@@ -17,6 +17,14 @@ type AddItemToListInput = {
   itemId: string
 }
 
+type AddNewItemToListInput = {
+  listId: string
+  name: string
+  quantity?: number
+  memo?: string
+  tagIds?: string[]
+}
+
 /**
  * 買い物リストのCRUD操作フック
  * ログイン時: サーバーAPI経由
@@ -44,6 +52,11 @@ export function useListMutations() {
     },
   })
   const addItemMutation = trpc.shopping.addItemToList.useMutation({
+    onSuccess: () => {
+      utils.shopping.getList.invalidate()
+    },
+  })
+  const addNewItemMutation = trpc.shopping.addNewItemToList.useMutation({
     onSuccess: () => {
       utils.shopping.getList.invalidate()
     },
@@ -166,7 +179,7 @@ export function useListMutations() {
     [useServer, deleteMutation]
   )
 
-  // リストにアイテム追加
+  // リストにアイテム追加（既存アイテムを追加）
   const addItemToList = useCallback(
     async (input: AddItemToListInput) => {
       if (useServer) {
@@ -192,6 +205,33 @@ export function useListMutations() {
       return { success: true }
     },
     [useServer, addItemMutation]
+  )
+
+  // リストに新規アイテム追加（直接入力）
+  const addNewItemToList = useCallback(
+    async (input: AddNewItemToListInput) => {
+      if (useServer) {
+        return addNewItemMutation.mutateAsync(input)
+      }
+
+      // ローカル: リストのgroupIdを取得
+      const list = await db.lists.get(input.listId)
+      const now = new Date()
+      await db.listItems.add({
+        id: crypto.randomUUID(),
+        listId: input.listId,
+        name: input.name,
+        quantity: input.quantity ?? 1,
+        memo: input.memo,
+        tagIds: input.tagIds ?? [],
+        groupId: list?.groupId,
+        checked: false,
+        createdAt: now,
+      })
+
+      return { success: true }
+    },
+    [useServer, addNewItemMutation]
   )
 
   // リストからアイテム削除
@@ -281,6 +321,7 @@ export function useListMutations() {
     updateList,
     deleteList,
     addItemToList,
+    addNewItemToList,
     removeItemFromList,
     checkItem,
     finishShopping,
@@ -288,6 +329,7 @@ export function useListMutations() {
     isUpdating: updateMutation.isPending,
     isDeleting: deleteMutation.isPending,
     isAddingItem: addItemMutation.isPending,
+    isAddingNewItem: addNewItemMutation.isPending,
     isRemovingItem: removeItemMutation.isPending,
     isCheckingItem: checkItemMutation.isPending,
     isFinishing: finishMutation.isPending,

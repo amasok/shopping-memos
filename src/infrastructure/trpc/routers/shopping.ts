@@ -3,6 +3,7 @@ import { router, publicProcedure, protectedProcedure } from "../server"
 import {
   createListSchema,
   addItemToListSchema,
+  addNewItemToListSchema,
   checkItemSchema,
   finishShoppingSchema,
   getListsQuerySchema,
@@ -39,9 +40,11 @@ export const shoppingRouter = router({
     .input(getListsQuerySchema)
     .query(async ({ input }) => {
       return shoppingSyncService.getLists({
-        groupId: input.groupId,
+        // null を undefined に変換（ドメイン層は null を受け付けない）
+        groupId: input.groupId ?? undefined,
         status: input.status as ListStatus | undefined,
         includeCompleted: input.includeCompleted,
+        includeAllGroups: input.includeAllGroups,
       })
     }),
 
@@ -229,6 +232,49 @@ export const shoppingRouter = router({
       )
     }),
 
+  /** リストに新規アイテムを追加（直接入力） */
+  addNewItemToList: protectedProcedure
+    .input(addNewItemToListSchema)
+    .mutation(async ({ input, ctx }) => {
+      // アクセス権確認
+      const canAccess = await shoppingSyncService.canAccessList(input.listId, ctx.userId)
+      if (!canAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "このリストを編集する権限がありません",
+        })
+      }
+
+      // リストが進行中か確認
+      const list = await shoppingSyncService.getList(input.listId)
+      if (!list) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "リストが見つかりません",
+        })
+      }
+      if (!isInProgress(list.status)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "完了したリストにはアイテムを追加できません",
+        })
+      }
+
+      // リストにアイテムを追加（直接入力、同期ログ記録付き）
+      return shoppingSyncService.addItem(
+        {
+          id: crypto.randomUUID(),
+          listId: input.listId,
+          name: input.name,
+          quantity: input.quantity ?? 1,
+          memo: input.memo,
+          tagIds: input.tagIds ?? [],
+          groupId: list.groupId,
+        },
+        ctx.userId
+      )
+    }),
+
   /** リストからアイテムを削除 */
   removeItemFromList: protectedProcedure
     .input(removeListItemSchema)
@@ -339,7 +385,8 @@ export const shoppingRouter = router({
     .input(getHistoryQuerySchema)
     .query(async ({ input }) => {
       return shoppingSyncService.getHistory({
-        groupId: input.groupId,
+        // null を undefined に変換（ドメイン層は null を受け付けない）
+        groupId: input.groupId ?? undefined,
         limit: input.limit,
         offset: input.offset,
       })

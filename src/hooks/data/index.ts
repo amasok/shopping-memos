@@ -10,7 +10,7 @@ export { useTags } from "./useTags"
 export { useTagMutations } from "./useTagMutations"
 
 // リスト（クエリ + ミューテーション）
-export { useLists, useList } from "./useLists"
+export { useLists, useList, useListsWithItems } from "./useLists"
 export { useListMutations } from "./useListMutations"
 
 // 履歴（クエリ + ミューテーション）
