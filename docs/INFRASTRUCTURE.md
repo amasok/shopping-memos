@@ -71,27 +71,41 @@
 
 **参考:** [Vercel Terraform Provider](https://registry.terraform.io/providers/vercel/vercel/latest)
 
-### 2.2 Vercel Postgres (Neon)
+### 2.2 Neon (PostgreSQL)
 
 | 項目 | 値 |
 |------|-----|
-| プラン | **Neon Free Plan** (Vercel経由) |
-| ストレージ | 512MB |
-| コンピュート | 191時間/月 (0.25 vCPU) |
-| ブランチ | 10個まで |
-| 履歴保持 | 7日間 |
+| プラン | **Neon Free Plan** |
+| ストレージ | 512MB（全ブランチ合計） |
+| コンピュート | 100CU時間/月 |
+| ブランチ | **10個まで** |
+| 履歴保持 | 6時間 |
 
-**特徴:**
-- Vercelダッシュボードから直接作成・管理
-- Preview Deploymentごとにブランチ作成可能
-- 環境変数が自動設定される
-- Serverless対応 (コールドスタート最適化)
+**ブランチ構成（重要）:**
+
+```
+Neon Project (1つ)
+├── main     ← Production環境用
+└── develop  ← Preview環境用
+```
+
+| 環境 | Neonブランチ | 用途 |
+|------|-------------|------|
+| Production | `main` | 本番データ |
+| Preview | `develop` | 開発・テストデータ |
+
+> ⚠️ **PRごとの自動ブランチ作成は無効にする**
+> Vercel + Neon統合でPRごとにブランチを自動作成すると、10個の上限にすぐ達する。
+> 本プロジェクトでは `main` と `develop` の2ブランチのみ使用し、無料枠内で運用する。
 
 **Terraform管理:**
-- Vercel Postgres は現時点でTerraform未対応
-- Vercelダッシュボードで手動作成 → 環境変数はTerraformで参照可能
+- Neon は現時点でTerraform未対応
+- Neonダッシュボード（またはVercel経由）で手動作成
+- 環境変数はVercelダッシュボードで設定
 
-**参考:** [Vercel Postgres](https://vercel.com/docs/storage/vercel-postgres)
+**参考:**
+- [Neon Branching](https://neon.com/docs/introduction/branching)
+- [Neon Free Tier](https://neon.com/docs/introduction/plans)
 
 ### 2.3 Google Cloud (OAuth認証)
 
@@ -125,12 +139,16 @@
 | `POSTGRES_PASSWORD` | DBパスワード | 全環境 | Vercel自動設定 |
 | `POSTGRES_DATABASE` | DB名 | 全環境 | Vercel自動設定 |
 | `NEXTAUTH_URL` | 認証コールバックURL | 環境別 | Terraform |
-| `NEXTAUTH_SECRET` | セッション暗号化キー | 全環境 | Terraform (sensitive) |
-| `GOOGLE_CLIENT_ID` | OAuth クライアントID | 全環境 | Terraform (sensitive) |
-| `GOOGLE_CLIENT_SECRET` | OAuth シークレット | 全環境 | Terraform (sensitive) |
+| `NEXTAUTH_SECRET` | セッション暗号化キー | 全環境 | **Vercelダッシュボード** |
+| `GOOGLE_CLIENT_ID` | OAuth クライアントID | 全環境 | **Vercelダッシュボード** |
+| `GOOGLE_CLIENT_SECRET` | OAuth シークレット | 全環境 | **Vercelダッシュボード** |
 
-**注意:** Vercel Postgres作成時、`POSTGRES_*` 環境変数は自動設定される。
-アプリ側で `DATABASE_URL` を使用している場合は、`POSTGRES_URL` を参照するよう設定が必要。
+**注意:**
+- Vercel Postgres作成時、`POSTGRES_*` 環境変数は自動設定される
+- アプリ側で `DATABASE_URL` を使用している場合は、`POSTGRES_URL` を参照するよう設定が必要
+- **シークレット（NEXTAUTH_SECRET, GOOGLE_CLIENT_*, など）はTerraformで管理しない**
+  - 理由: `tfstate` ファイルに平文で保存されるリスクを回避
+  - Vercel Dashboard > Project > Settings > Environment Variables で直接設定
 
 ---
 
@@ -260,10 +278,12 @@ H-9: DBマイグレーション実行
 | 情報 | 保管場所 | 備考 |
 |------|---------|------|
 | Vercel APIトークン | ローカル環境変数 | `VERCEL_API_TOKEN` |
-| Google OAuth認証情報 | terraform.tfvars | .gitignore で除外 |
-| NEXTAUTH_SECRET | terraform.tfvars | .gitignore で除外 |
-| DATABASE_URL | terraform.tfvars | .gitignore で除外 |
+| Google OAuth認証情報 | **Vercelダッシュボード** | tfstateへの平文保存を回避 |
+| NEXTAUTH_SECRET | **Vercelダッシュボード** | tfstateへの平文保存を回避 |
 | tfstate | ローカル | .gitignore で除外 |
+
+**設計方針**: シークレットはTerraformで管理せず、Vercelダッシュボードで直接設定する。
+理由: Terraformの `tfstate` ファイルにはシークレットが平文で保存されるため。
 
 ### 7.2 .gitignore 設定
 
@@ -274,13 +294,14 @@ terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/*.tfvars
 !terraform/*.tfvars.example
-terraform/.terraform.lock.hcl
+terraform/environments/*.tfvars
+!terraform/environments/*.tfvars.example
+# 注意: .terraform.lock.hcl はコミットすべき（再現性のため）
 ```
 
 ### 7.3 将来の改善案 (Phase 2以降)
 
 - **tfstate リモート管理**: Terraform Cloud (無料枠あり) でstate管理
-- **シークレット管理**: HashiCorp Vault または AWS Secrets Manager
 - **CI/CD統合**: GitHub Actions で terraform plan を自動実行
 
 ---

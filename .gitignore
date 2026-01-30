@@ -47,3 +47,13 @@ next-env.d.ts
 .claude/settings.local.json
 # next-agents-md
 .next-docs/
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+!terraform/*.tfvars.example
+terraform/*.tfplan
+terraform/environments/*.tfvars
+!terraform/environments/*.tfvars.example
