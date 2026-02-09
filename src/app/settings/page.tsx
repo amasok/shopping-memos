@@ -133,6 +133,7 @@ export default function SettingsPage() {
           {/* アプリインストール */}
           <InstallPrompt />
 
+
           {/* テーマ設定 */}
           <section>
             <h2 className="mb-3 text-sm font-semibold text-gray-500">
