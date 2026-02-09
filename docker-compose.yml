@@ -11,5 +11,16 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  # シンプルなDB管理ツール
+  # http://localhost:8080 でアクセス
+  # System: PostgreSQL, Server: postgres, User: postgres, Password: postgres, Database: shopping_memos
+  adminer:
+    image: adminer:latest
+    container_name: shopping-memos-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
 volumes:
   postgres_data:

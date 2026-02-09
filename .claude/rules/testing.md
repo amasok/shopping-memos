@@ -1,21 +1,39 @@
 # テスト規約
 
+## 必須ルール
+
+**プロダクトコードを追加・変更した場合、必ず対応するテストコードも書くこと。**
+
+テストなしのプロダクトコードはマージしない。
+
+| 変更内容 | 必要なテスト |
+|---------|-------------|
+| 新規API/関数 | ユニットテスト必須 |
+| バリデーション | 正常系・異常系テスト |
+| ビジネスロジック | ユニットテスト必須 |
+| UIコンポーネント | 振る舞いテスト推奨 |
+| バグ修正 | 再発防止テスト必須 |
+
 ## カバレッジ基準
 
 **最低80%のテストカバレッジを維持する**
 
-```javascript
-// jest.config.js
-module.exports = {
-  coverageThreshold: {
-    global: {
-      branches: 80,
-      functions: 80,
-      lines: 80,
-      statements: 80,
+```typescript
+// vitest.config.ts
+export default defineConfig({
+  test: {
+    coverage: {
+      thresholds: {
+        global: {
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
+        },
+      },
     },
   },
-}
+})
 ```
 
 ## テストの種類
@@ -168,32 +186,38 @@ it('エラー', () => {})
 
 ## モック
 
-### Prismaのモック
+### Drizzleのモック
 
 ```typescript
-// src/lib/__mocks__/prisma.ts
-import { PrismaClient } from '@prisma/client'
-import { mockDeep, mockReset, DeepMockProxy } from 'jest-mock-extended'
+// src/test/__mocks__/db.ts
+import { vi } from 'vitest'
 
-export const prismaMock = mockDeep<PrismaClient>()
+export const dbMock = {
+  select: vi.fn().mockReturnThis(),
+  from: vi.fn().mockReturnThis(),
+  where: vi.fn().mockReturnThis(),
+  insert: vi.fn().mockReturnThis(),
+  values: vi.fn().mockReturnThis(),
+  returning: vi.fn(),
+}
 
 beforeEach(() => {
-  mockReset(prismaMock)
+  vi.clearAllMocks()
 })
 ```
 
 ### 使用例
 
 ```typescript
-import { prismaMock } from '@/lib/__mocks__/prisma'
+import { dbMock } from '@/test/__mocks__/db'
 
-jest.mock('@/lib/prisma', () => ({
-  prisma: prismaMock,
+vi.mock('@/infrastructure/db/drizzle/client', () => ({
+  db: dbMock,
 }))
 
 it('ユーザーを取得する', async () => {
   const mockUser = { id: '1', name: 'テスト', email: 'test@example.com' }
-  prismaMock.user.findUnique.mockResolvedValue(mockUser)
+  dbMock.returning.mockResolvedValue([mockUser])
 
   const result = await getUserById('1')
 

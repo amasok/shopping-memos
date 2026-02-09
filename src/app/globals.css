@@ -2,12 +2,77 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #1a1a1a;
+
+  /* Theme Colors - Default: Orange */
+  --theme-primary: #f97316;
+  --theme-primary-hover: #ea580c;
+  --theme-primary-light: #fff7ed;
+  --theme-primary-rgb: 249, 115, 22;
+  --theme-accent: #f59e0b;
+  --theme-accent-light: #fef3c7;
+  --theme-surface: #fef7ee;
+  --theme-card: #ffffff;
+}
+
+/* Orange Theme (Default) */
+[data-theme="orange"] {
+  --theme-primary: #f97316;
+  --theme-primary-hover: #ea580c;
+  --theme-primary-light: #fff7ed;
+  --theme-primary-rgb: 249, 115, 22;
+  --theme-accent: #f59e0b;
+  --theme-accent-light: #fef3c7;
+  --theme-surface: #fef7ee;
+  --theme-card: #ffffff;
+}
+
+/* Terracotta Theme */
+[data-theme="terracotta"] {
+  --theme-primary: #d97706;
+  --theme-primary-hover: #b45309;
+  --theme-primary-light: #fef9e7;
+  --theme-primary-rgb: 217, 119, 6;
+  --theme-accent: #f43f5e;
+  --theme-accent-light: #fff1f2;
+  --theme-surface: #faf6f0;
+  --theme-card: #fffefa;
+}
+
+/* Coral Theme */
+[data-theme="coral"] {
+  --theme-primary: #f43f5e;
+  --theme-primary-hover: #e11d48;
+  --theme-primary-light: #fff1f2;
+  --theme-primary-rgb: 244, 63, 94;
+  --theme-accent: #fb923c;
+  --theme-accent-light: #ffedd5;
+  --theme-surface: #fef5f5;
+  --theme-card: #ffffff;
+}
+
+/* Blue Theme (Classic) */
+[data-theme="blue"] {
+  --theme-primary: #3b82f6;
+  --theme-primary-hover: #2563eb;
+  --theme-primary-light: #eff6ff;
+  --theme-primary-rgb: 59, 130, 246;
+  --theme-accent: #8b5cf6;
+  --theme-accent-light: #f5f3ff;
+  --theme-surface: #f0f5ff;
+  --theme-card: #ffffff;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-primary: var(--theme-primary);
+  --color-primary-hover: var(--theme-primary-hover);
+  --color-primary-light: var(--theme-primary-light);
+  --color-accent: var(--theme-accent);
+  --color-accent-light: var(--theme-accent-light);
+  --color-surface: var(--theme-surface);
+  --color-card: var(--theme-card);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -15,12 +80,17 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
-    --foreground: #ededed;
+    --foreground: #f5f5f5;
   }
 }
 
 body {
-  background: var(--background);
+  background: var(--theme-surface);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont,
+    "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }

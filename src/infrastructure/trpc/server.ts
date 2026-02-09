@@ -1,0 +1,83 @@
+import { initTRPC, TRPCError } from "@trpc/server"
+import superjson from "superjson"
+import { auth } from "@/infrastructure/auth"
+
+/**
+ * tRPCコンテキスト
+ * 各リクエストで利用可能な情報を定義
+ */
+export interface Context {
+  userId?: string
+  user?: {
+    id: string
+    name?: string | null
+    email?: string | null
+    image?: string | null
+  }
+}
+
+/**
+ * コンテキスト作成関数
+ * API Route から呼び出される
+ */
+export async function createContext(): Promise<Context> {
+  const session = await auth()
+
+  return {
+    userId: session?.user?.id,
+    user: session?.user
+      ? {
+          id: session.user.id!,
+          name: session.user.name,
+          email: session.user.email,
+          image: session.user.image,
+        }
+      : undefined,
+  }
+}
+
+/**
+ * tRPC初期化
+ */
+const t = initTRPC.context<Context>().create({
+  transformer: superjson,
+  errorFormatter({ shape }) {
+    return shape
+  },
+})
+
+/**
+ * ルーター作成
+ */
+export const router = t.router
+
+/**
+ * パブリックプロシージャ
+ * 認証不要のエンドポイント用
+ */
+export const publicProcedure = t.procedure
+
+/**
+ * 認証必須プロシージャ
+ * ログイン済みユーザーのみアクセス可能
+ */
+export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
+  if (!ctx.userId) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "ログインが必要です",
+    })
+  }
+
+  return next({
+    ctx: {
+      ...ctx,
+      userId: ctx.userId, // 型を確定させる
+    },
+  })
+})
+
+/**
+ * ミドルウェア作成
+ */
+export const middleware = t.middleware
