@@ -6,6 +6,7 @@ import { Header } from "@/components/layouts/Header"
 import { Button, ConfirmDialog, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme, THEMES, type ThemeType } from "@/contexts/ThemeContext"
+import { InstallPrompt } from "@/components/pwa/InstallPrompt"
 import { cn } from "@/lib/utils"
 import { Check, ChevronRight, FileText, LogIn, LogOut, Palette, Shield, Tag, User, Users } from "lucide-react"
 import Image from "next/image"
@@ -128,6 +129,10 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+
+          {/* アプリインストール */}
+          <InstallPrompt />
+
 
           {/* テーマ設定 */}
           <section>
