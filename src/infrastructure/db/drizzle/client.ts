@@ -10,10 +10,12 @@ const effectiveConnectionString =
   connectionString || "postgresql://dummy:dummy@localhost:5432/dummy"
 
 // PostgreSQLクライアント
+// Neon pooler (PgBouncer) はプリペアドステートメント非対応のため prepare: false が必要
 const client = postgres(effectiveConnectionString, {
   max: process.env.NODE_ENV === "production" ? 10 : 1,
   idle_timeout: 20,
   connect_timeout: 10,
+  prepare: false,
 })
 
 // 開発環境でのSQLロギング
