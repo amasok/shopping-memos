@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import { Providers } from "./providers"
+import { RegisterSW } from "@/components/pwa/RegisterSW"
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,6 +17,14 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "買い物メモ",
   description: "家族で共有できる買い物メモアプリ",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "買い物メモ",
+  },
+  icons: {
+    apple: "/apple-touch-icon.png",
+  },
 }
 
 export const viewport: Viewport = {
@@ -36,6 +45,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <Providers>{children}</Providers>
+        <RegisterSW />
       </body>
     </html>
   )
