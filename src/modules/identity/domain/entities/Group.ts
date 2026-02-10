@@ -6,6 +6,7 @@ export interface Group {
   id: string
   name: string
   inviteCode: string // 6文字の招待コード
+  inviteEnabled: boolean
   createdAt: Date
   updatedAt: Date
 }

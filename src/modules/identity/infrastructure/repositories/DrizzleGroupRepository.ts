@@ -88,6 +88,7 @@ export class DrizzleGroupRepository implements GroupRepository {
         id: groups.id,
         name: groups.name,
         inviteCode: groups.inviteCode,
+        inviteEnabled: groups.inviteEnabled,
         createdAt: groups.createdAt,
         updatedAt: groups.updatedAt,
         memberCount: memberCountSubquery.count,
@@ -130,6 +131,19 @@ export class DrizzleGroupRepository implements GroupRepository {
       .update(groups)
       .set({
         inviteCode: generateInviteCode(),
+        updatedAt: new Date(),
+      })
+      .where(eq(groups.id, id))
+      .returning()
+
+    return updated
+  }
+
+  async setInviteEnabled(id: string, enabled: boolean): Promise<Group> {
+    const [updated] = await db
+      .update(groups)
+      .set({
+        inviteEnabled: enabled,
         updatedAt: new Date(),
       })
       .where(eq(groups.id, id))

@@ -5,6 +5,7 @@ import {
   updateGroupSchema,
   deleteGroupSchema,
   regenerateInviteCodeSchema,
+  setInviteEnabledSchema,
   inviteMemberSchema,
   acceptInviteSchema,
   joinByInviteCodeSchema,
@@ -100,7 +101,32 @@ export const identityRouter = router({
         })
       }
 
+      // 招待が無効化されている場合は再生成不可
+      const group = await groupRepository.findById(input.groupId)
+      if (group && !group.inviteEnabled) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "招待が一時停止中のため、コードを再生成できません",
+        })
+      }
+
       return groupRepository.regenerateInviteCode(input.groupId)
+    }),
+
+  /** 招待の有効/無効を切り替え */
+  setInviteEnabled: protectedProcedure
+    .input(setInviteEnabledSchema)
+    .mutation(async ({ input, ctx }) => {
+      // オーナーのみ変更可能
+      const isOwner = await groupRepository.isOwner(input.groupId, ctx.userId)
+      if (!isOwner) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "招待設定の変更はオーナーのみ可能です",
+        })
+      }
+
+      return groupRepository.setInviteEnabled(input.groupId, input.enabled)
     }),
 
   // === メンバー ===
@@ -131,6 +157,15 @@ export const identityRouter = router({
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "招待はオーナーのみ可能です",
+        })
+      }
+
+      // 招待が無効化されている場合は招待不可
+      const group = await groupRepository.findById(input.groupId)
+      if (group && !group.inviteEnabled) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "現在招待を受け付けていません",
         })
       }
 
@@ -215,6 +250,14 @@ export const identityRouter = router({
         throw new TRPCError({
           code: "NOT_FOUND",
           message: "招待コードが見つかりません",
+        })
+      }
+
+      // 招待が無効化されている場合は参加不可
+      if (!group.inviteEnabled) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "現在招待を受け付けていません",
         })
       }
 
