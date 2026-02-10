@@ -87,6 +87,7 @@ export const groups = pgTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     inviteCode: text("invite_code").notNull().unique(), // 6文字の招待コード
+    inviteEnabled: boolean("invite_enabled").default(true).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

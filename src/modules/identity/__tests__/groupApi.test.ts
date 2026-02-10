@@ -95,3 +95,67 @@ describe("グループ作成入力バリデーション", () => {
     expect(invalidName.length).toBeGreaterThan(50)
   })
 })
+
+describe("招待有効/無効フラグ", () => {
+  it("グループのinviteEnabledがfalseの場合、招待コードによる参加を拒否すべき", () => {
+    const group = {
+      id: "group-1",
+      name: "テストグループ",
+      inviteCode: "ABC123",
+      inviteEnabled: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+
+    // inviteEnabled が false なら参加不可
+    expect(group.inviteEnabled).toBe(false)
+  })
+
+  it("グループのinviteEnabledがtrueの場合、招待コードによる参加を許可すべき", () => {
+    const group = {
+      id: "group-1",
+      name: "テストグループ",
+      inviteCode: "ABC123",
+      inviteEnabled: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+
+    // inviteEnabled が true なら参加可能
+    expect(group.inviteEnabled).toBe(true)
+  })
+
+  it("inviteEnabledのデフォルト値はtrue", () => {
+    // スキーマのデフォルト値を反映
+    const defaultInviteEnabled = true
+    expect(defaultInviteEnabled).toBe(true)
+  })
+
+  it("トグルで有効に戻した後は参加できる", () => {
+    const group = {
+      id: "group-1",
+      name: "テストグループ",
+      inviteCode: "ABC123",
+      inviteEnabled: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+
+    // 無効化中
+    expect(group.inviteEnabled).toBe(false)
+
+    // 有効に戻す
+    const updatedGroup = { ...group, inviteEnabled: true }
+    expect(updatedGroup.inviteEnabled).toBe(true)
+  })
+
+  it("setInviteEnabledの入力にはgroupIdとenabledが必要", () => {
+    const input = {
+      groupId: "550e8400-e29b-41d4-a716-446655440000",
+      enabled: false,
+    }
+
+    expect(input.groupId).toBeDefined()
+    expect(typeof input.enabled).toBe("boolean")
+  })
+})

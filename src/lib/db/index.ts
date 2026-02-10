@@ -52,6 +52,7 @@ export interface Group {
   name: string
   ownerId: string
   inviteCode?: string
+  inviteEnabled?: boolean
   createdAt: Date
   updatedAt: Date
 }
