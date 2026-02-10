@@ -55,6 +55,14 @@ export const joinByInviteCodeSchema = z.object({
 
 export type JoinByInviteCodeInput = z.infer<typeof joinByInviteCodeSchema>
 
+// 招待の有効/無効切り替え
+export const setInviteEnabledSchema = z.object({
+  groupId: z.string().uuid(),
+  enabled: z.boolean(),
+})
+
+export type SetInviteEnabledInput = z.infer<typeof setInviteEnabledSchema>
+
 // メンバー削除
 export const removeMemberSchema = z.object({
   groupId: z.string().uuid(),

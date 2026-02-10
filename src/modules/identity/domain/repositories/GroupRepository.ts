@@ -33,6 +33,9 @@ export interface GroupRepository {
   /** 招待コードを再生成 */
   regenerateInviteCode(id: string): Promise<Group>
 
+  /** 招待の有効/無効を設定 */
+  setInviteEnabled(id: string, enabled: boolean): Promise<Group>
+
   // === メンバー ===
 
   /** メンバーを追加 */

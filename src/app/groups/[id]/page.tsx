@@ -38,6 +38,7 @@ export default function GroupDetailPage() {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const [showInviteSheet, setShowInviteSheet] = useState(false)
   const [isRegeneratingCode, setIsRegeneratingCode] = useState(false)
+  const [isTogglingInvite, setIsTogglingInvite] = useState(false)
   const [copiedCode, setCopiedCode] = useState(false)
   const [removeMemberTarget, setRemoveMemberTarget] = useState<GroupMember | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -49,9 +50,15 @@ export default function GroupDetailPage() {
   // メンバー情報からオーナーかどうかを判定
   const myMembership = members?.find((m) => m.userId === user?.id)
   const isOwner = myMembership?.role === "owner"
+  const inviteEnabled = group?.inviteEnabled ?? true
 
   // tRPC mutations
   const regenerateInviteCodeMutation = trpc.identity.regenerateInviteCode.useMutation({
+    onSuccess: () => {
+      refetchGroup()
+    },
+  })
+  const setInviteEnabledMutation = trpc.identity.setInviteEnabled.useMutation({
     onSuccess: () => {
       refetchGroup()
     },
@@ -92,6 +99,21 @@ export default function GroupDetailPage() {
       console.error("Failed to regenerate invite code:", error)
     } finally {
       setIsRegeneratingCode(false)
+    }
+  }
+
+  const handleToggleInviteEnabled = async () => {
+    if (!group) return
+    setIsTogglingInvite(true)
+    try {
+      await setInviteEnabledMutation.mutateAsync({
+        groupId,
+        enabled: !inviteEnabled,
+      })
+    } catch (error) {
+      console.error("Failed to toggle invite enabled:", error)
+    } finally {
+      setIsTogglingInvite(false)
     }
   }
 
@@ -309,6 +331,7 @@ export default function GroupDetailPage() {
                 variant="secondary"
                 size="sm"
                 onClick={() => setShowInviteSheet(true)}
+                disabled={!inviteEnabled}
               >
                 <Share2 className="mr-1 h-4 w-4" />
                 招待
@@ -361,21 +384,45 @@ export default function GroupDetailPage() {
           {/* 招待コード */}
           {isOwner && (
             <section>
-              <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-500">
-                招待コード
-              </h2>
-              <div className="rounded-xl bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-500">
+                  招待コード
+                </h2>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={inviteEnabled}
+                  aria-label="招待を有効にする"
+                  disabled={isTogglingInvite}
+                  onClick={handleToggleInviteEnabled}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out",
+                    inviteEnabled ? "bg-blue-600" : "bg-gray-200",
+                    isTogglingInvite && "opacity-50"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                      inviteEnabled ? "translate-x-5" : "translate-x-0"
+                    )}
+                  />
+                </button>
+              </div>
+              <div className={cn("rounded-xl bg-white p-4 shadow-sm", !inviteEnabled && "opacity-50")}>
                 <div className="mb-3 flex items-center justify-between">
-                  <code className="text-2xl font-bold tracking-widest text-gray-900">
+                  <code className={cn("text-2xl font-bold tracking-widest", inviteEnabled ? "text-gray-900" : "text-gray-400")}>
                     {group.inviteCode}
                   </code>
                   <div className="flex gap-1">
                     <button
                       type="button"
                       onClick={handleCopyInviteCode}
+                      disabled={!inviteEnabled}
                       className={cn(
                         "flex h-9 w-9 items-center justify-center rounded-full",
-                        "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                        "text-gray-500 hover:bg-gray-100 hover:text-gray-700",
+                        "disabled:opacity-50 disabled:cursor-not-allowed"
                       )}
                       aria-label="コピー"
                     >
@@ -388,11 +435,11 @@ export default function GroupDetailPage() {
                     <button
                       type="button"
                       onClick={handleRegenerateCode}
-                      disabled={isRegeneratingCode}
+                      disabled={isRegeneratingCode || !inviteEnabled}
                       className={cn(
                         "flex h-9 w-9 items-center justify-center rounded-full",
                         "text-gray-500 hover:bg-gray-100 hover:text-gray-700",
-                        "disabled:opacity-50"
+                        "disabled:opacity-50 disabled:cursor-not-allowed"
                       )}
                       aria-label="再生成"
                     >
@@ -401,7 +448,9 @@ export default function GroupDetailPage() {
                   </div>
                 </div>
                 <p className="text-sm text-gray-500">
-                  このコードを共有して、家族をグループに招待しましょう
+                  {inviteEnabled
+                    ? "このコードを共有して、家族をグループに招待しましょう"
+                    : "招待が一時停止中です"}
                 </p>
               </div>
             </section>
@@ -416,39 +465,52 @@ export default function GroupDetailPage() {
         title="メンバーを招待"
       >
         <div className="space-y-4">
-          <div className="rounded-lg bg-gray-50 p-4 text-center">
-            <p className="mb-2 text-sm text-gray-500">招待コード</p>
-            <code className="text-3xl font-bold tracking-widest text-gray-900">
-              {group.inviteCode}
-            </code>
-          </div>
-          <p className="text-sm text-gray-600">
-            招待コードを共有して、家族やパートナーをグループに招待しましょう。
-            招待された人は「設定」→「グループ管理」から参加できます。
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              className="flex-1"
-              onClick={handleCopyInviteCode}
-            >
-              {copiedCode ? (
-                <>
-                  <Check className="mr-2 h-5 w-5" />
-                  コピーしました
-                </>
-              ) : (
-                <>
-                  <Copy className="mr-2 h-5 w-5" />
-                  コピー
-                </>
-              )}
-            </Button>
-            <Button className="flex-1" onClick={handleShareInvite}>
-              <Share2 className="mr-2 h-5 w-5" />
-              共有
-            </Button>
-          </div>
+          {!inviteEnabled ? (
+            <div className="rounded-lg bg-yellow-50 p-4 text-center">
+              <p className="text-sm font-medium text-yellow-800">
+                招待が一時停止中です
+              </p>
+              <p className="mt-1 text-sm text-yellow-600">
+                オーナーが招待を再開するまでお待ちください
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-lg bg-gray-50 p-4 text-center">
+                <p className="mb-2 text-sm text-gray-500">招待コード</p>
+                <code className="text-3xl font-bold tracking-widest text-gray-900">
+                  {group.inviteCode}
+                </code>
+              </div>
+              <p className="text-sm text-gray-600">
+                招待コードを共有して、家族やパートナーをグループに招待しましょう。
+                招待された人は「設定」→「グループ管理」から参加できます。
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  className="flex-1"
+                  onClick={handleCopyInviteCode}
+                >
+                  {copiedCode ? (
+                    <>
+                      <Check className="mr-2 h-5 w-5" />
+                      コピーしました
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="mr-2 h-5 w-5" />
+                      コピー
+                    </>
+                  )}
+                </Button>
+                <Button className="flex-1" onClick={handleShareInvite}>
+                  <Share2 className="mr-2 h-5 w-5" />
+                  共有
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </BottomSheet>
 
