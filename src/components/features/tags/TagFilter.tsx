@@ -42,7 +42,7 @@ export function TagFilter({
           {label}
         </label>
       )}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" data-testid="tag-filter">
         <button
           type="button"
           onClick={() => onTagSelect(null)}
@@ -54,6 +54,7 @@ export function TagFilter({
               ? "bg-gray-900 text-white"
               : "bg-gray-100 text-gray-700 hover:bg-gray-200"
           )}
+          data-testid="tag-filter-all"
         >
           すべて
         </button>
@@ -64,6 +65,7 @@ export function TagFilter({
               key={tag.id}
               type="button"
               onClick={() => onTagSelect(tag.id === selectedTagId ? null : tag.id)}
+              data-testid={`tag-filter-${tag.id}`}
               className={cn(
                 "rounded-full font-semibold transition-colors",
                 "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",

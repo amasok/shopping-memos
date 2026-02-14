@@ -159,7 +159,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6" data-testid="item-form">
       {/* アイテム名 */}
       <div>
         <label
@@ -176,6 +176,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
           placeholder="例: 牛乳"
           autoFocus
           autoComplete="off"
+          data-testid="item-name-input"
           className={cn(
             "w-full rounded-lg border-2 border-gray-300 px-4 py-3",
             "text-lg font-semibold text-gray-900",
@@ -202,10 +203,11 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
               "disabled:border-gray-200 disabled:text-gray-300"
             )}
             aria-label="数量を減らす"
+            data-testid="quantity-decrease"
           >
             <Minus className="h-5 w-5" strokeWidth={2.5} />
           </button>
-          <span className="min-w-[56px] text-center text-3xl font-bold text-gray-900">
+          <span className="min-w-[56px] text-center text-3xl font-bold text-gray-900" data-testid="quantity-display">
             {quantity}
           </span>
           <button
@@ -217,6 +219,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
               "transition-colors hover:bg-gray-100"
             )}
             aria-label="数量を増やす"
+            data-testid="quantity-increase"
           >
             <Plus className="h-5 w-5" strokeWidth={2.5} />
           </button>
@@ -237,6 +240,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
           onChange={(e) => setMemo(e.target.value)}
           placeholder="例: 低脂肪タイプ"
           rows={2}
+          data-testid="item-memo-input"
           className={cn(
             "w-full rounded-lg border-2 border-gray-300 px-4 py-3",
             "text-base font-medium text-gray-900",
@@ -407,6 +411,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
               className="flex-1 text-base font-semibold"
               disabled={!isValid || isSubmitting || isProcessing}
               onClick={(e) => handleSubmit(e, true)}
+              data-testid="item-add-continue"
             >
               追加して続ける
             </Button>
@@ -414,6 +419,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
               type="submit"
               className="flex-1 text-base font-semibold"
               disabled={!isValid || isSubmitting || isProcessing}
+              data-testid="item-add-close"
             >
               {isSubmitting || isProcessing ? "保存中..." : "追加して閉じる"}
             </Button>
@@ -423,6 +429,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
             type="submit"
             className="w-full text-lg font-semibold"
             disabled={!isValid || isSubmitting || isProcessing}
+            data-testid="item-submit"
           >
             {isSubmitting || isProcessing ? "保存中..." : isEditing ? "更新" : "追加"}
           </Button>
@@ -438,12 +445,13 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
                   "flex w-full items-center justify-center gap-2 rounded-lg py-3",
                   "text-red-600 transition-colors hover:bg-red-50"
                 )}
+                data-testid="item-delete-button"
               >
                 <Trash2 className="h-5 w-5" />
                 削除
               </button>
             ) : (
-              <div className="rounded-lg bg-red-50 p-3">
+              <div className="rounded-lg bg-red-50 p-3" data-testid="item-delete-confirm">
                 <p className="mb-3 text-center text-sm font-medium text-red-800">
                   本当に削除しますか？
                 </p>
@@ -454,6 +462,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
                     className="flex-1"
                     onClick={handleDelete}
                     disabled={isSubmitting || isProcessing}
+                    data-testid="item-delete-confirm-yes"
                   >
                     削除する
                   </Button>

@@ -173,7 +173,7 @@ export default function GroupsPage() {
         <div className="space-y-4">
           {/* 作成・参加ボタン */}
           <div className="flex gap-3">
-            <Button className="flex-1" onClick={() => setIsCreateSheetOpen(true)}>
+            <Button className="flex-1" onClick={() => setIsCreateSheetOpen(true)} data-testid="group-create-button">
               <Plus className="mr-2 h-5 w-5" />
               作成
             </Button>
@@ -181,6 +181,7 @@ export default function GroupsPage() {
               variant="secondary"
               className="flex-1"
               onClick={() => setIsJoinSheetOpen(true)}
+              data-testid="group-join-button"
             >
               <UserPlus className="mr-2 h-5 w-5" />
               参加
@@ -193,9 +194,10 @@ export default function GroupsPage() {
               icon={<Users className="h-16 w-16" />}
               title="グループがありません"
               description="グループを作成して家族を招待しましょう"
+              data-testid="groups-empty-state"
             />
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-3" data-testid="groups-list">
               {groups?.map((group) => (
                 <GroupListItem key={group.id} group={group} />
               ))}
@@ -218,11 +220,13 @@ export default function GroupsPage() {
             onChange={(e) => setNewGroupName(e.target.value)}
             placeholder="例: 田中家"
             autoFocus
+            data-testid="group-create-name-input"
           />
           <Button
             type="submit"
             className="w-full"
             disabled={!newGroupName.trim() || isCreating}
+            data-testid="group-create-submit"
           >
             {isCreating ? "作成中..." : "作成"}
           </Button>
@@ -252,18 +256,20 @@ export default function GroupsPage() {
               placeholder="例: ABC123"
               autoFocus
               maxLength={6}
+              data-testid="group-join-code-input"
             />
             <p className="mt-2 text-sm text-gray-500">
               グループの管理者から共有された6桁のコードを入力してください
             </p>
             {joinError && (
-              <p className="mt-2 text-sm text-red-600">{joinError}</p>
+              <p className="mt-2 text-sm text-red-600" data-testid="group-join-error">{joinError}</p>
             )}
           </div>
           <Button
             type="submit"
             className="w-full"
             disabled={inviteCode.trim().length !== 6 || isJoining}
+            data-testid="group-join-submit"
           >
             {isJoining ? "参加中..." : "参加"}
           </Button>
@@ -275,7 +281,7 @@ export default function GroupsPage() {
 
 function GroupListItem({ group }: { group: { id: string; name: string; memberCount: number } }) {
   return (
-    <li>
+    <li data-testid={`group-item-${group.id}`}>
       <Link
         href={`/groups/${group.id}`}
         className={cn(

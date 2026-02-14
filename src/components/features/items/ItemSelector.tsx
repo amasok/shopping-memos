@@ -197,6 +197,7 @@ export function ItemSelector({
         <button
           type="button"
           onClick={() => setMode("select")}
+          data-testid="tab-select"
           className={cn(
             "flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors",
             mode === "select"
@@ -210,6 +211,7 @@ export function ItemSelector({
         <button
           type="button"
           onClick={() => setMode("new")}
+          data-testid="tab-new"
           className={cn(
             "flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors",
             mode === "new"
@@ -291,6 +293,7 @@ export function ItemSelector({
                       size="sm"
                       className="flex-1 text-xs"
                       onClick={handleSelectAllVisible}
+                      data-testid="select-all"
                       disabled={
                         filteredExistingItems.every((item) =>
                           selectedIds.includes(item.id)
@@ -304,6 +307,7 @@ export function ItemSelector({
                       size="sm"
                       className="flex-1 text-xs"
                       onClick={handleDeselectAllVisible}
+                      data-testid="deselect-all"
                       disabled={
                         !filteredExistingItems.some((item) =>
                           selectedIds.includes(item.id)
@@ -314,7 +318,7 @@ export function ItemSelector({
                     </Button>
                   </div>
 
-                  <ul className="max-h-52 space-y-2 overflow-y-auto">
+                  <ul className="max-h-52 space-y-2 overflow-y-auto" data-testid="existing-items-list">
                     {filteredExistingItems.map((item) => {
                       const isSelected = selectedIds.includes(item.id)
                       return (
@@ -602,6 +606,7 @@ export function ItemSelector({
           className={showCancel ? "flex-1" : "w-full"}
           onClick={handleSubmit}
           disabled={totalCount === 0 || isSubmitting}
+          data-testid="item-selector-submit"
         >
           {isSubmitting
             ? submittingLabel

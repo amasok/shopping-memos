@@ -135,6 +135,7 @@ export default function HomePage() {
             icon={<ShoppingCart className="h-16 w-16" />}
             title="買いたいものがありません"
             description="右下の+ボタンから追加しましょう"
+            data-testid="home-empty-state"
           />
         ) : (
           <div className="space-y-4">
@@ -146,6 +147,7 @@ export default function HomePage() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="検索..."
+                data-testid="search-input"
                 className={cn(
                   "w-full rounded-lg border-2 border-gray-200 bg-white py-3 pl-10 pr-10",
                   "text-base font-medium text-gray-900",
@@ -159,6 +161,7 @@ export default function HomePage() {
                   onClick={() => setSearchQuery("")}
                   className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
                   aria-label="検索をクリア"
+                  data-testid="search-clear"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -194,9 +197,9 @@ export default function HomePage() {
                 </p>
               </div>
             ) : (
-              <ul className="space-y-3">
+              <ul className="space-y-3" data-testid="item-list">
                 {filteredItems.map((item) => (
-                  <li key={item.id}>
+                  <li key={item.id} data-testid={`item-card-${item.id}`}>
                     <button
                       type="button"
                       onClick={() => handleOpenEdit(item)}
@@ -339,6 +342,7 @@ export default function HomePage() {
           "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         )}
         aria-label="アイテムを追加"
+        data-testid="fab-add-item"
       >
         <Plus className="h-6 w-6" strokeWidth={2.5} />
       </button>

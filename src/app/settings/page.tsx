@@ -59,7 +59,7 @@ export default function SettingsPage() {
     <AppLayout>
       <Header title="設定" />
       <PageContainer>
-        <div className="space-y-6">
+        <div className="space-y-6" data-testid="settings-page">
           {/* ユーザー情報 or ログイン促進 */}
           {isLoading ? (
             <div className="rounded-xl bg-card p-4 shadow-sm">
@@ -97,6 +97,7 @@ export default function SettingsPage() {
               <Button
                 variant="ghost"
                 className="mt-4 w-full text-red-600 hover:bg-red-50 hover:text-red-700"
+                data-testid="logout-button"
                 onClick={handleLogoutClick}
               >
                 <LogOut className="mr-2 h-5 w-5" />
@@ -122,7 +123,7 @@ export default function SettingsPage() {
                   <p className="mt-1 text-sm text-gray-600">
                     Googleアカウントでログインすると、デバイス間でデータを同期できます
                   </p>
-                  <Button className="mt-3" size="sm" onClick={handleLogin}>
+                  <Button className="mt-3" size="sm" data-testid="login-button" onClick={handleLogin}>
                     Googleでログイン
                   </Button>
                 </div>
@@ -159,6 +160,7 @@ export default function SettingsPage() {
                   return (
                     <button
                       key={t.id}
+                      data-testid={`theme-${t.id}`}
                       onClick={() => handleThemeChange(t.id)}
                       className={cn(
                         "relative flex items-center gap-3 rounded-xl p-3 transition-all",
@@ -201,6 +203,7 @@ export default function SettingsPage() {
                 <li key={item.href}>
                   <Link
                     href={item.href}
+                    data-testid={`settings-${item.href.slice(1)}-link`}
                     className={cn(
                       "flex items-center justify-between p-4",
                       "transition-colors hover:bg-gray-50"
@@ -237,6 +240,7 @@ export default function SettingsPage() {
               <li>
                 <Link
                   href="/privacy"
+                  data-testid="settings-privacy-link"
                   className={cn(
                     "flex items-center justify-between p-4",
                     "transition-colors hover:bg-gray-50"
@@ -256,6 +260,7 @@ export default function SettingsPage() {
               <li>
                 <Link
                   href="/terms"
+                  data-testid="settings-terms-link"
                   className={cn(
                     "flex items-center justify-between p-4",
                     "transition-colors hover:bg-gray-50"

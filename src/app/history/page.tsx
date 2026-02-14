@@ -89,18 +89,19 @@ export default function HistoryPage() {
 
         {!hasHistory ? (
           <EmptyState
+            data-testid="history-empty-state"
             icon={<History className="h-16 w-16" />}
             title="購入履歴がありません"
             description="買い物リストを完了すると記録されます"
           />
         ) : (
-          <ul className="space-y-3">
+          <ul className="space-y-3" data-testid="history-list">
             {history?.map((record) => {
               const isExpanded = expandedId === record.id
               const items = record.listItems ?? []
 
               return (
-                <li key={record.id}>
+                <li key={record.id} data-testid={`history-item-${record.id}`}>
                   <div
                     className={cn(
                       "w-full rounded-xl bg-white p-4 shadow-sm text-left"
@@ -109,6 +110,7 @@ export default function HistoryPage() {
                     {/* ヘッダー部分（クリックで展開/折りたたみ） */}
                     <button
                       type="button"
+                      data-testid={`history-toggle-${record.id}`}
                       onClick={() =>
                         setExpandedId(isExpanded ? null : record.id)
                       }
@@ -153,6 +155,7 @@ export default function HistoryPage() {
                             variant="secondary"
                             size="sm"
                             className="flex-1"
+                            data-testid={`history-revert-${record.id}`}
                             onClick={(e) => handleRevertToList(record.id, e)}
                             disabled={isProcessing || items.length === 0}
                           >
@@ -162,6 +165,7 @@ export default function HistoryPage() {
                           <Button
                             variant="danger"
                             size="sm"
+                            data-testid={`history-delete-${record.id}`}
                             onClick={(e) => {
                               e.stopPropagation()
                               setDeleteTargetId(record.id)
@@ -240,6 +244,7 @@ export default function HistoryPage() {
             <Button
               variant="danger"
               className="flex-1"
+              data-testid="history-delete-confirm"
               onClick={handleDeleteHistory}
               disabled={isProcessing}
             >

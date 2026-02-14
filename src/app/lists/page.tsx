@@ -62,12 +62,13 @@ export default function ListsPage() {
 
         {!hasActiveLists ? (
           <EmptyState
+            data-testid="lists-empty-state"
             icon={<ClipboardList className="h-16 w-16" />}
             title="進行中のリストがありません"
             description="買い物に行く時はリストを作成しましょう"
             action={
               <Link href={selectedGroupId ? `/lists/new?groupId=${selectedGroupId}` : "/lists/new"}>
-                <Button>
+                <Button data-testid="lists-create-button">
                   <Plus className="mr-2 h-5 w-5" />
                   リストを作成
                 </Button>
@@ -78,7 +79,7 @@ export default function ListsPage() {
           <div className="space-y-4">
             {/* 新規作成ボタン */}
             <Link href={selectedGroupId ? `/lists/new?groupId=${selectedGroupId}` : "/lists/new"}>
-              <Button className="w-full">
+              <Button className="w-full" data-testid="lists-create-button">
                 <Plus className="mr-2 h-5 w-5" />
                 新しいリストを作成
               </Button>
@@ -89,13 +90,14 @@ export default function ListsPage() {
               <h2 className="mb-3 text-sm font-semibold text-gray-500">
                 進行中
               </h2>
-              <ul className="space-y-3">
+              <ul className="space-y-3" data-testid="lists-list">
                 {lists?.map((list) => {
                   const stat = listStats.get(list.id) ?? { total: 0, checked: 0 }
                   return (
                     <li key={list.id}>
                       <Link
                         href={`/lists/${list.id}`}
+                        data-testid={`list-item-${list.id}`}
                         className={cn(
                           "flex items-center justify-between rounded-xl bg-white p-4 shadow-sm",
                           "transition-colors hover:bg-gray-50"

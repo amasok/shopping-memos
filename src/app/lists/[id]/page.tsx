@@ -191,6 +191,7 @@ export default function ShoppingListPage() {
             onClick={() => router.push("/lists")}
             className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100"
             aria-label="戻る"
+            data-testid="back-button"
           >
             <X className="h-5 w-5" />
           </button>
@@ -202,6 +203,7 @@ export default function ShoppingListPage() {
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 autoFocus
+                data-testid="list-name-input"
                 className={cn(
                   "flex-1 rounded-lg border-2 border-blue-500 px-3 py-1.5",
                   "text-base font-semibold text-gray-900",
@@ -218,7 +220,7 @@ export default function ShoppingListPage() {
                   }
                 }}
               />
-              <Button size="sm" onClick={handleSaveName}>
+              <Button size="sm" onClick={handleSaveName} data-testid="list-name-save">
                 保存
               </Button>
             </div>
@@ -227,6 +229,7 @@ export default function ShoppingListPage() {
               type="button"
               onClick={() => setIsEditingName(true)}
               className="flex items-center gap-1 text-lg font-semibold text-gray-900 hover:text-blue-600"
+              data-testid="list-name"
             >
               {list.name || "買い物中"}
               <Pencil className="h-4 w-4 text-gray-400" />
@@ -239,6 +242,7 @@ export default function ShoppingListPage() {
               onClick={() => setShowMenu(!showMenu)}
               className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100"
               aria-label="メニュー"
+              data-testid="list-menu-button"
             >
               <MoreVertical className="h-5 w-5" />
             </button>
@@ -256,6 +260,7 @@ export default function ShoppingListPage() {
                       setShowDeleteConfirm(true)
                     }}
                     className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                    data-testid="list-delete-menu"
                   >
                     <Trash2 className="h-4 w-4" />
                     リストを削除
@@ -268,7 +273,7 @@ export default function ShoppingListPage() {
       </header>
 
       {/* プログレスバー */}
-      <div className="border-b border-gray-200 bg-white px-4 py-3">
+      <div className="border-b border-gray-200 bg-white px-4 py-3" data-testid="progress-bar">
         <div className="mx-auto max-w-lg">
           <div className="mb-1 flex items-center justify-between text-sm">
             <span className="font-medium text-gray-700">進捗</span>
@@ -280,6 +285,7 @@ export default function ShoppingListPage() {
             <div
               className="h-full bg-blue-600 transition-all duration-300"
               style={{ width: `${progress}%` }}
+              data-testid="progress-fill"
             />
           </div>
         </div>
@@ -289,13 +295,13 @@ export default function ShoppingListPage() {
         <div className="space-y-6">
           {/* 未チェックのアイテム */}
           {uncheckedItems.length > 0 && (
-            <section>
+            <section data-testid="unchecked-section">
               <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-500">
                 <ShoppingCart className="h-4 w-4" />
                 買うもの
                 <span className="text-xs text-gray-400">（左スワイプで外す）</span>
               </h2>
-              <ul className="space-y-2">
+              <ul className="space-y-2" data-testid="unchecked-list">
                 {uncheckedItems.map((item) => (
                   <li key={item.id} className="rounded-lg shadow-sm overflow-hidden">
                     <SwipeToRemove
@@ -327,12 +333,12 @@ export default function ShoppingListPage() {
 
           {/* チェック済みのアイテム */}
           {checkedItems.length > 0 && (
-            <section>
+            <section data-testid="checked-section">
               <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-500">
                 <CheckCircle className="h-4 w-4" />
                 カゴに入れた
               </h2>
-              <ul className="space-y-2">
+              <ul className="space-y-2" data-testid="checked-list">
                 {checkedItems.map((item) => (
                   <li key={item.id} className="rounded-lg overflow-hidden">
                     <SwipeToRemove
@@ -380,6 +386,7 @@ export default function ShoppingListPage() {
                 "rounded-xl bg-green-50 p-4 text-center",
                 "border-2 border-green-200"
               )}
+              data-testid="all-checked-message"
             >
               <CheckCircle className="mx-auto mb-2 h-12 w-12 text-green-600" />
               <p className="mb-4 font-semibold text-green-800">
@@ -389,6 +396,7 @@ export default function ShoppingListPage() {
                 className="w-full bg-green-600 hover:bg-green-700"
                 onClick={handleComplete}
                 disabled={isCompleting}
+                data-testid="complete-button"
               >
                 {isCompleting ? "処理中..." : "購入完了"}
               </Button>
@@ -402,6 +410,7 @@ export default function ShoppingListPage() {
                 className="w-full"
                 onClick={handleComplete}
                 disabled={isCompleting || checkedItems.length === 0}
+                data-testid="partial-complete-button"
               >
                 {checkedItems.length === 0
                   ? "カゴに入れたものがありません"
@@ -419,6 +428,7 @@ export default function ShoppingListPage() {
       <button
         type="button"
         onClick={() => setIsAddSheetOpen(true)}
+        data-testid="fab-add-item"
         className={cn(
           "fixed bottom-6 right-4 z-20",
           "flex h-14 w-14 items-center justify-center",
@@ -510,6 +520,7 @@ export default function ShoppingListPage() {
               variant="danger"
               className="flex-1"
               onClick={handleDeleteList}
+              data-testid="list-delete-confirm"
             >
               削除する
             </Button>

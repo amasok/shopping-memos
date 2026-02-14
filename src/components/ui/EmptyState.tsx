@@ -22,6 +22,7 @@ export function EmptyState({
         "flex flex-col items-center justify-center py-12 text-center",
         className
       )}
+      data-testid="empty-state"
       {...props}
     >
       {icon && (
