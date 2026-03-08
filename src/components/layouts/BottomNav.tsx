@@ -48,7 +48,7 @@ export function BottomNav() {
   ]
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-10 border-t border-gray-200 bg-white/95 backdrop-blur-sm">
+    <nav className="fixed bottom-0 left-0 right-0 z-10 border-t border-gray-200 bg-white/95 backdrop-blur-sm" data-testid="bottom-nav">
       <div className="mx-auto max-w-lg">
         <ul className="flex items-center justify-around">
           {navItems.map((item) => {
@@ -66,6 +66,7 @@ export function BottomNav() {
                       : "text-gray-400 hover:text-gray-600"
                   )}
                   aria-current={isActive ? "page" : undefined}
+                  data-testid={`nav-${item.href === "/" ? "home" : item.href.slice(1)}`}
                 >
                   <span className="relative">
                     {item.icon}
@@ -73,6 +74,7 @@ export function BottomNav() {
                       <span
                         className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold text-white"
                         style={{ backgroundColor: "var(--theme-accent)" }}
+                        data-testid="nav-lists-badge"
                       >
                         {activeListCount}
                       </span>

@@ -106,6 +106,7 @@ export default function TagsPage() {
               variant="secondary"
               className="w-full"
               onClick={() => setIsAdding(true)}
+              data-testid="tag-add-button"
             >
               <Plus className="mr-2 h-5 w-5" />
               タグを追加
@@ -118,6 +119,7 @@ export default function TagsPage() {
                 onChange={(e) => setNewTagName(e.target.value)}
                 placeholder="新しいタグ名"
                 autoFocus
+                data-testid="tag-name-input"
                 className={cn(
                   "flex-1 rounded-lg border-2 border-gray-300 px-4 py-3",
                   "text-base font-medium text-gray-900",
@@ -134,7 +136,7 @@ export default function TagsPage() {
                   }
                 }}
               />
-              <Button onClick={handleAddTag} disabled={!newTagName.trim() || isProcessing}>
+              <Button onClick={handleAddTag} disabled={!newTagName.trim() || isProcessing} data-testid="tag-add-submit">
                 追加
               </Button>
               <button
@@ -157,9 +159,10 @@ export default function TagsPage() {
               icon={<TagIcon className="h-16 w-16" />}
               title="タグがありません"
               description="タグを作ると買い物が便利になります"
+              data-testid="tags-empty-state"
             />
           ) : (
-            <ul className="space-y-2">
+            <ul className="space-y-2" data-testid="tag-list">
               {tags?.map((tag) => {
                 const itemCount = tagItemCounts.get(tag.id) ?? 0
                 const isDeleteConfirm = deleteTarget === tag.id
@@ -168,6 +171,7 @@ export default function TagsPage() {
                   <li
                     key={tag.id}
                     className="flex items-center justify-between rounded-xl bg-white p-4 shadow-sm"
+                    data-testid={`tag-item-${tag.id}`}
                   >
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
@@ -194,6 +198,7 @@ export default function TagsPage() {
                             size="sm"
                             onClick={() => handleDeleteTag(tag.id)}
                             disabled={isProcessing}
+                            data-testid="tag-delete-confirm"
                           >
                             削除
                           </Button>
@@ -213,6 +218,7 @@ export default function TagsPage() {
                           onClick={() => handleOpenEdit(tag)}
                           className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-blue-500"
                           aria-label={`${tag.name}を編集`}
+                          data-testid={`tag-edit-${tag.id}`}
                         >
                           <Pencil className="h-5 w-5" />
                         </button>
@@ -221,6 +227,7 @@ export default function TagsPage() {
                           onClick={() => setDeleteTarget(tag.id)}
                           className="flex h-10 w-10 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-red-500"
                           aria-label={`${tag.name}を削除`}
+                          data-testid={`tag-delete-${tag.id}`}
                         >
                           <Trash2 className="h-5 w-5" />
                         </button>
@@ -304,6 +311,7 @@ function TagEditForm({
           value={name}
           onChange={(e) => setName(e.target.value)}
           autoFocus
+          data-testid="tag-edit-name-input"
           className={cn(
             "w-full rounded-lg border-2 border-gray-300 px-4 py-3",
             "text-lg font-semibold text-gray-900",
@@ -316,6 +324,7 @@ function TagEditForm({
         type="submit"
         className="w-full text-lg font-semibold"
         disabled={!isValid || isSubmitting || isUpdating}
+        data-testid="tag-edit-submit"
       >
         {isSubmitting || isUpdating ? "更新中..." : "更新"}
       </Button>

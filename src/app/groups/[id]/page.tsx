@@ -224,6 +224,7 @@ export default function GroupDetailPage() {
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 autoFocus
+                data-testid="group-name-input"
                 className={cn(
                   "flex-1 rounded-lg border-2 border-blue-500 px-3 py-1.5",
                   "text-base font-semibold text-gray-900",
@@ -240,7 +241,7 @@ export default function GroupDetailPage() {
                   }
                 }}
               />
-              <Button size="sm" onClick={handleSaveName}>
+              <Button size="sm" onClick={handleSaveName} data-testid="group-name-save">
                 保存
               </Button>
             </div>
@@ -253,6 +254,7 @@ export default function GroupDetailPage() {
                 isOwner && "hover:text-blue-600"
               )}
               disabled={!isOwner}
+              data-testid="group-name"
             >
               {group.name}
               {isOwner && <Pencil className="h-4 w-4 text-gray-400" />}
@@ -265,6 +267,7 @@ export default function GroupDetailPage() {
               onClick={() => setShowMenu(!showMenu)}
               className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-gray-100"
               aria-label="メニュー"
+              data-testid="group-menu-button"
             >
               <MoreVertical className="h-5 w-5" />
             </button>
@@ -294,6 +297,7 @@ export default function GroupDetailPage() {
                         setShowDeleteConfirm(true)
                       }}
                       className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                      data-testid="group-menu-delete"
                     >
                       <Trash2 className="h-4 w-4" />
                       グループを削除
@@ -306,6 +310,7 @@ export default function GroupDetailPage() {
                         setShowLeaveConfirm(true)
                       }}
                       className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                      data-testid="group-menu-leave"
                     >
                       <LogOut className="h-4 w-4" />
                       グループから退出
@@ -321,7 +326,7 @@ export default function GroupDetailPage() {
       <PageContainer>
         <div className="space-y-6">
           {/* メンバー一覧 */}
-          <section>
+          <section data-testid="group-members-section">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-500">
                 <Users className="h-4 w-4" />
@@ -343,7 +348,7 @@ export default function GroupDetailPage() {
                 const memberName = "user" in member ? member.user.name : (member as GroupMember).userName
                 const memberEmail = "user" in member ? member.user.email : (member as GroupMember).userEmail
                 return (
-                  <li key={member.id} className="flex items-center justify-between p-4">
+                  <li key={member.id} className="flex items-center justify-between p-4" data-testid={`group-member-${member.userId}`}>
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
                         <User className="h-5 w-5 text-gray-600" />
@@ -371,6 +376,7 @@ export default function GroupDetailPage() {
                         onClick={() => setRemoveMemberTarget(member as GroupMember)}
                         className="flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-red-50 hover:text-red-500"
                         aria-label="メンバーを削除"
+                        data-testid="group-member-remove"
                       >
                         <UserMinus className="h-5 w-5" />
                       </button>
@@ -395,6 +401,7 @@ export default function GroupDetailPage() {
                   aria-label="招待を有効にする"
                   disabled={isTogglingInvite}
                   onClick={handleToggleInviteEnabled}
+                  data-testid="group-invite-toggle"
                   className={cn(
                     "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out",
                     inviteEnabled ? "bg-blue-600" : "bg-gray-200",
@@ -411,7 +418,7 @@ export default function GroupDetailPage() {
               </div>
               <div className={cn("rounded-xl bg-white p-4 shadow-sm", !inviteEnabled && "opacity-50")}>
                 <div className="mb-3 flex items-center justify-between">
-                  <code className={cn("text-2xl font-bold tracking-widest", inviteEnabled ? "text-gray-900" : "text-gray-400")}>
+                  <code className={cn("text-2xl font-bold tracking-widest", inviteEnabled ? "text-gray-900" : "text-gray-400")} data-testid="group-invite-code">
                     {group.inviteCode}
                   </code>
                   <div className="flex gap-1">
@@ -425,6 +432,7 @@ export default function GroupDetailPage() {
                         "disabled:opacity-50 disabled:cursor-not-allowed"
                       )}
                       aria-label="コピー"
+                      data-testid="group-invite-copy"
                     >
                       {copiedCode ? (
                         <Check className="h-5 w-5 text-green-600" />
@@ -442,6 +450,7 @@ export default function GroupDetailPage() {
                         "disabled:opacity-50 disabled:cursor-not-allowed"
                       )}
                       aria-label="再生成"
+                      data-testid="group-invite-regenerate"
                     >
                       <RefreshCw className={cn("h-5 w-5", isRegeneratingCode && "animate-spin")} />
                     </button>
@@ -541,6 +550,7 @@ export default function GroupDetailPage() {
               className="flex-1"
               onClick={handleDeleteGroup}
               disabled={isProcessing}
+              data-testid="group-delete-confirm"
             >
               {isProcessing ? "削除中..." : "削除する"}
             </Button>
@@ -572,6 +582,7 @@ export default function GroupDetailPage() {
               className="flex-1"
               onClick={handleLeaveGroup}
               disabled={isProcessing}
+              data-testid="group-leave-confirm"
             >
               {isProcessing ? "退出中..." : "退出する"}
             </Button>
@@ -603,6 +614,7 @@ export default function GroupDetailPage() {
               className="flex-1"
               onClick={handleRemoveMember}
               disabled={isProcessing}
+              data-testid="group-remove-member-confirm"
             >
               {isProcessing ? "削除中..." : "削除する"}
             </Button>

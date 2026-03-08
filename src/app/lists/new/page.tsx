@@ -111,9 +111,11 @@ function NewListPageContent() {
             value={listName}
             onChange={(e) => setListName(e.target.value)}
             placeholder="例: スーパーで買い物"
+            data-testid="list-name-input"
           />
 
           {/* アイテム選択 */}
+          <div data-testid="item-selector">
           <ItemSelector
             existingItems={items ?? []}
             tags={tags ?? []}
@@ -122,6 +124,7 @@ function NewListPageContent() {
             submitLabel="リストを作成"
             submittingLabel="作成中..."
           />
+          </div>
         </div>
       </PageContainer>
     </AppLayout>
