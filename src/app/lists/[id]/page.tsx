@@ -3,6 +3,7 @@
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { ItemSelector, type NewItemInput } from "@/components/features/items/ItemSelector"
+import { MemoText } from "@/components/features/items/MemoText"
 import { BottomSheet, Button, Checkbox, LoadingPage, PageContainer, SwipeToRemove } from "@/components/ui"
 import { cn } from "@/lib/utils"
 import { useList, useItems, useTags, useListMutations } from "@/hooks/data"
@@ -320,7 +321,12 @@ export default function ShoppingListPage() {
                             }
                           />
                           {item.memo && (
-                            <p className="ml-7 mt-1 text-sm text-gray-500">{item.memo}</p>
+                            <div className="ml-7 mt-1">
+                              <MemoText
+                                memo={item.memo}
+                                className="text-sm text-gray-500"
+                              />
+                            </div>
                           )}
                         </div>
                       </div>
@@ -358,7 +364,13 @@ export default function ShoppingListPage() {
                             }
                           />
                           {item.memo && (
-                            <p className="ml-7 mt-1 text-sm text-gray-400 line-through">{item.memo}</p>
+                            <div className="ml-7 mt-1">
+                              <MemoText
+                                memo={item.memo}
+                                className="text-sm text-gray-400 line-through"
+                                checked
+                              />
+                            </div>
                           )}
                         </div>
                       </div>

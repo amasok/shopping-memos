@@ -4,6 +4,8 @@ import { Badge, Button, LoadingSpinner } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { type ShoppingItem } from "@/lib/db"
 import { cn } from "@/lib/utils"
+import { extractFirstUrl } from "@/lib/url"
+import { OGPPreview } from "./OGPPreview"
 import { Minus, Plus, Trash2, Users, X } from "lucide-react"
 import { useState } from "react"
 import { useGroups, useTags, useItemMutations, useTagMutations } from "@/hooks/data"
@@ -249,6 +251,9 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
             "resize-none"
           )}
         />
+        {extractFirstUrl(memo) && (
+          <OGPPreview url={extractFirstUrl(memo)!} />
+        )}
       </div>
 
       {/* グループ選択（ログイン時のみ） */}

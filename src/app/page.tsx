@@ -2,6 +2,7 @@
 
 import { GroupSelector } from "@/components/features/groups/GroupSelector"
 import { ItemForm } from "@/components/features/items/ItemForm"
+import { MemoText } from "@/components/features/items/MemoText"
 import { TagFilter } from "@/components/features/tags/TagFilter"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
@@ -237,9 +238,10 @@ export default function HomePage() {
                             {item.name}
                           </p>
                           {item.memo && (
-                            <p className="mt-1 text-sm text-gray-500">
-                              {item.memo}
-                            </p>
+                            <MemoText
+                              memo={item.memo}
+                              className="mt-1 text-sm text-gray-500"
+                            />
                           )}
                           {item.tagIds.length > 0 && (
                             <div className="mt-2 flex flex-wrap gap-1.5">
