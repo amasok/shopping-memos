@@ -153,6 +153,33 @@ describe("GET /api/ogp", () => {
       expect(body.description).toBe("商品の説明文")
     })
 
+    it("AmazonのURLではdata-a-dynamic-imageから商品画像を取得する", async () => {
+      mockLookup.mockResolvedValue({ address: "52.119.168.1", family: 4 })
+      const html = `
+        <html>
+          <head>
+            <title>商品名 | Amazon</title>
+          </head>
+          <body>
+            <img data-a-dynamic-image="{&quot;https://example.com/img_300.jpg&quot;:[300,300],&quot;https://example.com/img_679.jpg&quot;:[679,679],&quot;https://example.com/img_425.jpg&quot;:[425,425]}" />
+          </body>
+        </html>
+      `
+      const mockArrayBuffer = new TextEncoder().encode(html).buffer
+      mockFetch.mockResolvedValue({
+        ok: true,
+        headers: { get: () => "text/html" },
+        arrayBuffer: () => Promise.resolve(mockArrayBuffer),
+      })
+
+      const req = makeRequest("https://www.amazon.co.jp/dp/B0DYNVL7B4")
+      const res = await GET(req)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      // 最大幅（679px）の画像が選ばれる
+      expect(body.image).toBe("https://example.com/img_679.jpg")
+    })
+
     it("メタ情報が何もないHTMLは422を返す", async () => {
       mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
       const html = "<html><body>本文のみ</body></html>"

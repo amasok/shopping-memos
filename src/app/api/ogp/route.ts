@@ -60,6 +60,34 @@ function parseTitle(html: string): string | undefined {
   return match ? match[1].trim() : undefined
 }
 
+function isAmazonUrl(url: string): boolean {
+  try {
+    const { hostname } = new URL(url)
+    return /amazon\.|amzn\./.test(hostname)
+  } catch {
+    return false
+  }
+}
+
+/** Amazon の data-a-dynamic-image から最大幅の商品画像URLを取得 */
+function parseAmazonImage(html: string): string | undefined {
+  const regex = /data-a-dynamic-image="(\{[^"]+\})"/g
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(html)) !== null) {
+    const jsonStr = match[1].replace(/&quot;/g, '"')
+    try {
+      const images = JSON.parse(jsonStr) as Record<string, [number, number]>
+      const urls = Object.keys(images)
+      if (urls.length === 0) continue
+      // 最大幅の画像を選択
+      return urls.reduce((a, b) => (images[a][0] >= images[b][0] ? a : b))
+    } catch {
+      continue
+    }
+  }
+  return undefined
+}
+
 function parseOGP(html: string, url: string): OGPData | null {
   // OGPタグを優先、なければ一般的なメタタグにフォールバック
   const title =
@@ -69,7 +97,9 @@ function parseOGP(html: string, url: string): OGPData | null {
   const description =
     parseMetaContent(html, "og:description") ??
     parseMetaName(html, "description")
-  const image = parseMetaContent(html, "og:image")
+  const image =
+    parseMetaContent(html, "og:image") ??
+    (isAmazonUrl(url) ? parseAmazonImage(html) : undefined)
   const siteName = parseMetaContent(html, "og:site_name")
 
   if (!title && !description && !image && !siteName) return null
