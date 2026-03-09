@@ -189,7 +189,25 @@ const { data, isLoading, isError } = useQuery({
 
 ### 3.10 Amazon対応
 
-Amazonの商品ページはOGPタグを持たない。以下の特別対応を行う。
+Amazonの商品ページはOGPタグを持たない。また、**VercelのIPアドレス（AWSのIPレンジ）をボットとして検出しHTTP 500を返す**ため、通常の直接fetchでは取得できない。
+
+#### microlink.io 経由での取得（根本解決策）
+
+Amazon URLを検出した場合は [microlink.io](https://microlink.io/) API経由でOGPデータを取得する。
+microlink.io はAmazonのボット検出を回避して商品情報を返す。
+
+```typescript
+// Amazon URLの場合はmicrolink.io経由
+if (isAmazonUrl(url)) {
+  const ogpData = await fetchOGPViaMicrolink(url)
+  if (!ogpData) {
+    return NextResponse.json({ error: "Failed to fetch OGP data" }, { status: 422 })
+  }
+  return NextResponse.json(ogpData, { ... })
+}
+```
+
+**制約**: 無料枠は50リクエスト/日。超過時は `null` が返り、OGPカードは非表示（URLリンクのみ）となる。
 
 #### タイトル・説明文のフォールバック
 
