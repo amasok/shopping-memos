@@ -128,9 +128,34 @@ describe("GET /api/ogp", () => {
   })
 
   describe("エラーケース", () => {
-    it("OGPタグがないHTMLは422を返す", async () => {
+    it("OGPタグがなくてもtitleタグがあれば200を返す（Amazon対応フォールバック）", async () => {
       mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
-      const html = "<html><head><title>No OGP</title></head></html>"
+      const html = `
+        <html>
+          <head>
+            <title>商品名 | Amazon</title>
+            <meta name="description" content="商品の説明文" />
+          </head>
+        </html>
+      `
+      const mockArrayBuffer = new TextEncoder().encode(html).buffer
+      mockFetch.mockResolvedValue({
+        ok: true,
+        headers: { get: () => "text/html" },
+        arrayBuffer: () => Promise.resolve(mockArrayBuffer),
+      })
+
+      const req = makeRequest("https://amazon.co.jp/dp/xxx")
+      const res = await GET(req)
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.title).toBe("商品名 | Amazon")
+      expect(body.description).toBe("商品の説明文")
+    })
+
+    it("メタ情報が何もないHTMLは422を返す", async () => {
+      mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
+      const html = "<html><body>本文のみ</body></html>"
       const mockArrayBuffer = new TextEncoder().encode(html).buffer
       mockFetch.mockResolvedValue({
         ok: true,
