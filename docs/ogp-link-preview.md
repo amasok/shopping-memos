@@ -37,12 +37,11 @@
 | N-4 | レスポンスは60秒キャッシュ（同一URLへの重複リクエスト抑制） |
 | N-5 | SSRF対策：プライベートIPアドレスへのアクセスを禁止 |
 | N-6 | URLはhttpまたはhttpsのみ許可 |
-| N-7 | レスポンスサイズ上限：1MB |
+| N-7 | レスポンスサイズ上限：5MB（ストリーム読み込みで超過時は即打ち切り） |
 
 ### 2.3 スコープ外（今回は実装しない）
 
 - OGPデータのDBへの永続化
-- OGPなし時のフォールバック表示（`<title>` タグ等の代替取得）
 
 ---
 
@@ -187,6 +186,60 @@ const { data, isLoading, isError } = useQuery({
 | `192.168.0.0/16` | プライベート |
 | `169.254.0.0/16` | リンクローカル |
 | `::1` | IPv6ループバック |
+
+### 3.10 Amazon対応
+
+Amazonの商品ページはOGPタグを持たない。以下の特別対応を行う。
+
+#### タイトル・説明文のフォールバック
+
+AmazonにはOGPタグがないため、以下の優先順位でフォールバック取得する：
+
+| 優先順位 | 取得元 | 備考 |
+|----------|--------|------|
+| 1 | `<meta property="og:title">` | 通常のOGP（Amazonには存在しない） |
+| 2 | `<title>` タグ | Amazon商品ページには商品名が入る |
+| 3 | `<meta name="title">` | `<meta name="title" content="Amazon.co.jp">` が存在するため最後 |
+
+`<meta name="title">` はサイト名（"Amazon.co.jp"）のみを含む場合があるため、`<title>` タグより後に評価する。
+
+#### 商品画像の取得
+
+Amazonの商品画像はOGP画像タグがなく、`data-a-dynamic-image` 属性から取得する：
+
+```html
+<img data-a-dynamic-image='{"https://example.com/img_679.jpg":[679,679],"https://example.com/img_300.jpg":[300,300]}' />
+```
+
+複数サイズが含まれるため、**最大幅の画像URL**を選択して返す。
+
+#### Content-Type ヘッダー省略問題
+
+AmazonはVercelサーバーからのリクエストに対し、`Content-Type` ヘッダーを省略してレスポンスを返す場合がある。
+空の `Content-Type` を `text/html` 以外と判定して弾かないよう、**`Content-Type` が空の場合はHTMLとして処理を続行**する。
+
+```typescript
+// 誤り（Amazonで弾かれる）
+if (!contentType.includes("text/html")) { ... }
+
+// 正しい実装
+if (contentType !== "" && !contentType.includes("text/html")) { ... }
+```
+
+#### 大きなページサイズへの対応
+
+Amazonの商品ページは1〜2MBに達するため、サイズ制限を1MBから5MBに拡張。
+ただしDoS対策のため `response.body.getReader()` でストリーム読み込みし、5MBを超えた時点で即座に打ち切る。
+
+#### リクエストヘッダー
+
+AmazonはBotっぽいUser-Agentを識別してページを返さないことがある。Chrome実UAを使用する：
+
+```
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ...
+Accept-Language: ja,en-US;q=0.9,en;q=0.8
+Accept-Encoding: identity   // gzip圧縮を無効化（圧縮データをそのまま読まないため）
+```
 
 ---
 
