@@ -162,18 +162,6 @@ export async function GET(request: NextRequest) {
     const contentType = response.headers.get("content-type") ?? ""
     // Content-Typeが明示的に非HTMLの場合のみ拒否（空の場合はHTMLとして試みる）
     if (contentType !== "" && !contentType.includes("text/html")) {
-      if (debug) {
-        return NextResponse.json({
-          _debug: {
-            stage: "content-type-check-failed",
-            contentType,
-            contentEncoding: response.headers.get("content-encoding"),
-            contentLength: response.headers.get("content-length"),
-            finalUrl: response.url,
-            status: response.status,
-          },
-        })
-      }
       return NextResponse.json({ error: "URL is not an HTML page" }, { status: 422 })
     }
 
@@ -200,16 +188,15 @@ export async function GET(request: NextRequest) {
     )
 
     if (debug) {
+      const ogpData = parseOGP(html, url)
       return NextResponse.json({
         _debug: {
           totalBytes,
           chunkCount: chunks.length,
-          contentEncoding: response.headers.get("content-encoding"),
-          contentLength: response.headers.get("content-length"),
           finalUrl: response.url,
-          htmlPreview: html.slice(0, 1000),
+          ogTitle: html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)?.[1] ?? null,
           titleTag: html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[0] ?? null,
-          metaNameTitle: html.match(/<meta[^>]+name=["']title["'][^>]+>/i)?.[0] ?? null,
+          parsedResult: ogpData,
         },
       })
     }
