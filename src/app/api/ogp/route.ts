@@ -43,9 +43,32 @@ function parseMetaContent(html: string, property: string): string | undefined {
   return undefined
 }
 
+function parseMetaName(html: string, name: string): string | undefined {
+  const patterns = [
+    new RegExp(`<meta[^>]+name=["']${name}["'][^>]+content=["']([^"']+)["']`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${name}["']`, "i"),
+  ]
+  for (const pattern of patterns) {
+    const match = html.match(pattern)
+    if (match) return match[1]
+  }
+  return undefined
+}
+
+function parseTitle(html: string): string | undefined {
+  const match = html.match(/<title[^>]*>([^<]+)<\/title>/i)
+  return match ? match[1].trim() : undefined
+}
+
 function parseOGP(html: string, url: string): OGPData | null {
-  const title = parseMetaContent(html, "og:title")
-  const description = parseMetaContent(html, "og:description")
+  // OGPタグを優先、なければ一般的なメタタグにフォールバック
+  const title =
+    parseMetaContent(html, "og:title") ??
+    parseMetaName(html, "title") ??
+    parseTitle(html)
+  const description =
+    parseMetaContent(html, "og:description") ??
+    parseMetaName(html, "description")
   const image = parseMetaContent(html, "og:image")
   const siteName = parseMetaContent(html, "og:site_name")
 
