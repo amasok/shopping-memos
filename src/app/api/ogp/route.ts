@@ -156,6 +156,16 @@ export async function GET(request: NextRequest) {
     })
 
     if (!response.ok) {
+      if (debug) {
+        return NextResponse.json({
+          _debug: {
+            stage: "fetch-failed",
+            httpStatus: response.status,
+            finalUrl: response.url,
+            contentType: response.headers.get("content-type"),
+          },
+        })
+      }
       return NextResponse.json({ error: "Failed to fetch URL" }, { status: 422 })
     }
 
