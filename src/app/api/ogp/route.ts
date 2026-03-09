@@ -161,7 +161,7 @@ export async function GET(request: NextRequest) {
     }
 
     const arrayBuffer = await response.arrayBuffer()
-    if (arrayBuffer.byteLength > 1024 * 1024) {
+    if (arrayBuffer.byteLength > 5 * 1024 * 1024) {
       return NextResponse.json({ error: "Response too large" }, { status: 422 })
     }
 
