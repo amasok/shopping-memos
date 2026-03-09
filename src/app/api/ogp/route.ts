@@ -161,6 +161,18 @@ export async function GET(request: NextRequest) {
 
     const contentType = response.headers.get("content-type") ?? ""
     if (!contentType.includes("text/html")) {
+      if (debug) {
+        return NextResponse.json({
+          _debug: {
+            stage: "content-type-check-failed",
+            contentType,
+            contentEncoding: response.headers.get("content-encoding"),
+            contentLength: response.headers.get("content-length"),
+            finalUrl: response.url,
+            status: response.status,
+          },
+        })
+      }
       return NextResponse.json({ error: "URL is not an HTML page" }, { status: 422 })
     }
 
