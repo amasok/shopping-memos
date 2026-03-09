@@ -143,17 +143,27 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Failed to resolve hostname" }, { status: 400 })
   }
 
+  const fetchHeaders = {
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Accept-Encoding": "identity",
+  }
+
   try {
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-        "Accept-Encoding": "identity",
-      },
+    let response = await fetch(url, {
+      headers: fetchHeaders,
       signal: AbortSignal.timeout(5000),
     })
+
+    // 500/503 は一時的なエラーの可能性があるため1回リトライ
+    if (!response.ok && (response.status === 500 || response.status === 503)) {
+      response = await fetch(url, {
+        headers: fetchHeaders,
+        signal: AbortSignal.timeout(5000),
+      })
+    }
 
     if (!response.ok) {
       if (debug) {
