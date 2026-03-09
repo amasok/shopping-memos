@@ -25,6 +25,26 @@ function makeRequest(url: string): NextRequest {
   return new NextRequest(`http://localhost/api/ogp?url=${encodeURIComponent(url)}`)
 }
 
+/** Uint8Array から ReadableStream を生成するヘルパー */
+function makeBodyStream(data: Uint8Array): ReadableStream {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(data)
+      controller.close()
+    },
+  })
+}
+
+/** fetch モックのレスポンスを組み立てるヘルパー */
+function mockHtmlResponse(html: string, contentType = "text/html") {
+  const data = new TextEncoder().encode(html)
+  return {
+    ok: true,
+    headers: { get: () => contentType },
+    body: makeBodyStream(data),
+  }
+}
+
 describe("GET /api/ogp", () => {
   describe("URLバリデーション", () => {
     it("urlパラメータがない場合は400を返す", async () => {
@@ -84,12 +104,7 @@ describe("GET /api/ogp", () => {
           </head>
         </html>
       `
-      const mockArrayBuffer = new TextEncoder().encode(html).buffer
-      mockFetch.mockResolvedValue({
-        ok: true,
-        headers: { get: () => "text/html; charset=utf-8" },
-        arrayBuffer: () => Promise.resolve(mockArrayBuffer),
-      })
+      mockFetch.mockResolvedValue(mockHtmlResponse(html, "text/html; charset=utf-8"))
 
       const req = makeRequest("https://example.com")
       const res = await GET(req)
@@ -111,12 +126,7 @@ describe("GET /api/ogp", () => {
           </head>
         </html>
       `
-      const mockArrayBuffer = new TextEncoder().encode(html).buffer
-      mockFetch.mockResolvedValue({
-        ok: true,
-        headers: { get: () => "text/html" },
-        arrayBuffer: () => Promise.resolve(mockArrayBuffer),
-      })
+      mockFetch.mockResolvedValue(mockHtmlResponse(html))
 
       const req = makeRequest("https://example.com")
       const res = await GET(req)
@@ -138,12 +148,7 @@ describe("GET /api/ogp", () => {
           </head>
         </html>
       `
-      const mockArrayBuffer = new TextEncoder().encode(html).buffer
-      mockFetch.mockResolvedValue({
-        ok: true,
-        headers: { get: () => "text/html" },
-        arrayBuffer: () => Promise.resolve(mockArrayBuffer),
-      })
+      mockFetch.mockResolvedValue(mockHtmlResponse(html))
 
       const req = makeRequest("https://amazon.co.jp/dp/xxx")
       const res = await GET(req)
@@ -165,12 +170,7 @@ describe("GET /api/ogp", () => {
           </body>
         </html>
       `
-      const mockArrayBuffer = new TextEncoder().encode(html).buffer
-      mockFetch.mockResolvedValue({
-        ok: true,
-        headers: { get: () => "text/html" },
-        arrayBuffer: () => Promise.resolve(mockArrayBuffer),
-      })
+      mockFetch.mockResolvedValue(mockHtmlResponse(html))
 
       const req = makeRequest("https://www.amazon.co.jp/dp/B0DYNVL7B4")
       const res = await GET(req)
@@ -183,12 +183,7 @@ describe("GET /api/ogp", () => {
     it("メタ情報が何もないHTMLは422を返す", async () => {
       mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
       const html = "<html><body>本文のみ</body></html>"
-      const mockArrayBuffer = new TextEncoder().encode(html).buffer
-      mockFetch.mockResolvedValue({
-        ok: true,
-        headers: { get: () => "text/html" },
-        arrayBuffer: () => Promise.resolve(mockArrayBuffer),
-      })
+      mockFetch.mockResolvedValue(mockHtmlResponse(html))
 
       const req = makeRequest("https://example.com")
       const res = await GET(req)

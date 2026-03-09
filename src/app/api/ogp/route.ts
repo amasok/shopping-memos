@@ -160,12 +160,27 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "URL is not an HTML page" }, { status: 422 })
     }
 
-    const arrayBuffer = await response.arrayBuffer()
-    if (arrayBuffer.byteLength > 5 * 1024 * 1024) {
-      return NextResponse.json({ error: "Response too large" }, { status: 422 })
+    // ストリームを読みながらサイズを確認し、超えたら即打ち切る（DoS対策）
+    const MAX_BYTES = 5 * 1024 * 1024 // 5MB
+    const reader = response.body?.getReader()
+    if (!reader) {
+      return NextResponse.json({ error: "Failed to read response" }, { status: 422 })
     }
-
-    const html = new TextDecoder().decode(arrayBuffer)
+    const chunks: Uint8Array[] = []
+    let totalBytes = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      totalBytes += value.byteLength
+      if (totalBytes > MAX_BYTES) {
+        await reader.cancel()
+        return NextResponse.json({ error: "Response too large" }, { status: 422 })
+      }
+    }
+    const html = new TextDecoder().decode(
+      chunks.length === 1 ? chunks[0] : Buffer.concat(chunks)
+    )
     const ogpData = parseOGP(html, url)
 
     if (!ogpData) {
