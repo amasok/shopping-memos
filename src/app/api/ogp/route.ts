@@ -160,7 +160,8 @@ export async function GET(request: NextRequest) {
     }
 
     const contentType = response.headers.get("content-type") ?? ""
-    if (!contentType.includes("text/html")) {
+    // Content-Typeが明示的に非HTMLの場合のみ拒否（空の場合はHTMLとして試みる）
+    if (contentType !== "" && !contentType.includes("text/html")) {
       if (debug) {
         return NextResponse.json({
           _debug: {
