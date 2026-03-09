@@ -110,6 +110,7 @@ function parseOGP(html: string, url: string): OGPData | null {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const url = searchParams.get("url")
+  const debug = searchParams.get("_debug") === "1"
 
   if (!url) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 })
@@ -184,6 +185,22 @@ export async function GET(request: NextRequest) {
     const html = new TextDecoder().decode(
       chunks.length === 1 ? chunks[0] : Buffer.concat(chunks)
     )
+
+    if (debug) {
+      return NextResponse.json({
+        _debug: {
+          totalBytes,
+          chunkCount: chunks.length,
+          contentEncoding: response.headers.get("content-encoding"),
+          contentLength: response.headers.get("content-length"),
+          finalUrl: response.url,
+          htmlPreview: html.slice(0, 1000),
+          titleTag: html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[0] ?? null,
+          metaNameTitle: html.match(/<meta[^>]+name=["']title["'][^>]+>/i)?.[0] ?? null,
+        },
+      })
+    }
+
     const ogpData = parseOGP(html, url)
 
     if (!ogpData) {
