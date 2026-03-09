@@ -92,8 +92,8 @@ function parseOGP(html: string, url: string): OGPData | null {
   // OGPタグを優先、なければ一般的なメタタグにフォールバック
   const title =
     parseMetaContent(html, "og:title") ??
-    parseMetaName(html, "title") ??
-    parseTitle(html)
+    parseTitle(html) ??
+    parseMetaName(html, "title")
   const description =
     parseMetaContent(html, "og:description") ??
     parseMetaName(html, "description")
