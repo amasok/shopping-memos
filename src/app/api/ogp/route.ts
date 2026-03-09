@@ -69,55 +69,6 @@ function isAmazonUrl(url: string): boolean {
   }
 }
 
-/** Amazon の data-a-dynamic-image から最大幅の商品画像URLを取得 */
-function parseAmazonImage(html: string): string | undefined {
-  const regex = /data-a-dynamic-image="(\{[^"]+\})"/g
-  let match: RegExpExecArray | null
-  while ((match = regex.exec(html)) !== null) {
-    const jsonStr = match[1].replace(/&quot;/g, '"')
-    try {
-      const images = JSON.parse(jsonStr) as Record<string, [number, number]>
-      const urls = Object.keys(images)
-      if (urls.length === 0) continue
-      // 最大幅の画像を選択
-      return urls.reduce((a, b) => (images[a][0] >= images[b][0] ? a : b))
-    } catch {
-      continue
-    }
-  }
-  return undefined
-}
-
-/** microlink.io API経由でOGPデータを取得（AmazonのIP検出回避用） */
-async function fetchOGPViaMicrolink(url: string): Promise<OGPData | null> {
-  const apiUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}`
-  try {
-    const response = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) })
-    if (!response.ok) return null
-    const json = (await response.json()) as {
-      status: string
-      data?: {
-        title?: string | null
-        description?: string | null
-        image?: { url: string } | null
-        publisher?: string | null
-      }
-    }
-    if (json.status !== "success" || !json.data) return null
-    const { title, description, image, publisher } = json.data
-    if (!title && !description && !image) return null
-    return {
-      url,
-      title: title ?? undefined,
-      description: description ?? undefined,
-      image: image?.url ?? undefined,
-      siteName: publisher ?? undefined,
-    }
-  } catch {
-    return null
-  }
-}
-
 function parseOGP(html: string, url: string): OGPData | null {
   // OGPタグを優先、なければ一般的なメタタグにフォールバック
   const title =
@@ -127,9 +78,7 @@ function parseOGP(html: string, url: string): OGPData | null {
   const description =
     parseMetaContent(html, "og:description") ??
     parseMetaName(html, "description")
-  const image =
-    parseMetaContent(html, "og:image") ??
-    (isAmazonUrl(url) ? parseAmazonImage(html) : undefined)
+  const image = parseMetaContent(html, "og:image")
   const siteName = parseMetaContent(html, "og:site_name")
 
   if (!title && !description && !image && !siteName) return null
@@ -172,16 +121,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Failed to resolve hostname" }, { status: 400 })
   }
 
-  // AmazonはVercelのIPをブロックするためmicrolink.io経由で取得
-  // 無料枠（50req/日）超過時は null が返り、OGPカードは非表示になる
+  // AmazonはVercelのIPをボットとして検出するためOGP取得不可（URLリンクのみ表示）
   if (isAmazonUrl(url)) {
-    const ogpData = await fetchOGPViaMicrolink(url)
-    if (!ogpData) {
-      return NextResponse.json({ error: "Failed to fetch OGP data" }, { status: 422 })
-    }
-    return NextResponse.json(ogpData, {
-      headers: { "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=60" },
-    })
+    return NextResponse.json({ error: "Amazon URLs are not supported" }, { status: 422 })
   }
 
   const fetchHeaders = {

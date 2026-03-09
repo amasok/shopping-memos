@@ -138,37 +138,16 @@ describe("GET /api/ogp", () => {
   })
 
   describe("エラーケース", () => {
-    it("AmazonのURLはmicrolink.io経由でOGPを取得する", async () => {
+    it("AmazonのURLは422を返す（OGP取得非対応）", async () => {
       mockLookup.mockResolvedValue({ address: "52.119.168.1", family: 4 })
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          status: "success",
-          data: {
-            title: "商品名 | Amazon",
-            description: "商品の説明文",
-            image: { url: "https://example.com/product.jpg" },
-            publisher: "Amazon.co.jp",
-          },
-        }),
-      })
 
       const req = makeRequest("https://www.amazon.co.jp/dp/B0DYNVL7B4")
       const res = await GET(req)
-      expect(res.status).toBe(200)
-      const body = await res.json()
-      expect(body.title).toBe("商品名 | Amazon")
-      expect(body.description).toBe("商品の説明文")
-      expect(body.image).toBe("https://example.com/product.jpg")
-      expect(body.siteName).toBe("Amazon.co.jp")
+      expect(res.status).toBe(422)
     })
 
-    it("microlink.ioが失敗した場合（無料枠超過等）は422を返す", async () => {
+    it("amzn.asiaのURLも422を返す", async () => {
       mockLookup.mockResolvedValue({ address: "52.119.168.1", family: 4 })
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 429,
-      })
 
       const req = makeRequest("https://amzn.asia/d/xxxxxxx")
       const res = await GET(req)
