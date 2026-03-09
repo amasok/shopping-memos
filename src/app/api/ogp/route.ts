@@ -193,7 +193,7 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(ogpData, {
-      headers: { "Cache-Control": "public, max-age=60, s-maxage=3600" },
+      headers: { "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=60" },
     })
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
