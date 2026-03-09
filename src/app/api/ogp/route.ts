@@ -88,6 +88,36 @@ function parseAmazonImage(html: string): string | undefined {
   return undefined
 }
 
+/** microlink.io API経由でOGPデータを取得（AmazonのIP検出回避用） */
+async function fetchOGPViaMicrolink(url: string): Promise<OGPData | null> {
+  const apiUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}`
+  try {
+    const response = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) })
+    if (!response.ok) return null
+    const json = (await response.json()) as {
+      status: string
+      data?: {
+        title?: string | null
+        description?: string | null
+        image?: { url: string } | null
+        publisher?: string | null
+      }
+    }
+    if (json.status !== "success" || !json.data) return null
+    const { title, description, image, publisher } = json.data
+    if (!title && !description && !image) return null
+    return {
+      url,
+      title: title ?? undefined,
+      description: description ?? undefined,
+      image: image?.url ?? undefined,
+      siteName: publisher ?? undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
 function parseOGP(html: string, url: string): OGPData | null {
   // OGPタグを優先、なければ一般的なメタタグにフォールバック
   const title =
@@ -110,7 +140,6 @@ function parseOGP(html: string, url: string): OGPData | null {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const url = searchParams.get("url")
-  const debug = searchParams.get("_debug") === "1"
 
   if (!url) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 })
@@ -143,6 +172,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Failed to resolve hostname" }, { status: 400 })
   }
 
+  // AmazonはVercelのIPをブロックするためmicrolink.io経由で取得
+  // 無料枠（50req/日）超過時は null が返り、OGPカードは非表示になる
+  if (isAmazonUrl(url)) {
+    const ogpData = await fetchOGPViaMicrolink(url)
+    if (!ogpData) {
+      return NextResponse.json({ error: "Failed to fetch OGP data" }, { status: 422 })
+    }
+    return NextResponse.json(ogpData, {
+      headers: { "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=60" },
+    })
+  }
+
   const fetchHeaders = {
     "User-Agent":
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -166,16 +207,6 @@ export async function GET(request: NextRequest) {
     }
 
     if (!response.ok) {
-      if (debug) {
-        return NextResponse.json({
-          _debug: {
-            stage: "fetch-failed",
-            httpStatus: response.status,
-            finalUrl: response.url,
-            contentType: response.headers.get("content-type"),
-          },
-        })
-      }
       return NextResponse.json({ error: "Failed to fetch URL" }, { status: 422 })
     }
 
@@ -206,20 +237,6 @@ export async function GET(request: NextRequest) {
     const html = new TextDecoder().decode(
       chunks.length === 1 ? chunks[0] : Buffer.concat(chunks)
     )
-
-    if (debug) {
-      return NextResponse.json({
-        _debug: {
-          totalBytes,
-          finalUrl: response.url,
-          contentType: response.headers.get("content-type"),
-          titleTag: html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ?? null,
-          ogTitle: html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)?.[1] ?? null,
-          metaTitle: html.match(/<meta[^>]+name=["']title["'][^>]+content=["']([^"']+)["']/i)?.[1] ?? null,
-          parsedResult: parseOGP(html, url),
-        },
-      })
-    }
 
     const ogpData = parseOGP(html, url)
 

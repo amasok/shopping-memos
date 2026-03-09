@@ -138,46 +138,41 @@ describe("GET /api/ogp", () => {
   })
 
   describe("エラーケース", () => {
-    it("OGPタグがなくてもtitleタグがあれば200を返す（Amazon対応フォールバック）", async () => {
-      mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
-      const html = `
-        <html>
-          <head>
-            <title>商品名 | Amazon</title>
-            <meta name="description" content="商品の説明文" />
-          </head>
-        </html>
-      `
-      mockFetch.mockResolvedValue(mockHtmlResponse(html))
-
-      const req = makeRequest("https://amazon.co.jp/dp/xxx")
-      const res = await GET(req)
-      expect(res.status).toBe(200)
-      const body = await res.json()
-      expect(body.title).toBe("商品名 | Amazon")
-      expect(body.description).toBe("商品の説明文")
-    })
-
-    it("AmazonのURLではdata-a-dynamic-imageから商品画像を取得する", async () => {
+    it("AmazonのURLはmicrolink.io経由でOGPを取得する", async () => {
       mockLookup.mockResolvedValue({ address: "52.119.168.1", family: 4 })
-      const html = `
-        <html>
-          <head>
-            <title>商品名 | Amazon</title>
-          </head>
-          <body>
-            <img data-a-dynamic-image="{&quot;https://example.com/img_300.jpg&quot;:[300,300],&quot;https://example.com/img_679.jpg&quot;:[679,679],&quot;https://example.com/img_425.jpg&quot;:[425,425]}" />
-          </body>
-        </html>
-      `
-      mockFetch.mockResolvedValue(mockHtmlResponse(html))
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: "success",
+          data: {
+            title: "商品名 | Amazon",
+            description: "商品の説明文",
+            image: { url: "https://example.com/product.jpg" },
+            publisher: "Amazon.co.jp",
+          },
+        }),
+      })
 
       const req = makeRequest("https://www.amazon.co.jp/dp/B0DYNVL7B4")
       const res = await GET(req)
       expect(res.status).toBe(200)
       const body = await res.json()
-      // 最大幅（679px）の画像が選ばれる
-      expect(body.image).toBe("https://example.com/img_679.jpg")
+      expect(body.title).toBe("商品名 | Amazon")
+      expect(body.description).toBe("商品の説明文")
+      expect(body.image).toBe("https://example.com/product.jpg")
+      expect(body.siteName).toBe("Amazon.co.jp")
+    })
+
+    it("microlink.ioが失敗した場合（無料枠超過等）は422を返す", async () => {
+      mockLookup.mockResolvedValue({ address: "52.119.168.1", family: 4 })
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 429,
+      })
+
+      const req = makeRequest("https://amzn.asia/d/xxxxxxx")
+      const res = await GET(req)
+      expect(res.status).toBe(422)
     })
 
     it("メタ情報が何もないHTMLは422を返す", async () => {
