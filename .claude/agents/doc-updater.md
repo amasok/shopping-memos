@@ -2,7 +2,7 @@
 name: doc-updater
 description: ドキュメント管理スペシャリスト。README、CLAUDE.md、APIドキュメントの更新を担当。コードからドキュメントを生成・同期。
 tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
-model: opus
+model: sonnet
 ---
 
 # ドキュメント更新スペシャリスト

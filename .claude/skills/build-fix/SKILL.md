@@ -1,7 +1,6 @@
 ---
 name: build-fix
 description: ビルドエラーを1つずつ安全に修正。エラーが増えたら停止。/build-fix で実行。
-tools: ["Bash", "Read", "Edit", "Grep"]
 ---
 
 # /build-fix - ビルドエラー修正

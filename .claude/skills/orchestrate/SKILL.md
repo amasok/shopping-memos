@@ -1,7 +1,6 @@
 ---
 name: orchestrate
 description: 複数のエージェントを順番に実行し、複雑なタスクを完了。/orchestrate で実行。
-tools: ["Task", "Read", "Write"]
 ---
 
 # /orchestrate - エージェント連携
