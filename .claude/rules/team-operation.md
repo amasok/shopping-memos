@@ -39,4 +39,5 @@
 - 月の上限を超えないよう、CI は PR で確認し、develop への push では migrate-develop だけを動かす（Test・Build・E2E は動かさない）。Mobile Chrome の E2E は main への PR と main への push だけ
 - develop へのマージは関連 PR をまとめる（Vercel と同じ）。PR への push は最小限にする（push のたびに Test・Build・E2E が走る）。直しはまとめてから push する
 - docs/・.claude/・*.md だけの変更では CI が動かない（AGENTS.md と CLAUDE.md は #122 の検査のため動く）。docs だけの PR はチェックが付かないので、`gh pr checks` の結果でマージを判定する場合は「チェックなし」を失敗と取り違えない
-- SW のライフサイクル E2E（sw-e2e.yml）は SW 関連のファイルの変更と手動実行だけ。依存（Serwist など）を更新したら手動で実行する
+- docs だけの main への push ではワークフローごと動かないので、本番の migrate も動かない。前の main の実行で migrate が失敗していたら、その実行を Actions の画面から Re-run する（docs だけの push を待っても再実行されない）
+- SW のライフサイクル E2E（sw-e2e.yml）は SW 関連のファイルの変更と手動実行だけ。package.json の変更では動かないので、Dependabot などで Serwist や Next.js を上げた PR では、マージ前に Actions の画面から手動で実行する（workflow_dispatch）
