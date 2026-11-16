@@ -6,7 +6,7 @@ vi.mock("dns/promises", () => ({ default: { lookup: mockLookup }, lookup: mockLo
 import {
   isPublicIp,
   validateTargetUrl,
-  resolvePublicAddress,
+  resolvePublicAddresses,
   toConnectHost,
   HostResolutionError,
   PrivateAddressError,
@@ -125,18 +125,34 @@ describe("toConnectHost", () => {
   })
 })
 
-describe("resolvePublicAddress", () => {
-  it("公開アドレスに解決されたら先頭のアドレスを返す", async () => {
+describe("resolvePublicAddresses", () => {
+  it("公開アドレスに解決されたらそのアドレスを返す", async () => {
     mockLookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }])
 
-    await expect(resolvePublicAddress("example.com")).resolves.toEqual({ address: "93.184.216.34", family: 4 })
+    await expect(resolvePublicAddresses("example.com")).resolves.toEqual([{ address: "93.184.216.34", family: 4 }])
     expect(mockLookup).toHaveBeenCalledWith("example.com", { all: true, verbatim: true })
   })
 
   it("IPv6 の公開アドレスは family 6 で返す", async () => {
     mockLookup.mockResolvedValue([{ address: "2606:4700:4700::1111", family: 6 }])
 
-    await expect(resolvePublicAddress("example.com")).resolves.toEqual({ address: "2606:4700:4700::1111", family: 6 })
+    await expect(resolvePublicAddresses("example.com")).resolves.toEqual([{ address: "2606:4700:4700::1111", family: 6 }])
+  })
+
+  it("AAAA が先に返っても、全アドレスを IPv4 を先にして返す（同じファミリーの中は元の順）", async () => {
+    mockLookup.mockResolvedValue([
+      { address: "2606:4700:20::681a:ecb", family: 6 },
+      { address: "2606:4700:20::ac43:48dc", family: 6 },
+      { address: "104.26.15.203", family: 4 },
+      { address: "172.67.72.220", family: 4 },
+    ])
+
+    await expect(resolvePublicAddresses("zenn.dev")).resolves.toEqual([
+      { address: "104.26.15.203", family: 4 },
+      { address: "172.67.72.220", family: 4 },
+      { address: "2606:4700:20::681a:ecb", family: 6 },
+      { address: "2606:4700:20::ac43:48dc", family: 6 },
+    ])
   })
 
   it("複数レコードのうち 1 件でもプライベートなら拒否する", async () => {
@@ -145,7 +161,7 @@ describe("resolvePublicAddress", () => {
       { address: "10.0.0.5", family: 4 },
     ])
 
-    await expect(resolvePublicAddress("rebind.example")).rejects.toBeInstanceOf(PrivateAddressError)
+    await expect(resolvePublicAddresses("rebind.example")).rejects.toBeInstanceOf(PrivateAddressError)
   })
 
   it("非公開アドレスが先頭でも、後ろにあっても拒否する", async () => {
@@ -154,7 +170,7 @@ describe("resolvePublicAddress", () => {
       { address: "93.184.216.34", family: 4 },
     ])
 
-    await expect(resolvePublicAddress("rebind.example")).rejects.toBeInstanceOf(PrivateAddressError)
+    await expect(resolvePublicAddresses("rebind.example")).rejects.toBeInstanceOf(PrivateAddressError)
   })
 
   it("IPv4 のプライベートと IPv6 の公開が混在していても拒否する", async () => {
@@ -163,30 +179,30 @@ describe("resolvePublicAddress", () => {
       { address: "169.254.169.254", family: 4 },
     ])
 
-    await expect(resolvePublicAddress("mixed.example")).rejects.toBeInstanceOf(PrivateAddressError)
+    await expect(resolvePublicAddresses("mixed.example")).rejects.toBeInstanceOf(PrivateAddressError)
   })
 
   it("名前解決に失敗したら HostResolutionError", async () => {
     mockLookup.mockRejectedValue(new Error("ENOTFOUND"))
 
-    await expect(resolvePublicAddress("nope.example")).rejects.toBeInstanceOf(HostResolutionError)
+    await expect(resolvePublicAddresses("nope.example")).rejects.toBeInstanceOf(HostResolutionError)
   })
 
   it("レコードが 0 件なら HostResolutionError", async () => {
     mockLookup.mockResolvedValue([])
 
-    await expect(resolvePublicAddress("empty.example")).rejects.toBeInstanceOf(HostResolutionError)
+    await expect(resolvePublicAddresses("empty.example")).rejects.toBeInstanceOf(HostResolutionError)
   })
 
   it("IP リテラルは名前解決せずに判定する（公開アドレス）", async () => {
-    await expect(resolvePublicAddress("93.184.216.34")).resolves.toEqual({ address: "93.184.216.34", family: 4 })
+    await expect(resolvePublicAddresses("93.184.216.34")).resolves.toEqual([{ address: "93.184.216.34", family: 4 }])
     expect(mockLookup).not.toHaveBeenCalled()
   })
 
   it.each([["127.0.0.1"], ["169.254.169.254"], ["[::1]"], ["[::ffff:127.0.0.1]"], ["0.0.0.0"]])(
     "IP リテラル %s は名前解決せずに拒否する",
     async (host) => {
-      await expect(resolvePublicAddress(host)).rejects.toBeInstanceOf(PrivateAddressError)
+      await expect(resolvePublicAddresses(host)).rejects.toBeInstanceOf(PrivateAddressError)
       expect(mockLookup).not.toHaveBeenCalled()
     }
   )

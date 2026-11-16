@@ -139,7 +139,7 @@ describe("GET /api/ogp: リダイレクト先の検証 (#66)", () => {
 
     expect(res.status).toBe(200)
     expect(mockLookup).toHaveBeenCalledWith("other.example", expect.anything())
-    expect((mockRequestPinned.mock.calls[1][1] as { address: string }).address).toBe("1.1.1.1")
+    expect((mockRequestPinned.mock.calls[1][1] as { address: string }[])[0].address).toBe("1.1.1.1")
   })
 })
 
@@ -150,9 +150,25 @@ describe("GET /api/ogp: 検証済みIPへの固定 (#66)", () => {
 
     await GET(makeRequest("https://example.com/page"))
 
-    const [url, pinned] = mockRequestPinned.mock.calls[0] as [URL, { address: string; family: number }]
+    const [url, pinned] = mockRequestPinned.mock.calls[0] as [URL, { address: string; family: number }[]]
     expect(url.href).toBe("https://example.com/page")
-    expect(pinned).toEqual({ address: "8.8.4.4", family: 4 })
+    expect(pinned).toEqual([{ address: "8.8.4.4", family: 4 }])
+  })
+
+  it("AAAA が先に返るホストでも、検証した全アドレスを IPv4 を先にして渡す（IPv6 で外に出られない環境向け）", async () => {
+    mockLookup.mockResolvedValue([
+      { address: "2606:4700:20::681a:ecb", family: 6 },
+      { address: "104.26.15.203", family: 4 },
+    ])
+    mockRequestPinned.mockResolvedValueOnce(ok())
+
+    const res = await GET(makeRequest("https://zenn.dev/"))
+
+    expect(res.status).toBe(200)
+    expect(mockRequestPinned.mock.calls[0][1]).toEqual([
+      { address: "104.26.15.203", family: 4 },
+      { address: "2606:4700:20::681a:ecb", family: 6 },
+    ])
   })
 
   it("1リクエストの名前解決は1ホップにつき1回だけ（接続時に再解決しない前提）", async () => {
@@ -192,7 +208,7 @@ describe("GET /api/ogp: 検証済みIPへの固定 (#66)", () => {
 
     await GET(makeRequest("https://example.com/"))
 
-    expect(mockRequestPinned.mock.calls[0][1]).toEqual({ address: "2606:4700:4700::1111", family: 6 })
+    expect(mockRequestPinned.mock.calls[0][1]).toEqual([{ address: "2606:4700:4700::1111", family: 6 }])
   })
 })
 

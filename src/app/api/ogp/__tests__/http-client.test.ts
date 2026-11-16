@@ -29,7 +29,7 @@ describe("requestPinned (#66)", () => {
     // pinned.invalid は名前解決できないホスト名。解決していれば ENOTFOUND になる
     const url = new URL(`http://pinned.invalid:${port}/path`)
 
-    const res = await requestPinned(url, { address: "127.0.0.1", family: 4 }, {
+    const res = await requestPinned(url, [{ address: "127.0.0.1", family: 4 }], {
       headers: {},
       signal: AbortSignal.timeout(5000),
     })
@@ -48,7 +48,7 @@ describe("requestPinned (#66)", () => {
     })
     const url = new URL(`http://pinned.invalid:${port}/`)
 
-    const res = await requestPinned(url, { address: "127.0.0.1", family: 4 }, {
+    const res = await requestPinned(url, [{ address: "127.0.0.1", family: 4 }], {
       headers: {},
       signal: AbortSignal.timeout(5000),
     })
@@ -58,13 +58,39 @@ describe("requestPinned (#66)", () => {
     expect(res.headers.location).toBe("http://127.0.0.1:1/")
   })
 
+  it("1件目のアドレスに接続できなければ、次の検証済みアドレスに接続する", async () => {
+    // サーバーは 127.0.0.1 だけで待ち受けるので、::1 は接続できない（拒否またはネットワーク到達不能）
+    const url = new URL(`http://pinned.invalid:${port}/`)
+
+    const res = await requestPinned(
+      url,
+      [
+        { address: "::1", family: 6 },
+        { address: "127.0.0.1", family: 4 },
+      ],
+      { headers: {}, signal: AbortSignal.timeout(5000) }
+    )
+    res.resume()
+
+    expect(res.statusCode).toBe(200)
+  })
+
+  it("アドレスが空なら接続しない", async () => {
+    const url = new URL(`http://pinned.invalid:${port}/`)
+
+    await expect(
+      requestPinned(url, [], { headers: {}, signal: AbortSignal.timeout(5000) })
+    ).rejects.toThrow("No pinned address")
+    expect(lastHost).toBeUndefined()
+  })
+
   it("中断シグナルで接続を止める", async () => {
     const controller = new AbortController()
     controller.abort()
     const url = new URL(`http://pinned.invalid:${port}/`)
 
     await expect(
-      requestPinned(url, { address: "127.0.0.1", family: 4 }, { headers: {}, signal: controller.signal })
+      requestPinned(url, [{ address: "127.0.0.1", family: 4 }], { headers: {}, signal: controller.signal })
     ).rejects.toThrow()
   })
 })
