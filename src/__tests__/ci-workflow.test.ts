@@ -252,10 +252,82 @@ describe("develop 用 DB のマイグレーション（migrate-develop ジョブ
     expect(job.if).toContain("github.event_name == 'push'")
   })
 
-  it("DEVELOP_DATABASE_URL を使い、本番の secret は使わない", () => {
+  it("DEVELOP_DATABASE_URL を使い、本番の secret は比べるためだけに読む（migrate には使わない）", () => {
     expect(migrateStep()?.env?.DATABASE_URL).toBe("${{ secrets.DEVELOP_DATABASE_URL }}")
-    expect(JSON.stringify(job)).not.toContain("NEON_DATABASE_URL")
+    const usesProduction = job.steps.filter((s) => JSON.stringify(s).includes("NEON_DATABASE_URL"))
+    expect(usesProduction.map((s) => s.name)).toEqual(["Check DEVELOP_DATABASE_URL is not production"])
     expect(job.environment).toBeUndefined()
+  })
+
+  describe("DEVELOP_DATABASE_URL が本番を指していないかの確認 (#139)", () => {
+    const step = () => job.steps.find((s) => s.name === "Check DEVELOP_DATABASE_URL is not production")
+    const exec = (develop: string, production: string) =>
+      spawnSync("bash", ["-e", "-c", step()?.run ?? ""], {
+        env: { ...process.env, DEVELOP_URL: develop, PRODUCTION_URL: production },
+        encoding: "utf-8",
+      })
+    const PROD = "postgresql://owner:secret-prod@ep-cool-name-123.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+    const DEV = "postgresql://owner:secret-dev@ep-other-name-456.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+
+    it("migrate の前に、secret を env で受け取って確かめる（式を run に埋め込まない）", () => {
+      const index = job.steps.findIndex((s) => s.name === "Check DEVELOP_DATABASE_URL is not production")
+      expect(index).toBeGreaterThanOrEqual(0)
+      expect(index).toBeLessThan(job.steps.findIndex((s) => s.run?.includes("db:migrate")))
+      expect(step()?.env).toEqual({
+        DEVELOP_URL: "${{ secrets.DEVELOP_DATABASE_URL }}",
+        PRODUCTION_URL: "${{ secrets.NEON_DATABASE_URL }}",
+      })
+      expect(step()?.run ?? "").not.toContain("${{")
+    })
+
+    it("別の DB（Neon の別ブランチ）なら通る", () => {
+      expect(exec(DEV, PROD).status).toBe(0)
+    })
+
+    it.each([
+      ["同じ値", PROD],
+      ["認証情報だけ違う", PROD.replace("secret-prod", "another-password")],
+      ["クエリ文字列だけ違う", PROD.replace("?sslmode=require", "?sslmode=require&channel_binding=require")],
+      ["接続プール（-pooler）の host", PROD.replace("ep-cool-name-123.", "ep-cool-name-123-pooler.")],
+      ["大文字小文字とポートだけ違う", PROD.replace("ep-cool-name-123.ap-southeast-1.aws.neon.tech", "EP-COOL-NAME-123.ap-southeast-1.aws.neon.tech:5432")],
+    ])("本番と同じ DB（%s）なら、値を出さずに ::error で止まる", (_label, develop) => {
+      const result = exec(develop, PROD)
+      expect(result.status).toBe(1)
+      expect(result.stdout).toContain("::error title=DEVELOP_DATABASE_URL points to production::")
+      // 接続文字列（ホスト名やパスワード）をログに出さない
+      for (const secret of ["secret-prod", "another-password", "ep-cool-name", "EP-COOL-NAME", "neondb"]) {
+        expect(result.stdout + result.stderr).not.toContain(secret)
+      }
+    })
+
+    it("クエリの値に @ が入っていても、host を取り違えない（本番を指していれば止まる）", () => {
+      expect(exec(`${PROD}&options=@ep-other-name-456.ap-southeast-1.aws.neon.tech/neondb`, PROD).status).toBe(1)
+    })
+
+    it("クエリの値に @ と本番の host が入っていても、別の DB なら通る", () => {
+      expect(exec(`${DEV}&options=@ep-cool-name-123.ap-southeast-1.aws.neon.tech/neondb`, PROD).status).toBe(0)
+    })
+
+    it.each([["末尾の改行", `${PROD.replace("?sslmode=require", "")}\n`], ["前後の空白", `  ${PROD.replace("?sslmode=require", "")}  `]])(
+      "secret に紛れた空白（%s）は無視する（本番を指していれば止まる）",
+      (_label, develop) => {
+        expect(exec(develop, PROD).status).toBe(1)
+      }
+    )
+
+    it("DB 名の末尾の / は無視する（本番を指していれば止まる）", () => {
+      expect(exec(PROD.replace("/neondb?", "/neondb/?"), PROD).status).toBe(1)
+    })
+
+    it("同じ host でも DB 名が違えば通る", () => {
+      expect(exec(PROD.replace("/neondb?", "/develop?"), PROD).status).toBe(0)
+    })
+
+    it("本番の secret が読めないときは、警告を出して先に進む（migrate 自体は止めない）", () => {
+      const result = exec(DEV, "")
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain("::warning title=NEON_DATABASE_URL is not set::")
+    })
   })
 
   it("本番と同じく、job 単位の concurrency で 1 本ずつ実行し、実行中のものは取り消さない", () => {

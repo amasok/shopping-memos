@@ -71,7 +71,19 @@ docker compose down           # 停止
 npm run lint && npm run test:run && npm run build
 ```
 
-CI（`.github/workflows/ci.yml`）は main / develop への push と PR で lint・unit test・coverage・build を実行する。main では本番 DB マイグレーションと E2E も実行される。
+CI（`.github/workflows/ci.yml`）は、PR と main への push で lint・typecheck・unit test・coverage・build を実行する。develop への push では develop 用 DB の migrate だけを行う。E2E は main への PR と main への push だけ（develop への PR の前に `npm run test:e2e:local` で全部流す）、本番 DB の migrate は main への push だけ。docs だけの変更では動かない。
+
+### CI が使う DB の接続先（GitHub Actions の secret）
+
+| secret | 中身 | 使う job |
+|--------|------|----------|
+| `NEON_DATABASE_URL` | 本番の DB（Neon の本番ブランチ） | `migrate`（main への push） |
+| `DEVELOP_DATABASE_URL` | Neon の console で develop ブランチを選び、Connect から取った接続文字列（pooling オフ） | `migrate-develop`（develop への push） |
+
+- Preview（develop のデプロイ）は、Neon の develop ブランチにつながっている（実測。develop ブランチに migrate すると Preview のエラーが消えた）
+- Vercel の画面の `DATABASE_URL` は Production と Preview で共通の 1 つで、値は本番なので、`DEVELOP_DATABASE_URL` には使わない（コピーすると、develop の migration が本番に当たる）
+- Preview が develop ブランチにつながる仕組みは未確認。Neon の Vercel 連携が、git ブランチ develop 向けの値を別に入れていると推測している
+- `migrate-develop` は、`DEVELOP_DATABASE_URL` が本番と同じ DB（host と DB 名）を指していたら止まる（#139）
 
 ## アーキテクチャ
 

@@ -159,7 +159,41 @@ jobs:
           DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
         run: |
           if [ -z "$DATABASE_URL" ]; then
-            echo "::error title=DEVELOP_DATABASE_URL is not set::GitHub の Settings → Secrets and variables → Actions に DEVELOP_DATABASE_URL（Vercel の Preview 用 DATABASE_URL と同じ値）を登録してください（#134）"
+            echo "::error title=DEVELOP_DATABASE_URL is not set::GitHub の Settings → Secrets and variables → Actions に DEVELOP_DATABASE_URL（Neon の console で develop ブランチを選び、Connect から取った接続文字列。pooling オフ。Vercel の画面の DATABASE_URL は本番の値なので使わない）を登録してください（#134 #139）"
+            exit 1
+          fi
+
+      # 本番の DB を develop 用として登録していないかを確かめる（#139）。
+      # 値はログに出さない。host（Neon の -pooler は除く）と DB 名で比べ、認証情報・ポート・クエリ文字列の違いは無視する。
+      # Neon はブランチごとに host（ep-xxx）が違うので、host で本番と develop ブランチを見分けられる。
+      # 限界: 比べるのはリポジトリの secret の NEON_DATABASE_URL。migrate（本番）が使う production 環境の同名の secret と同じ値かは、ここでは確かめられない
+      - name: Check DEVELOP_DATABASE_URL is not production
+        env:
+          DEVELOP_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
+          PRODUCTION_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          db_target() {
+            # コピペで紛れた改行や空白は除く（残ると一致せず、本番を指していても通ってしまう）
+            local u="${1//[[:space:]]/}"
+            u="${u#*://}"
+            # クエリ・フラグメントを先に落とす（値の中の @ で host を取り違えない）。認証情報は最後の @ まで
+            u="${u%%\?*}"
+            u="${u%%#*}"
+            u="${u##*@}"
+            u="$(printf '%s' "$u" | tr '[:upper:]' '[:lower:]')"
+            local host="${u%%/*}" db=""
+            [ "$host" != "$u" ] && db="${u#*/}"
+            db="${db%/}"
+            host="${host%%:*}"
+            host="${host/-pooler./.}"
+            printf '%s/%s' "$host" "$db"
+          }
+          if [ -z "$PRODUCTION_URL" ]; then
+            echo "::warning title=NEON_DATABASE_URL is not set::本番の接続文字列がないため、DEVELOP_DATABASE_URL と比べられませんでした（#139）"
+            exit 0
+          fi
+          if [ "$DEVELOP_URL" = "$PRODUCTION_URL" ] || [ "$(db_target "$DEVELOP_URL")" = "$(db_target "$PRODUCTION_URL")" ]; then
+            echo "::error title=DEVELOP_DATABASE_URL points to production::DEVELOP_DATABASE_URL が本番の DB（NEON_DATABASE_URL と同じ host と DB 名）を指しています。Neon の console で develop ブランチを選び、Connect から取った接続文字列（pooling オフ）に直してください（#139）"
             exit 1
           fi
 
