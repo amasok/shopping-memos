@@ -88,8 +88,9 @@ src/
 │   ├── identity/           # グループ・メンバー・招待リンク
 │   ├── shopping/           # 買い物リスト・リストアイテム
 │   └── sync/               # 同期操作
-│       # 各モジュール: domain/{entities,value-objects,repositories} /
+│       # 主な層（モジュールによって一部ない）: domain/{entities,value-objects,repositories,services} /
 │       #   application/{commands,queries,services} / infrastructure/repositories（Drizzle 実装）
+│       # commands/ queries/ は現在空（.gitkeep のみ）。tRPC routers が Drizzle・repositories・services を直接使う
 ├── infrastructure/
 │   ├── auth/               # NextAuth 設定（auth, signIn, signOut, handlers）
 │   ├── db/drizzle/         # client.ts, schema.ts, migrations/
