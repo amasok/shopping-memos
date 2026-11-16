@@ -12,8 +12,15 @@ import {
 import { useAuth } from "@/contexts/AuthContext"
 import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
+import { MERGE_LIMITS } from "@/shared/schemas/sync"
+import { TEXT_LIMITS, clampQuantity, clipText } from "@/shared/schemas/limits"
+
+const clipNullable = (value: string | null | undefined, max: number) =>
+  value == null ? null : clipText(value, max)
 
 const MERGE_COMPLETED_KEY = "data-merge-completed"
+/** 取り込めなかった件数（リロードをまたいで表示するため localStorage に保存する） */
+const MERGE_SKIPPED_KEY = "data-merge-skipped"
 const SELECTED_GROUP_KEY = "selectedGroupId"
 
 interface MergedCounts {
@@ -35,6 +42,10 @@ interface DataMergeContextValue {
   mergedCounts: MergedCounts | null
   /** マージをリトライする */
   retryMerge: () => void
+  /** 取り込めなかった件数（0 なら通知しない） */
+  skippedCount: number
+  /** 取り込めなかった件数の通知を閉じる */
+  dismissSkipped: () => void
 }
 
 const DataMergeContext = createContext<DataMergeContextValue | null>(null)
@@ -49,6 +60,7 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
   const [isMergeCompleted, setIsMergeCompleted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mergedCounts, setMergedCounts] = useState<MergedCounts | null>(null)
+  const [skippedCount, setSkippedCount] = useState(0)
   const mergeAttempted = useRef(false)
 
   const mergeMutation = trpc.sync.merge.useMutation()
@@ -66,6 +78,14 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     if (completed) {
       setIsMergeCompleted(true)
     }
+    // マージ後のリロードをまたいで、取り込めなかった件数を通知する
+    const skipped = Number(localStorage.getItem(`${MERGE_SKIPPED_KEY}-${user.id}`) ?? 0)
+    setSkippedCount(Number.isFinite(skipped) && skipped > 0 ? skipped : 0)
+  }, [user])
+
+  const dismissSkipped = useCallback(() => {
+    if (user) localStorage.removeItem(`${MERGE_SKIPPED_KEY}-${user.id}`)
+    setSkippedCount(0)
   }, [user])
 
   const executeMerge = useCallback(async () => {
@@ -113,34 +133,34 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
         data: {
           items: localItems.map((item) => ({
             id: item.id,
-            name: item.name,
-            quantity: item.quantity,
-            memo: item.memo ?? null,
-            tagIds: item.tagIds,
+            name: clipText(item.name, TEXT_LIMITS.itemName),
+            quantity: clampQuantity(item.quantity),
+            memo: clipNullable(item.memo, TEXT_LIMITS.memo),
+            tagIds: item.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
             purchasedAt: item.purchasedAt?.toISOString() ?? null,
             createdAt: item.createdAt.toISOString(),
           })),
           tags: localTags.map((tag) => ({
             id: tag.id,
-            name: tag.name,
+            name: clipText(tag.name, TEXT_LIMITS.tagName),
             createdAt: tag.createdAt.toISOString(),
           })),
           lists: localLists.map((list) => ({
             id: list.id,
-            name: list.name,
+            name: clipText(list.name, TEXT_LIMITS.listName),
             status: list.status,
             createdAt: list.createdAt.toISOString(),
             completedAt: list.completedAt?.toISOString() ?? null,
             purchasedAt: list.purchasedAt?.toISOString() ?? null,
-            location: list.location ?? null,
+            location: clipNullable(list.location, TEXT_LIMITS.location),
           })),
           listItems: localListItems.map((listItem) => ({
             id: listItem.id,
             listId: listItem.listId,
-            name: listItem.name,
-            quantity: listItem.quantity,
-            memo: listItem.memo ?? null,
-            tagIds: listItem.tagIds,
+            name: clipText(listItem.name, TEXT_LIMITS.listItemName),
+            quantity: clampQuantity(listItem.quantity),
+            memo: clipNullable(listItem.memo, TEXT_LIMITS.memo),
+            tagIds: listItem.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
             checked: listItem.checked,
             createdAt: listItem.createdAt.toISOString(),
           })),
@@ -148,7 +168,7 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
           history: localHistory.map((list) => ({
             id: list.id,
             listId: list.id,
-            location: list.location ?? null,
+            location: clipNullable(list.location, TEXT_LIMITS.location),
             purchasedAt: list.purchasedAt!.toISOString(),
           })),
         },
@@ -158,6 +178,12 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(mergeKey, "true")
 
       console.log("Data merge completed:", result.mergeResult)
+
+      // 取り込めなかったデータ（形式が不正・重複など）があれば、リロード後に件数を通知する
+      const skipped = result.mergeResult.errors.length
+      if (skipped > 0) {
+        localStorage.setItem(`${MERGE_SKIPPED_KEY}-${user.id}`, String(skipped))
+      }
 
       // マージされたアイテムが個人アイテム（groupId = undefined）を含む場合、
       // selectedGroupId を undefined にリセットして個人モードに切り替える
@@ -205,6 +231,8 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
         error,
         mergedCounts,
         retryMerge,
+        skippedCount,
+        dismissSkipped,
       }}
     >
       {children}

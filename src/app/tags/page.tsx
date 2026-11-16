@@ -1,5 +1,6 @@
 "use client"
 
+import { TEXT_LIMITS } from "@/shared/schemas/limits"
 import { GroupSelector } from "@/components/features/groups/GroupSelector"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
@@ -116,6 +117,7 @@ export default function TagsPage() {
               <input
                 type="text"
                 value={newTagName}
+                maxLength={TEXT_LIMITS.tagName}
                 onChange={(e) => setNewTagName(e.target.value)}
                 placeholder="新しいタグ名"
                 autoFocus
@@ -308,6 +310,7 @@ function TagEditForm({
         <input
           id="tag-name"
           type="text"
+          maxLength={TEXT_LIMITS.tagName}
           value={name}
           onChange={(e) => setName(e.target.value)}
           autoFocus

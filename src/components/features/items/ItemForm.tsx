@@ -1,5 +1,6 @@
 "use client"
 
+import { TEXT_LIMITS } from "@/shared/schemas/limits"
 import { Badge, Button, LoadingSpinner } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { type ShoppingItem } from "@/lib/db"
@@ -65,7 +66,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
   }
 
   const handleQuantityChange = (delta: number) => {
-    setQuantity((prev) => Math.max(1, prev + delta))
+    setQuantity((prev) => Math.min(TEXT_LIMITS.quantityMax, Math.max(1, prev + delta)))
   }
 
   const handleTagToggle = (tagId: string) => {
@@ -176,6 +177,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
         <input
           id="item-name"
           type="text"
+          maxLength={TEXT_LIMITS.itemName}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="例: 牛乳"
@@ -241,6 +243,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
         </label>
         <textarea
           id="item-memo"
+          maxLength={TEXT_LIMITS.memo}
           value={memo}
           onChange={(e) => setMemo(e.target.value)}
           placeholder="例: 低脂肪タイプ"
@@ -347,6 +350,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
             <input
               type="text"
               value={newTagName}
+              maxLength={TEXT_LIMITS.tagName}
               onChange={(e) => setNewTagName(e.target.value)}
               placeholder="新しいタグ名"
               autoFocus

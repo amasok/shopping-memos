@@ -1,5 +1,6 @@
 "use client"
 
+import { TEXT_LIMITS } from "@/shared/schemas/limits"
 import { Badge, Button, Checkbox } from "@/components/ui"
 import type { ShoppingItem, Tag } from "@/lib/db"
 import { cn } from "@/lib/utils"
@@ -116,7 +117,7 @@ export function ItemSelector({
   }
 
   const handleQuantityChange = (delta: number) => {
-    setQuantity((prev) => Math.max(1, prev + delta))
+    setQuantity((prev) => Math.min(TEXT_LIMITS.quantityMax, Math.max(1, prev + delta)))
   }
 
   const handleTagToggle = (tagId: string) => {
@@ -363,6 +364,7 @@ export function ItemSelector({
             <input
               id="item-name"
               type="text"
+              maxLength={TEXT_LIMITS.itemName}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="例: 牛乳"
@@ -387,6 +389,7 @@ export function ItemSelector({
             </label>
             <textarea
               id="item-memo"
+              maxLength={TEXT_LIMITS.memo}
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
               placeholder="例: 低脂肪タイプ"
@@ -486,6 +489,7 @@ export function ItemSelector({
                 <input
                   type="text"
                   value={newTagName}
+                  maxLength={TEXT_LIMITS.tagName}
                   onChange={(e) => setNewTagName(e.target.value)}
                   placeholder="新しいタグ名"
                   autoFocus

@@ -1,5 +1,6 @@
 "use client"
 
+import { TEXT_LIMITS } from "@/shared/schemas/limits"
 import { listDetailHref } from "@/lib/routes"
 import { GroupSelector } from "@/components/features/groups/GroupSelector"
 import { ItemSelector } from "@/components/features/items/ItemSelector"
@@ -110,6 +111,7 @@ function NewListPageContent() {
             label="リスト名（任意）"
             name="listName"
             value={listName}
+            maxLength={TEXT_LIMITS.listName}
             onChange={(e) => setListName(e.target.value)}
             placeholder="例: スーパーで買い物"
             data-testid="list-name-input"
