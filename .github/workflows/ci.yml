@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 # 同じブランチ/PRの古い実行を止める。
-# main は本番DBマイグレーションを含み、paths-filter は push 単位の差分しか見ないため、
-# 実行が待機・取り消しされるとマイグレーションが適用されなくなる。main は commit ごとに別 group にする
+# main は本番DBマイグレーションを含むので、取り消さずに commit ごとに別 group にする。
+# 本番DBへの migrate どうしは、migrate ジョブの concurrency（migrate-production）で直列にする（#94）
 concurrency:
   group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -85,32 +85,31 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main'
     environment: production
+    # 本番 DB への migrate は常に 1 本ずつ実行する（#94）。drizzle の migrator は実行どうしの排他を前提にできない。
+    # 実行中のものは取り消さない。待機中のものは新しい実行に置き換えられることがあるが、
+    # 毎回すべての未適用分を当てるので（下記）、置き換えられた分の migration も次の実行で適用される
+    concurrency:
+      group: migrate-production
+      cancel-in-progress: false
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check for migration changes
-        uses: dorny/paths-filter@v3
-        id: changes
-        with:
-          filters: |
-            migrations:
-              - 'src/infrastructure/db/drizzle/migrations/**'
-
       - name: Setup Node.js
-        if: steps.changes.outputs.migrations == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
-        if: steps.changes.outputs.migrations == 'true'
         run: npm ci
 
+      # 変更の有無（paths-filter）では判定せず、毎回実行する（#94）。
+      # 適用済みの分は飛ばされ、未適用の分がすべて当たる（冪等）。
+      # paths-filter は push 単位の差分しか見ないため、migration を含む実行が取り消されると、
+      # 後の実行で適用されないまま残るおそれがあった
       - name: Run migrations
-        if: steps.changes.outputs.migrations == 'true'
         run: npm run db:migrate
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
