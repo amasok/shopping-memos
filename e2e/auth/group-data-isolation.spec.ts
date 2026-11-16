@@ -8,7 +8,7 @@ import {
 } from "./fixtures/db-helpers"
 import { USER_A_EMAIL, USER_B_EMAIL, USER_B_STORAGE } from "./fixtures/auth-helpers"
 import { trpcQuery, trpcMutation } from "./fixtures/trpc-helpers"
-import type { APIRequestContext } from "@playwright/test"
+import type { APIRequestContext, Browser, BrowserContext } from "@playwright/test"
 
 test.describe("データ分離 (G-16〜G-18)", () => {
   test.describe.configure({ mode: "serial" })
@@ -151,6 +151,18 @@ test.describe("同名アイテムの影響範囲 (#64)", () => {
     userB = await getUser(USER_B_EMAIL)
   })
 
+  // B 用コンテキスト。assertion 失敗時も必ず閉じる
+  const bContexts: BrowserContext[] = []
+  const newBContext = async (browser: Browser): Promise<BrowserContext> => {
+    const context = await browser.newContext({ storageState: USER_B_STORAGE })
+    bContexts.push(context)
+    return context
+  }
+
+  test.afterEach(async () => {
+    await Promise.all(bContexts.splice(0).map((c) => c.close()))
+  })
+
   type CatalogItem = { id: string; name: string; purchasedAt: string | null }
 
   const findItem = async (
@@ -199,7 +211,7 @@ test.describe("同名アイテムの影響範囲 (#64)", () => {
   test("ISO-1: A が買い物を完了しても、B の同名アイテムは購入済みにならない", async ({ page, browser }) => {
     const name = `共通牛乳1-${testUUID().slice(0, 8)}`
     const { aItem, bItem } = await seedSameNameItems(name)
-    const bContext = await browser.newContext({ storageState: USER_B_STORAGE })
+    const bContext = await newBContext(browser)
 
     await completeShopping(page.request, aItem)
 
@@ -207,13 +219,12 @@ test.describe("同名アイテムの影響範囲 (#64)", () => {
     const b = await findItem(bContext.request, bItem, name)
     expect(b).toBeDefined()
     expect(b?.purchasedAt).toBeNull()
-    await bContext.close()
   })
 
   test("ISO-2: A が履歴を差し戻しても、B の購入済み同名アイテムは未購入に戻らない", async ({ page, browser }) => {
     const name = `共通牛乳2-${testUUID().slice(0, 8)}`
     const { aItem, bItem } = await seedSameNameItems(name)
-    const bContext = await browser.newContext({ storageState: USER_B_STORAGE })
+    const bContext = await newBContext(browser)
     // B 側も購入済みにしておく（差し戻しで巻き込まれないことを確認するため）
     await trpcMutation(bContext.request, "catalog.markItemAsPurchased", { id: bItem })
 
@@ -224,13 +235,12 @@ test.describe("同名アイテムの影響範囲 (#64)", () => {
     const b = await findItem(bContext.request, bItem, name)
     expect(b).toBeDefined()
     expect(b?.purchasedAt).not.toBeNull()
-    await bContext.close()
   })
 
   test("ISO-3: A が履歴を削除しても、B の同名アイテムは削除されない", async ({ page, browser }) => {
     const name = `共通牛乳3-${testUUID().slice(0, 8)}`
     const { aItem, bItem } = await seedSameNameItems(name)
-    const bContext = await browser.newContext({ storageState: USER_B_STORAGE })
+    const bContext = await newBContext(browser)
 
     const historyId = await completeShopping(page.request, aItem)
     await trpcMutation(page.request, "shopping.deleteHistory", { id: historyId })
@@ -239,13 +249,12 @@ test.describe("同名アイテムの影響範囲 (#64)", () => {
     const b = await findItem(bContext.request, bItem, name)
     expect(b).toBeDefined()
     expect(b?.purchasedAt).toBeNull()
-    await bContext.close()
   })
 
   test("ISO-4: グループリストの完了・削除は、同名の作成者の個人アイテムに影響しない", async ({ page }) => {
     const name = `共通牛乳4-${testUUID().slice(0, 8)}`
     const groupId = testUUID()
-    await seedGroup({ groupId, groupName: "影響範囲テスト", ownerUserId: userA.id, inviteCode: "ISO4GR" })
+    await seedGroup({ groupId, groupName: "影響範囲テスト", ownerUserId: userA.id, inviteCode: testUUID().slice(0, 6).toUpperCase() })
     const groupItem = testUUID()
     const personalItem = testUUID()
     await seedItems({ userId: userA.id, groupId, items: [{ id: groupItem, name }] })
