@@ -1,6 +1,8 @@
 "use client"
 
+import { useState } from "react"
 import { useDataMerge } from "@/contexts/DataMergeContext"
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
 import { cn } from "@/lib/utils"
 import { Cloud, AlertCircle, CheckCircle, RefreshCw } from "lucide-react"
 
@@ -9,27 +11,60 @@ import { Cloud, AlertCircle, CheckCircle, RefreshCw } from "lucide-react"
  * ログイン時にローカルデータをサーバーに同期中の状態を表示
  */
 export function DataMergeStatus() {
-  const { isMerging, isMergeCompleted, error, mergedCounts, retryMerge, skippedCount, dismissSkipped } =
-    useDataMerge()
+  const {
+    isMerging,
+    isMergeCompleted,
+    error,
+    mergedCounts,
+    retryMerge,
+    skippedCount,
+    dismissSkipped,
+    discardSkipped,
+  } = useDataMerge()
+  // 「破棄する」は取り消せない削除なので、確認してから消す（ほかの削除と同じ ConfirmDialog）
+  const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = useState(false)
 
-  // マージ後、取り込めなかったデータがあれば件数を通知する（閉じるまで表示）
+  // マージ後、取り込めなかったデータがあれば件数を通知する（閉じるまで表示）。
+  // 取り込めなかったデータは端末に残し、次のログインで送り直す。「破棄する」で消せる（#144）
   if (!isMerging && !error && skippedCount > 0) {
     return (
-      <div
-        role="status"
-        data-testid="merge-skipped-notice"
-        className="fixed inset-x-4 bottom-20 z-50 flex items-center justify-between gap-3 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-lg ring-1 ring-amber-200"
-      >
-        <span>{skippedCount}件のデータは取り込めませんでした</span>
-        <button
-          type="button"
-          onClick={dismissSkipped}
-          data-testid="merge-skipped-dismiss"
-          className="rounded px-2 py-1 font-medium hover:bg-amber-100"
+      <>
+        <div
+          role="status"
+          data-testid="merge-skipped-notice"
+          className="fixed inset-x-4 bottom-20 z-50 flex items-center justify-between gap-3 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-lg ring-1 ring-amber-200"
         >
-          閉じる
-        </button>
-      </div>
+          <span>{skippedCount}件のデータは取り込めませんでした（次のログインでもう一度送ります）</span>
+          <div className="flex shrink-0 gap-1">
+            <button
+              type="button"
+              onClick={() => setIsDiscardConfirmOpen(true)}
+              data-testid="merge-skipped-discard"
+              className="rounded px-2 py-1 font-medium text-red-700 hover:bg-amber-100"
+            >
+              破棄する
+            </button>
+            <button
+              type="button"
+              onClick={dismissSkipped}
+              data-testid="merge-skipped-dismiss"
+              className="rounded px-2 py-1 font-medium hover:bg-amber-100"
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+        <ConfirmDialog
+          isOpen={isDiscardConfirmOpen}
+          onClose={() => setIsDiscardConfirmOpen(false)}
+          onConfirm={() => void discardSkipped()}
+          title="取り込めなかったデータの破棄"
+          message={`取り込めなかった ${skippedCount} 件を破棄します。元に戻せません。`}
+          confirmLabel="破棄する"
+          cancelLabel="キャンセル"
+          confirmVariant="danger"
+        />
+      </>
     )
   }
 

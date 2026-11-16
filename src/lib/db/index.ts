@@ -78,6 +78,21 @@ export interface SyncQueueItem {
   retryCount: number
 }
 
+/**
+ * ログイン時の merge で取り込めなかったゲストのデータ（#144。offline-support.md「4b」）。
+ * 通常のテーブルから移すので、ゲストの画面には出ない。そのアカウントの merge でだけ再送する
+ */
+export interface PendingMergeRecord {
+  /** "<userId>:<entity>:<id>" */
+  key: string
+  entity: "tags" | "items" | "lists" | "listItems"
+  /** 取り込めなかった merge のアカウント */
+  userId: string
+  /** 元のテーブルのレコード（そのまま戻して送れる形） */
+  record: Tag | ShoppingItem | ShoppingList | ListItem
+  createdAt: Date
+}
+
 // Dexie データベースクラス
 class ShoppingMemosDB extends Dexie {
   tags!: EntityTable<Tag, "id">
@@ -87,6 +102,7 @@ class ShoppingMemosDB extends Dexie {
   groups!: EntityTable<Group, "id">
   groupMembers!: EntityTable<GroupMember, "id">
   syncQueue!: EntityTable<SyncQueueItem, "id">
+  pendingMerge!: EntityTable<PendingMergeRecord, "key">
 
   constructor() {
     super("ShoppingMemosDB")
@@ -195,6 +211,18 @@ class ShoppingMemosDB extends Dexie {
           location: history.location,
         })
       }
+    })
+
+    // v9: merge で取り込めなかったゲストのデータを、アカウントごとに残す（#144）
+    this.version(9).stores({
+      tags: "id, name, groupId, createdAt",
+      items: "id, name, groupId, createdAt, purchasedAt, *tagIds",
+      lists: "id, status, groupId, createdAt, purchasedAt",
+      listItems: "id, listId, groupId, checked, *tagIds",
+      groups: "id, ownerId, inviteCode, createdAt",
+      groupMembers: "id, groupId, userId",
+      syncQueue: "id, entity, createdAt, retryCount",
+      pendingMerge: "key, userId",
     })
   }
 }

@@ -28,11 +28,23 @@ vi.mock("@/infrastructure/trpc/client", () => ({
 }))
 const guestData = vi.hoisted(() => ({
   clearGuestData: vi.fn(async () => {}),
+  applyMergeOutcome: vi.fn<(userId: string, outcome: unknown) => Promise<void>>(async () => {}),
   migrated: true,
 }))
 vi.mock("@/lib/db/guestData", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
   clearGuestData: guestData.clearGuestData,
+  // ゲストの DB の読み書きは、このテストの疑似 DB（@/lib/db のモック）から読み、結果の反映は呼び出しだけを記録する
+  loadGuestDataForMerge: async () => {
+    const { db } = await import("@/lib/db")
+    return {
+      tags: await db.tags.toArray(),
+      items: await db.items.toArray(),
+      lists: await db.lists.toArray(),
+      listItems: await db.listItems.toArray(),
+    }
+  },
+  applyMergeOutcome: guestData.applyMergeOutcome,
   // 以前の仕組みからの移行は guestData.test.ts で確かめる
   ensureGuestDataMigrated: async () => guestData.migrated,
 }))
@@ -71,6 +83,7 @@ beforeEach(() => {
   state.items = []
   state.mutateAsync.mockReset().mockResolvedValue(result(0))
   guestData.clearGuestData.mockClear()
+  guestData.applyMergeOutcome.mockClear()
   guestData.migrated = true
   reload = vi.fn()
   Object.defineProperty(window, "location", { configurable: true, value: { ...window.location, reload } })
@@ -86,22 +99,48 @@ describe("ログインしたときの merge", () => {
     expect(localStorage.getItem(MERGE_KEY)).toBe("true")
   })
 
-  it("全部取り込めたら、ゲストのデータを空にしてから再読み込みする", async () => {
-    state.items = [guestItem()]
+  /** applyMergeOutcome に渡した、残すもの（エンティティごとの ID） */
+  const kept = () =>
+    (guestData.applyMergeOutcome.mock.calls[0][1] as { keep: Record<string, string[]> }).keep
+
+  it("全部取り込めたら、送ったものを全部ゲストの DB から消して（何も残さず）再読み込みする", async () => {
+    const one = guestItem()
+    state.items = [one]
     renderProvider()
     await waitFor(() => expect(reload).toHaveBeenCalled())
     expect(state.mutateAsync).toHaveBeenCalledTimes(1)
-    expect(guestData.clearGuestData).toHaveBeenCalledTimes(1)
+    expect(guestData.applyMergeOutcome).toHaveBeenCalledTimes(1)
+    const [userId, outcome] = guestData.applyMergeOutcome.mock.calls[0] as [string, { sent: Record<string, string[]> }]
+    expect(userId).toBe("user-1")
+    expect(outcome.sent.items).toEqual([one.id])
+    expect(kept()).toEqual({ tags: [], items: [], lists: [], listItems: [] })
     expect(localStorage.getItem(MERGE_KEY)).toBe("true")
   })
 
-  it("取り込めなかったものが 1 件でもあれば、ゲストのデータは全部残す（次のログインで送り直す）", async () => {
-    state.items = [guestItem()]
+  it("取り込めなかったものだけを残す（notImported のチャンクの中での位置で特定する。#144）", async () => {
+    const ok = guestItem()
+    const ng = { ...guestItem(), name: "取り込めない", tagIds: ["tag-x"] }
+    state.tags = [...defaultTags(), { id: "tag-x", name: "お気に入り", createdAt: NOW, updatedAt: NOW }]
+    state.items = [ok, ng]
+    state.mutateAsync.mockResolvedValue({
+      ...result(1),
+      mergeResult: { ...result(1).mergeResult, notImported: [{ entity: "items", requestIndex: 1 }] },
+    })
+    renderProvider()
+    await waitFor(() => expect(reload).toHaveBeenCalled())
+    // 取り込めなかったアイテムと、それが参照しているタグだけを残す
+    expect(kept()).toEqual({ tags: ["tag-x"], items: [ng.id], lists: [], listItems: [] })
+    expect(localStorage.getItem(SKIPPED_KEY)).toBe("1")
+  })
+
+  it("notImported を返さない古いサーバーでは、取り込めなかったものがあれば、そのチャンクを全部残す（安全側）", async () => {
+    const a = guestItem()
+    const b = guestItem()
+    state.items = [a, b]
     state.mutateAsync.mockResolvedValue(result(1))
     renderProvider()
     await waitFor(() => expect(reload).toHaveBeenCalled())
-    expect(guestData.clearGuestData).not.toHaveBeenCalled()
-    expect(localStorage.getItem(SKIPPED_KEY)).toBe("1")
+    expect(kept().items.sort()).toEqual([a.id, b.id].sort())
   })
 
   it("同じログインの間（merge 済みの印がある）は、再読み込みしても merge しない", async () => {
@@ -119,7 +158,7 @@ describe("ログインしたときの merge", () => {
     renderProvider()
     await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByTestId("completed")).toHaveTextContent("false"))
-    expect(guestData.clearGuestData).not.toHaveBeenCalled()
+    expect(guestData.applyMergeOutcome).not.toHaveBeenCalled()
     expect(localStorage.getItem(MERGE_KEY)).toBeNull()
   })
 })
@@ -155,7 +194,7 @@ describe("以前の仕組みからの移行に失敗した読み込み", () => {
     renderProvider()
     await waitFor(() => expect(screen.getByTestId("completed")).toHaveTextContent("true"))
     expect(state.mutateAsync).not.toHaveBeenCalled()
-    expect(guestData.clearGuestData).not.toHaveBeenCalled()
+    expect(guestData.applyMergeOutcome).not.toHaveBeenCalled()
   })
 
   it("ゲスト: 以前の印を消さない（次の読み込みで移行をやり直すため）", async () => {

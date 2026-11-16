@@ -5,6 +5,7 @@ import {
   syncPullInputSchema,
   syncMergeInputSchema,
   parseMergeData,
+  type NotImportedRecordRef,
 } from "@/shared/schemas/sync"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
@@ -144,7 +145,7 @@ export const syncRouter = router({
 
       // 入力は Zod で検証・変換する（型キャストや ?? による補完はしない）
       // 形式が不正な要素は 1 件ずつスキップし、ほかのデータは取り込む
-      const { data: validData, errors: validationErrors } = parseMergeData(data)
+      const { data: validData, errors: validationErrors, skipped, requestIndexOf } = parseMergeData(data)
       const serviceResult = await dataMergeService.merge(ctx.userId, validData)
       // トランザクション全体が失敗したときは何も取り込まれていない。
       // 完了扱いにせず、クライアントに再試行させる（#116）
@@ -160,6 +161,14 @@ export const syncRouter = router({
       // 取り込めなかった件数（#116）: 検証でスキップした件数（1 件につき 1 つのエラー）と、
       // レコード単位の失敗だけを数える。タグの関連付けのスキップや、取り込み済みの送り直しは数えない
       const notImportedCount = validationErrors.length + serviceResult.failedCount
+      // 取り込めなかったレコードの、リクエストの中での位置（#144）。クライアントは、これでゲストの DB に残すものを決める
+      const notImported: NotImportedRecordRef[] = [
+        ...skipped,
+        ...serviceResult.failedRecords.map(({ entity, index }) => ({
+          entity,
+          requestIndex: requestIndexOf[entity][index],
+        })),
+      ]
 
       if (!mergeResult.success && mergeResult.errors.length > 0) {
         console.error("Merge errors:", mergeResult.errors)
@@ -188,6 +197,7 @@ export const syncRouter = router({
           success: mergeResult.success,
           mergedCounts: mergeResult.mergedCounts,
           notImportedCount,
+          notImported,
           alreadyMergedCount: serviceResult.alreadyMergedCount,
           errors: mergeResult.errors,
         },

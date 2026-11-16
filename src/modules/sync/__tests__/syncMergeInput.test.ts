@@ -37,6 +37,7 @@ describe("sync.merge の入力検証 (#86)", () => {
         success: true,
         mergedCounts: {},
         failedCount: 0,
+        failedRecords: [],
         alreadyMergedCount: 0,
         fatal: false,
         idMappings: [],
@@ -105,6 +106,7 @@ describe("sync.merge の入力検証 (#86)", () => {
       success: false,
       mergedCounts: {},
       failedCount: 1,
+      failedRecords: [{ entity: "tags", index: 0 }],
       alreadyMergedCount: 3,
       fatal: false,
       errors: [
@@ -127,6 +129,7 @@ describe("sync.merge の入力検証 (#86)", () => {
       success: false,
       mergedCounts: { items: 0, tags: 0, lists: 0, listItems: 0, history: 0 },
       failedCount: 0,
+      failedRecords: [],
       alreadyMergedCount: 0,
       fatal: true,
       errors: ["マージ処理に失敗しました: connection lost"],
@@ -141,6 +144,7 @@ describe("sync.merge の入力検証 (#86)", () => {
       success: true,
       mergedCounts: {},
       failedCount: 0,
+      failedRecords: [],
       alreadyMergedCount: 0,
       fatal: false,
       idMappings: mappings,
@@ -148,5 +152,31 @@ describe("sync.merge の入力検証 (#86)", () => {
     })
     const result = await call(empty)
     expect(result.idMappings).toEqual(mappings)
+  })
+
+  it("取り込めなかったレコードを、リクエストの中での位置（notImported）で返す (#144)", async () => {
+    const item = (id: string) => ({ id, name: "x", quantity: 1, tagIds: [], createdAt: "2026-01-01T00:00:00Z" })
+    const ok1 = crypto.randomUUID()
+    const ok2 = crypto.randomUUID()
+    // DataMergeService は、検証を通った items（ok1, ok2）の 2 件目が失敗したと返す
+    state.merge.mockResolvedValue({
+      success: false,
+      mergedCounts: {},
+      failedCount: 1,
+      failedRecords: [{ entity: "items", index: 1 }],
+      alreadyMergedCount: 0,
+      fatal: false,
+      idMappings: [],
+      errors: ["アイテム \"x\" のマージに失敗"],
+    })
+
+    // リクエストの items: [ok1, 不正（ID が空）, ok2]
+    const result = await call({ ...empty, items: [item(ok1), item(""), item(ok2)] })
+
+    expect(result.mergeResult.notImported).toEqual([
+      { entity: "items", requestIndex: 1 }, // 検証でスキップした 2 件目
+      { entity: "items", requestIndex: 2 }, // サービスで失敗した（検証を通った中の 2 件目 = リクエストの 3 件目）
+    ])
+    expect(result.mergeResult.notImportedCount).toBe(result.mergeResult.notImported.length)
   })
 })

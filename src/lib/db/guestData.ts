@@ -1,11 +1,12 @@
-import { db } from "./index"
+import { db, type ListItem, type PendingMergeRecord, type ShoppingItem, type ShoppingList, type Tag } from "./index"
 import { DEFAULT_TAG_NAMES, initializeDefaultTags } from "./tags"
 
 /**
  * ゲストのデータ（IndexedDB）とログインの関係（offline-support.md「ゲストのデータとログイン・ログアウト」）
  *
- * - ログインのたびに、ゲストのデータがあれば sync.merge で送る
- * - 全部取り込めたら、ゲストのデータを空にする。取り込めなかったものが 1 件でもあれば、全部残す（次のログインで送り直す）
+ * - ログインのたびに、ゲストのデータ（と、このアカウントで取り込めずに残したデータ）があれば sync.merge で送る
+ * - 取り込めた分と取り込み済みの分は消し、取り込めなかったものだけを pendingMerge に、このアカウントの分として移す（#144）。
+ *   pendingMerge はゲストの画面に出さず、そのアカウントの merge でだけ再送する
  * - ログアウトしたら（またはセッションが切れてゲストに戻ったら）、ログイン中だけの状態（merge 済みの印・選んでいたグループ）を消す
  */
 
@@ -105,4 +106,91 @@ export function ensureGuestDataMigrated(): Promise<boolean> {
     }
   )
   return migration
+}
+
+// === 取り込めなかったものだけを残す（#144） ===
+
+/** pendingMerge に残せるエンティティ（履歴はリストの purchasedAt なので、リストとして残す） */
+export type GuestEntity = PendingMergeRecord["entity"]
+export const GUEST_ENTITIES: readonly GuestEntity[] = ["tags", "items", "lists", "listItems"]
+
+export interface GuestDataForMerge {
+  tags: Tag[]
+  items: ShoppingItem[]
+  lists: ShoppingList[]
+  listItems: ListItem[]
+}
+
+const pendingKey = (userId: string, entity: GuestEntity, id: string) => `${userId}:${entity}:${id}`
+
+/**
+ * merge で送るゲストのデータを読む。通常のテーブル（まだどのアカウントにも送っていないデータ）と、
+ * このアカウントの pendingMerge（前回取り込めずに残したデータ）を合わせる。ほかのアカウントの pendingMerge は含めない
+ */
+export async function loadGuestDataForMerge(userId: string): Promise<GuestDataForMerge> {
+  const [tags, items, lists, listItems, pending] = await Promise.all([
+    db.tags.toArray(),
+    db.items.toArray(),
+    db.lists.toArray(),
+    db.listItems.toArray(),
+    db.pendingMerge.where("userId").equals(userId).toArray(),
+  ])
+  const data: GuestDataForMerge = { tags, items, lists, listItems }
+  for (const row of pending) {
+    const target = data[row.entity] as Array<{ id: string }>
+    // 同じ ID が通常のテーブルにもあれば、通常のテーブルのほう（新しい）を使う
+    if (!target.some((r) => r.id === (row.record as { id: string }).id)) target.push(row.record as never)
+  }
+  return data
+}
+
+export interface MergeOutcome {
+  /** 送ったレコードの ID（エンティティごと） */
+  sent: Record<GuestEntity, string[]>
+  /** そのうち、取り込めなかったので残すもの（エンティティごと）。sent の部分集合 */
+  keep: Record<GuestEntity, string[]>
+  /** 残すレコードの中身（エンティティごとに、ID → レコード） */
+  records: GuestDataForMerge
+}
+
+/**
+ * merge の結果をゲストの DB に反映する（1 つのトランザクション）
+ * - 送ったレコードは、通常のテーブルと、このアカウントの pendingMerge から消す
+ * - 取り込めなかったものは、このアカウントの pendingMerge に入れる（通常のテーブルからは消えるので、ゲストの画面に出ない）
+ * - ほかのアカウントの pendingMerge には触れない
+ * - 通常のタグのテーブルが空になったら、初期タグを作り直す
+ */
+export async function applyMergeOutcome(userId: string, outcome: MergeOutcome): Promise<void> {
+  const now = new Date()
+  await db.transaction("rw", [db.tags, db.items, db.lists, db.listItems, db.pendingMerge], async () => {
+    for (const entity of GUEST_ENTITIES) {
+      const table = db[entity] as unknown as { bulkDelete: (ids: string[]) => Promise<void> }
+      const sent = outcome.sent[entity]
+      await table.bulkDelete(sent)
+      await db.pendingMerge.bulkDelete(sent.map((id) => pendingKey(userId, entity, id)))
+
+      const keep = new Set(outcome.keep[entity])
+      const rows = (outcome.records[entity] as Array<{ id: string }>)
+        .filter((record) => keep.has(record.id))
+        .map((record) => ({
+          key: pendingKey(userId, entity, record.id),
+          entity,
+          userId,
+          record: record as PendingMergeRecord["record"],
+          createdAt: now,
+        }))
+      await db.pendingMerge.bulkPut(rows)
+    }
+  })
+  await initializeDefaultTags()
+}
+
+/** 「破棄する」: このアカウントで取り込めずに残したデータを消す（ほかのアカウントの分は残す） */
+export async function discardPendingMerge(userId: string): Promise<void> {
+  await db.pendingMerge.where("userId").equals(userId).delete()
+}
+
+/** このアカウントで取り込めずに残したデータの件数 */
+export async function countPendingMerge(userId: string): Promise<number> {
+  return db.pendingMerge.where("userId").equals(userId).count()
 }

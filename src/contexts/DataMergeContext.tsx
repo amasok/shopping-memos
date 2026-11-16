@@ -10,12 +10,13 @@ import {
   type ReactNode,
 } from "react"
 import { useAuth } from "@/contexts/AuthContext"
-import { db } from "@/lib/db"
 import {
   MERGE_COMPLETED_KEY,
   SELECTED_GROUP_KEY,
-  clearGuestData,
+  applyMergeOutcome,
   clearLoginScopedState,
+  discardPendingMerge,
+  loadGuestDataForMerge,
   ensureGuestDataMigrated,
   hasGuestDataToMerge,
 } from "@/lib/db/guestData"
@@ -24,6 +25,7 @@ import { MERGE_LIMITS } from "@/shared/schemas/sync"
 import { REQUEST_LIMITS, TEXT_LIMITS, clampQuantity, clipText } from "@/shared/schemas/limits"
 import { hasMergeData, splitMergeData } from "@/lib/merge/splitMergeData"
 import { applyTagIdMappings } from "@/lib/merge/applyTagIdMappings"
+import { buildMergeOutcome, collectFailedIds, emptyFailedIds } from "@/lib/merge/mergeOutcome"
 
 const clipNullable = (value: string | null | undefined, max: number) =>
   value == null ? null : clipText(value, max)
@@ -73,6 +75,8 @@ interface DataMergeContextValue {
   skippedCount: number
   /** 取り込めなかった件数の通知を閉じる */
   dismissSkipped: () => void
+  /** 取り込めなかったデータを破棄する（このアカウントの分を、ゲストの DB から消す） */
+  discardSkipped: () => Promise<void>
 }
 
 const DataMergeContext = createContext<DataMergeContextValue | null>(null)
@@ -126,6 +130,14 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     setSkippedCount(0)
   }, [user])
 
+  // 「破棄する」: このアカウントで取り込めずに残したデータを消す（何度送っても取り込めないものを、利用者が消せるように。#144）
+  const discardSkipped = useCallback(async () => {
+    if (!user) return
+    await discardPendingMerge(user.id)
+    localStorage.removeItem(`${MERGE_SKIPPED_KEY}-${user.id}`)
+    setSkippedCount(0)
+  }, [user])
+
   const executeMerge = useCallback(async () => {
     if (!user) return
 
@@ -150,14 +162,10 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     setError(null)
 
     try {
-      // IndexedDB からすべてのデータを取得
-      const [localItems, localTags, localLists, localListItems] =
-        await Promise.all([
-          db.items.toArray(),
-          db.tags.toArray(),
-          db.lists.toArray(),
-          db.listItems.toArray(),
-        ])
+      // 送るゲストのデータ: 通常のテーブルと、このアカウントで前回取り込めずに残したもの（pendingMerge）。
+      // ほかのアカウントの分は送らない（#144）
+      const guest = await loadGuestDataForMerge(user.id)
+      const { items: localItems, tags: localTags, lists: localLists, listItems: localListItems } = guest
 
       // 履歴はlistsのpurchasedAtが設定されているもの
       const localHistory = localLists.filter((list) => !!list.purchasedAt)
@@ -231,6 +239,8 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
           })
         : []
       let skipped = 0
+      // 取り込めなかったレコードの ID（ゲストの DB に残すもの。#144）
+      const failed = emptyFailedIds()
       // サーバーが付け替えたタグの ID（ほかのユーザーのタグと ID が重なった場合）。後から送る分に反映する
       const tagIdMap = new Map<string, string>()
       for (const [index, chunk] of chunks.entries()) {
@@ -240,19 +250,21 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
         }
         // 検証でスキップした件数と、レコード単位で取り込めなかった件数だけを数える
         skipped += result.mergeResult.notImportedCount
+        // notImported の位置は、このチャンクの配列での位置（付け替える前のチャンクと突き合わせる）
+        collectFailedIds(chunk, result.mergeResult, failed)
         console.log(`Data merge ${index + 1}/${chunks.length} completed:`, result.mergeResult)
       }
 
       // 最後の分まで成功してから、このログインの間は merge 済みにする（ゲストに戻ったら消える）
       localStorage.setItem(mergeKey, "true")
 
+      // 取り込めた分と取り込み済みの分はゲストの DB から消し、取り込めなかったものだけを、このアカウントの分として
+      // pendingMerge に移す（ゲストの画面には出さず、このアカウントの次の merge でだけ送り直す。#144）
+      await applyMergeOutcome(user.id, buildMergeOutcome(guest, failed))
+
       if (skipped > 0) {
-        // 取り込めなかったデータがあれば、リロード後に件数を通知する。
-        // ゲストのデータは全部残し、次のログインで送り直す（取り込み済みの分は「取り込み済み」になるだけ）
+        // 取り込めなかったデータがあれば、リロード後に件数を通知する（「破棄する」で消せる）
         localStorage.setItem(`${MERGE_SKIPPED_KEY}-${user.id}`, String(skipped))
-      } else {
-        // 全部取り込めたら、ゲストのデータを空にする（ログアウトしても、ログイン前のデータが見えないように）
-        await clearGuestData()
       }
 
       // マージされたアイテムが個人アイテム（groupId = undefined）を含む場合、
@@ -306,6 +318,7 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
         retryMerge,
         skippedCount,
         dismissSkipped,
+        discardSkipped,
       }}
     >
       {children}
