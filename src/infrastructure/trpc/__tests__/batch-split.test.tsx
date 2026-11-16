@@ -80,7 +80,7 @@ describe("tRPC クライアントのバッチ分割 (#72)", () => {
 
     await waitFor(() => expect(done).toHaveBeenCalledWith(25))
     expect(requested.reduce((sum, r) => sum + r.calls, 0)).toBe(25)
-    expect(Math.max(...requested.map((r) => r.calls))).toBeLessThanOrEqual(REQUEST_LIMITS.batchSize)
+    expect(Math.max(...requested.map((r) => r.calls))).toBeLessThanOrEqual(REQUEST_LIMITS.clientBatchSize)
     expect(requested.length).toBeGreaterThanOrEqual(3)
   })
 

@@ -47,8 +47,15 @@ export const REQUEST_LIMITS = {
   recordBytes: 16 * 1024,
   /** 招待トークンの長さ */
   inviteToken: 200,
-  /** tRPC の HTTP バッチ 1 回の呼び出し数（クライアントの httpBatchLink の maxItems と同じ） */
-  batchSize: 10,
+  /**
+   * サーバーが受け付ける tRPC の HTTP バッチ 1 回の呼び出し数。
+   * クライアント（clientBatchSize）より大きくして、maxItems を持たない古い JS が残っていても 400 にならない余裕を持たせる
+   */
+  batchSize: 20,
+  /** クライアントの httpBatchLink が 1 回にまとめる呼び出し数（maxItems） */
+  clientBatchSize: 10,
+  /** クライアントの GET のバッチの URL の長さ。超えたら POST に切り替わる（414 を避ける） */
+  clientMaxUrlLength: 2083,
   /** tRPC のリクエストボディの大きさ（バイト） */
   bodyBytes: 2 * 1024 * 1024,
   /**

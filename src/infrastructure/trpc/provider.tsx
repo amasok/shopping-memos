@@ -56,7 +56,8 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
           false: httpBatchLink({
             url: `${getBaseUrl()}/api/trpc`,
             // サーバーのバッチ件数の上限（#72）に合わせて分割する
-            maxItems: REQUEST_LIMITS.batchSize,
+            maxItems: REQUEST_LIMITS.clientBatchSize,
+            maxURLLength: REQUEST_LIMITS.clientMaxUrlLength,
             transformer: superjson,
           }),
         }),

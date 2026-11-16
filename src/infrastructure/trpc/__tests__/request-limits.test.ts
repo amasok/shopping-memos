@@ -112,6 +112,10 @@ describe("enforceRequestLimits", () => {
     expect("response" in result && result.response.status).toBe(413)
   })
 
+  it("サーバーのバッチ上限はクライアントの maxItems より大きい（古いクライアントとの互換）", () => {
+    expect(REQUEST_LIMITS.batchSize).toBeGreaterThan(REQUEST_LIMITS.clientBatchSize)
+  })
+
   it("既定の上限: 通常は 2MB、sync.merge 単独は 4MB（Vercel の 4.5MB より下）", () => {
     expect(REQUEST_LIMITS.bodyBytes).toBe(2 * 1024 * 1024)
     expect(REQUEST_LIMITS.mergeBodyBytes).toBe(4 * 1024 * 1024)
