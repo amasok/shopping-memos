@@ -42,7 +42,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "E2E_TEST=true npm run dev",
+    // CI は事前に npm run build 済みの本番ビルドで起動する（dev の初回コンパイル待ちによるタイムアウトを避ける）
+    command: process.env.CI
+      ? "E2E_TEST=true npm run start"
+      : "E2E_TEST=true npm run dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,

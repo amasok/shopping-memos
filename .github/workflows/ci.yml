@@ -144,6 +144,8 @@ jobs:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/shopping_memos_e2e"
       # E2E専用のダミー値（本番では使用しない）
       AUTH_SECRET: "e2e-ci-only-secret-not-for-production"
+      # next start（NODE_ENV=production）では Auth.js が localhost を信頼しないため明示する
+      AUTH_TRUST_HOST: "true"
 
     steps:
       - name: Checkout
@@ -160,6 +162,10 @@ jobs:
 
       - name: Run migrations (E2E DB)
         run: npm run db:migrate
+
+      # playwright.config.ts の webServer は CI では next start で起動するため、事前にビルドする
+      - name: Build
+        run: npm run build
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
