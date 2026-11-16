@@ -187,6 +187,7 @@
 | 1. 登録の停止 | 環境変数 `NEXT_PUBLIC_SW_ENABLED=false` で再デプロイする。`SerwistProvider` は SW を登録しない。代わりに `SWKillSwitch` コンポーネントが、既存の登録をすべて `unregister()` し、`sm-` / `serwist-` のキャッシュを削除する | 次に**ページを開いた端末**から解除される。ナビゲーションは NetworkFirst なので、オンラインならキャッシュではなく新しい HTML と JS が読まれ、解除のコードが動く | キャッシュの中身がおかしい、SW が想定外のリクエストを横取りする、など |
 | 2. 自己消去する SW | 環境変数 `SW_KILL_SWITCH=true` で再デプロイする。`/serwist/sw.js` の route handler が、通常の SW の代わりに**自己消去用の SW**（`src/app/sw-kill.ts`）を配信する。この SW は `install` で即 `skipWaiting()`、`activate` で全キャッシュの削除・`registration.unregister()`・開いているウィンドウの再読み込み（`client.navigate(client.url)`）を行う | ページの JS が動かなくても、ブラウザが SW の更新を確認した時点（ナビゲーション時、または 24 時間以内）で解除される | SW の不具合でページ自体が正しく読み込めない、段階 1 が効かない場合 |
 
+- **`skipWaiting` との関係（O1b で対応）**: プリキャッシュした URL（`/` など）は、runtimeCaching の NetworkFirst より前にプリキャッシュのルートが返す（cache-first）。段階 1 の `SWKillSwitch` を含む新しい HTML が届くのは、新しい SW が有効になってプリキャッシュが入れ替わった後になる。O1 は `skipWaiting: true` なので問題ないが、O1b で更新を利用者任意（`waiting` で止める）にすると、段階 1 が効かなくなる。**kill switch を有効にしたビルド（および `MIN_CLIENT_RELEASE` を下回るとき）だけは、利用者の操作を待たずに自動で `skipWaiting` する**。ナビゲーションが NetworkFirst でも、プリキャッシュ済みの URL は SW が入れ替わるまで古い HTML が返る点に注意する
 - 段階 2 のビルドは、O1 の時点で用意する。E2E（O-10）で「通常の SW → kill switch のビルドに切り替え → 登録が解除され、キャッシュが空になり、ページが通常どおり読める」ことを確認しておく
 - `Clear-Site-Data: "storage"` ヘッダは使わない。IndexedDB も消えるため、未送信の変更（outbox）が失われる
 - 問題が直ったら、環境変数を戻して再デプロイし、SW を再び有効にする

@@ -1,18 +1,19 @@
 import {
+  CacheableResponsePlugin,
   CacheFirst,
   ExpirationPlugin,
   NetworkFirst,
   NetworkOnly,
   StaleWhileRevalidate,
   type RuntimeCaching,
-} from "serwist"
-import { CACHE_NAMES } from "./config"
+} from "serwist";
+import { CACHE_NAMES } from "./config";
 
-const DAY = 24 * 60 * 60
+const DAY = 24 * 60 * 60;
 
 /** `/api/**` は allowlist 方式でキャッシュしない（認証・ユーザーデータを Cache Storage に残さない） */
 export function isApiRequest(url: URL): boolean {
-  return url.pathname === "/api" || url.pathname.startsWith("/api/")
+  return url.pathname === "/api" || url.pathname.startsWith("/api/");
 }
 
 export const runtimeCaching: RuntimeCaching[] = [
@@ -23,13 +24,13 @@ export const runtimeCaching: RuntimeCaching[] = [
   },
   {
     matcher: ({ request, url, sameOrigin }) =>
-      sameOrigin &&
-      request.headers.get("RSC") === "1" &&
-      !isApiRequest(url),
+      sameOrigin && request.headers.get("RSC") === "1" && !isApiRequest(url),
     handler: new NetworkFirst({
       cacheName: CACHE_NAMES.rsc,
       networkTimeoutSeconds: 3,
-      plugins: [new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 7 * DAY })],
+      plugins: [
+        new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 7 * DAY }),
+      ],
     }),
   },
   {
@@ -38,7 +39,9 @@ export const runtimeCaching: RuntimeCaching[] = [
     handler: new NetworkFirst({
       cacheName: CACHE_NAMES.pages,
       networkTimeoutSeconds: 3,
-      plugins: [new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 7 * DAY })],
+      plugins: [
+        new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 7 * DAY }),
+      ],
     }),
   },
   {
@@ -47,7 +50,10 @@ export const runtimeCaching: RuntimeCaching[] = [
       sameOrigin && request.destination === "image",
     handler: new StaleWhileRevalidate({
       cacheName: CACHE_NAMES.images,
-      plugins: [new ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 30 * DAY })],
+      plugins: [
+        new CacheableResponsePlugin({ statuses: [200] }),
+        new ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 30 * DAY }),
+      ],
     }),
   },
   {
@@ -55,7 +61,10 @@ export const runtimeCaching: RuntimeCaching[] = [
       sameOrigin && request.destination === "font",
     handler: new CacheFirst({
       cacheName: CACHE_NAMES.fonts,
-      plugins: [new ExpirationPlugin({ maxEntries: 10, maxAgeSeconds: 365 * DAY })],
+      plugins: [
+        new CacheableResponsePlugin({ statuses: [200] }),
+        new ExpirationPlugin({ maxEntries: 10, maxAgeSeconds: 365 * DAY }),
+      ],
     }),
   },
-]
+];
