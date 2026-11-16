@@ -55,6 +55,8 @@ export function buildReportOnlyCsp({ isDev }: Options): string {
     "frame-ancestors": ["'none'"],
     "object-src": ["'none'"],
     "base-uri": ["'self'"],
+    // Google ログインは next-auth/react の signIn（fetch のあと window.location で遷移）で、
+    // フォーム送信ではないため form-action の対象にならない。<form> で外部へ送る画面を作るときは見直す
     "form-action": ["'self'"],
   })
 }
