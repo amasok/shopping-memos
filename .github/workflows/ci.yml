@@ -100,12 +100,34 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
 
-  # E2Eテストは手動実行またはmainマージ時のみ
+  # E2Eテストは PR と main への push で実行
+  # ログイン済みテスト（e2e/auth）は実DBが必要なため Postgres サービスを起動する
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    needs: [build, migrate]
-    if: github.ref == 'refs/heads/main'
+    needs: build
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: shopping_memos_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/shopping_memos_e2e"
+      # E2E専用のダミー値（本番では使用しない）
+      AUTH_SECRET: "e2e-ci-only-secret-not-for-production"
 
     steps:
       - name: Checkout
@@ -120,13 +142,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run migrations (E2E DB)
+        run: npm run db:migrate
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
         run: npm run test:e2e
-        env:
-          DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
 
       - name: Upload E2E report
         uses: actions/upload-artifact@v4
