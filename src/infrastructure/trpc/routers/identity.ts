@@ -17,6 +17,15 @@ import {
   INVITE_LINK_EXPIRY_DAYS,
   INVITE_TOKEN_LENGTH,
 } from "@/modules/identity/domain/entities/InviteLink"
+import {
+  INVITE_CODE_ATTEMPT_WINDOW_MS,
+  INVITE_CODE_MAX_ATTEMPTS,
+  isInviteCodeExpired,
+} from "@/modules/identity/domain/entities/InviteCode"
+
+/** 招待コードで参加できないときの共通メッセージ */
+const INVALID_INVITE_CODE_MESSAGE =
+  "招待コードが無効か、有効期限が切れています。グループの管理者に確認してください"
 
 /**
  * 安全な招待トークンを生成
@@ -243,21 +252,28 @@ export const identityRouter = router({
   joinByInviteCode: protectedProcedure
     .input(joinByInviteCodeSchema)
     .mutation(async ({ input, ctx }) => {
-      // 招待コードでグループを検索
-      const group = await groupRepository.findByInviteCode(input.inviteCode)
-
-      if (!group) {
+      // 総当たり対策: 成否にかかわらず試行を記録し、上限を超えたら拒否する
+      const attempts = await groupRepository.recordInviteCodeAttempt(
+        ctx.userId,
+        INVITE_CODE_ATTEMPT_WINDOW_MS
+      )
+      if (attempts > INVITE_CODE_MAX_ATTEMPTS) {
         throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "招待コードが見つかりません",
+          code: "TOO_MANY_REQUESTS",
+          message: "試行回数が上限に達しました。しばらくしてからお試しください",
         })
       }
 
-      // 招待が無効化されている場合は参加不可
-      if (!group.inviteEnabled) {
+      // 招待コードでグループを検索
+      const group = await groupRepository.findByInviteCode(input.inviteCode)
+
+      // 見つからない・招待無効・期限切れは同じエラーにする（#107）。
+      // 区別できるとコードの存在有無を判定する手がかりになるため。
+      // オーナーにはグループ詳細の一時停止・期限切れ表示で案内する
+      if (!group || !group.inviteEnabled || isInviteCodeExpired(group.inviteCodeExpiresAt)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "現在招待を受け付けていません",
+          message: INVALID_INVITE_CODE_MESSAGE,
         })
       }
 

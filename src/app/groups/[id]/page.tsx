@@ -8,6 +8,7 @@ import { type GroupMember } from "@/lib/db"
 import { cn } from "@/lib/utils"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useGroup } from "@/hooks/data"
+import { isInviteCodeExpired } from "@/modules/identity/domain/entities/InviteCode"
 import {
   Check,
   Copy,
@@ -51,6 +52,18 @@ export default function GroupDetailPage() {
   const myMembership = members?.find((m) => m.userId === user?.id)
   const isOwner = myMembership?.role === "owner"
   const inviteEnabled = group?.inviteEnabled ?? true
+  // 招待コードの有効期限（サーバーのグループのみ。ゲストのローカルグループには無い）
+  const inviteCodeExpiresAt =
+    group && "inviteCodeExpiresAt" in group ? new Date(group.inviteCodeExpiresAt) : null
+  const isCodeExpired = inviteCodeExpiresAt ? isInviteCodeExpired(inviteCodeExpiresAt) : false
+  const expiryLabel = inviteCodeExpiresAt
+    ? inviteCodeExpiresAt.toLocaleString("ja-JP", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null
 
   // tRPC mutations
   const regenerateInviteCodeMutation = trpc.identity.regenerateInviteCode.useMutation({
@@ -77,6 +90,8 @@ export default function GroupDetailPage() {
 
   useEffect(() => {
     if (group) {
+      // group の読み込み後に編集欄の初期値を入れるため。TODO: key か派生 state に置き換える
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEditName(group.name)
     }
   }, [group])
@@ -126,7 +141,8 @@ export default function GroupDetailPage() {
 
   const handleShareInvite = async () => {
     if (!group?.inviteCode) return
-    const shareText = `「${group.name}」に参加しませんか？\n招待コード: ${group.inviteCode}`
+    const expiryText = expiryLabel ? `（${expiryLabel}まで有効）` : ""
+    const shareText = `「${group.name}」に参加しませんか？\n招待コード: ${group.inviteCode}${expiryText}`
     if (navigator.share) {
       try {
         await navigator.share({ text: shareText })
@@ -425,7 +441,7 @@ export default function GroupDetailPage() {
                     <button
                       type="button"
                       onClick={handleCopyInviteCode}
-                      disabled={!inviteEnabled}
+                      disabled={!inviteEnabled || isCodeExpired}
                       className={cn(
                         "flex h-9 w-9 items-center justify-center rounded-full",
                         "text-gray-500 hover:bg-gray-100 hover:text-gray-700",
@@ -456,11 +472,24 @@ export default function GroupDetailPage() {
                     </button>
                   </div>
                 </div>
-                <p className="text-sm text-gray-500">
-                  {inviteEnabled
-                    ? "このコードを共有して、家族をグループに招待しましょう"
-                    : "招待が一時停止中です"}
-                </p>
+                {!inviteEnabled ? (
+                  <p className="text-sm text-gray-500">招待が一時停止中です</p>
+                ) : isCodeExpired ? (
+                  <p className="text-sm text-red-600" data-testid="group-invite-expired">
+                    有効期限が切れています。再生成して新しいコードを共有してください
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-500">
+                      このコードを共有して、家族をグループに招待しましょう
+                    </p>
+                    {expiryLabel && (
+                      <p className="mt-1 text-xs text-gray-400" data-testid="group-invite-expiry">
+                        {expiryLabel}まで有効
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
             </section>
           )}
@@ -483,6 +512,15 @@ export default function GroupDetailPage() {
                 オーナーが招待を再開するまでお待ちください
               </p>
             </div>
+          ) : isCodeExpired ? (
+            <div className="rounded-lg bg-yellow-50 p-4 text-center">
+              <p className="text-sm font-medium text-yellow-800">
+                招待コードの有効期限が切れています
+              </p>
+              <p className="mt-1 text-sm text-yellow-600">
+                オーナーが招待コードを再生成すると、再び招待できます
+              </p>
+            </div>
           ) : (
             <>
               <div className="rounded-lg bg-gray-50 p-4 text-center">
@@ -490,6 +528,9 @@ export default function GroupDetailPage() {
                 <code className="text-3xl font-bold tracking-widest text-gray-900">
                   {group.inviteCode}
                 </code>
+                {expiryLabel && (
+                  <p className="mt-2 text-xs text-gray-400">{expiryLabel}まで有効</p>
+                )}
               </div>
               <p className="text-sm text-gray-600">
                 招待コードを共有して、家族やパートナーをグループに招待しましょう。
