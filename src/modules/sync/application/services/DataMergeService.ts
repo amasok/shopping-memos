@@ -240,13 +240,8 @@ export class DataMergeService {
         })
       })
 
-    /**
-     * ゲストのタグの ID が、ほかのユーザー（またはグループ）のタグと重なったときの扱い。
-     * 同じブラウザで別のアカウントが先に取り込んだ場合に起きる（ゲストの初期タグの ID はブラウザごとに 1 回だけ作られ、
-     * merge の後も IndexedDB に残るため）。失敗にせず、このユーザーの同じ名前の個人タグがあればそれにまとめ、
-     * なければ新しい ID で作る。どちらの場合も、アイテム・リストアイテムのタグの参照を付け替える
-     */
-    const remapForeignTag = async (tx: Tx, tag: LocalTag): Promise<boolean> => {
+    /** このユーザーの、同じ名前の個人タグ（またはマージ先グループのタグ）の ID */
+    const findOwnTagIdByName = async (tx: Tx, name: string): Promise<string | undefined> => {
       const [existing] = await tx
         .select({ id: tags.id })
         .from(tags)
@@ -254,24 +249,33 @@ export class DataMergeService {
           and(
             eq(tags.userId, userId),
             groupId ? eq(tags.groupId, groupId) : isNull(tags.groupId),
-            eq(tags.name, tag.name)
+            eq(tags.name, name)
           )
         )
         .limit(1)
-      let serverId = existing?.id
-      if (!serverId) {
-        const newId = crypto.randomUUID()
-        const created = await insertTag(tx, tag, newId)
-        if (!created.ok) {
-          logMergeFailure(`tag:${tag.id}（新しい ID での作成）`, created.error)
-          return false
-        }
-        mergedCounts.tags++
-        serverId = newId
-      }
-      tagIdMap.set(tag.id, serverId)
+      return existing?.id
+    }
+
+    /** ゲストのタグを、サーバーの別の ID のタグとして扱う（アイテム・リストアイテムの参照も付け替える） */
+    const mapTag = (localId: string, serverId: string) => {
+      tagIdMap.set(localId, serverId)
       mergedTagIds.add(serverId)
-      idMappings.push({ entity: "tag", localId: tag.id, serverId })
+      idMappings.push({ entity: "tag", localId, serverId })
+    }
+
+    /**
+     * ゲストのタグの ID が、ほかのユーザー（またはグループ）のタグと重なったときは、新しい ID で作る。
+     * 同じブラウザで別のアカウントが先に取り込んだ場合に起きる（ゲストのデータが IndexedDB に残っていたため）
+     */
+    const createTagWithNewId = async (tx: Tx, tag: LocalTag): Promise<boolean> => {
+      const newId = crypto.randomUUID()
+      const created = await insertTag(tx, tag, newId)
+      if (!created.ok) {
+        logMergeFailure(`tag:${tag.id}（新しい ID での作成）`, created.error)
+        return false
+      }
+      mergedCounts.tags++
+      mapTag(tag.id, newId)
       return true
     }
 
@@ -280,6 +284,19 @@ export class DataMergeService {
       await db.transaction(async (tx) => {
         // 1. タグをマージ（アイテムより先に）
         for (const tag of data.tags) {
+          // 同じ名前の自分のタグがあれば、新しく作らずにそれにまとめる。
+          // ゲストに戻るたびに初期タグ（食品など）が新しい ID で作られるので、ログインのたびに二重にならないようにする
+          const sameNameId = await findOwnTagIdByName(tx, tag.name)
+          if (sameNameId === tag.id) {
+            // 同じユーザーが取り込み済み（分割送信の再試行など）
+            alreadyMergedCount++
+            continue
+          }
+          if (sameNameId) {
+            mapTag(tag.id, sameNameId)
+            continue
+          }
+
           const result = await insertTag(tx, tag, tag.id)
           if (result.ok) {
             // ロールバックされた場合に残らないよう、成功してから記録する
@@ -295,7 +312,7 @@ export class DataMergeService {
           // ID がほかのユーザーのタグと重なった（主キーの重複で、その ID の行がある）なら、付け替える
           const isForeignId =
             result.error.code === "23505" && (await findEntityScope(tx, "tag", tag.id).catch(() => null)) !== null
-          if (isForeignId && (await remapForeignTag(tx, tag))) continue
+          if (isForeignId && (await createTagWithNewId(tx, tag))) continue
 
           await handleInsertFailure(tx, "tag", tag.id, `タグ "${tag.name}" のマージに失敗`, result.error)
         }

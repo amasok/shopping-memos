@@ -131,7 +131,7 @@ docs/features/              # 機能設計書（.claude/rules/feature-design.md 
 - `useDataSource()` が `useServer` / `useLocal` を返す。
   - 未ログイン: Dexie（IndexedDB）を読み書きする。
   - ログイン中かつマージ完了: tRPC 経由でサーバー（PostgreSQL）を使う。
-  - ログイン直後: `DataMergeContext` がローカルのデータをサーバーへマージし、完了までは Dexie を使う。
+  - ログイン直後: `DataMergeContext` がローカルのデータをサーバーへマージし、完了までは Dexie を使う。ログインのたびにゲストのデータがあれば送り、全部取り込めたら Dexie を空にする。ログアウトすると空のゲストに戻る（docs/features/offline-support.md「4b」）。
 - `src/hooks/data/*` のフックはこの判定で Dexie と tRPC を切り替えるので、ページ・コンポーネントはフック経由でデータにアクセスする。
 - グループ選択は `GroupContext`（`selectedGroupId`）。tRPC 側は `middleware/groupAuth.ts` でメンバーシップを検証する。
 - Dexie には `syncQueue` テーブルと `SyncEngine` / `SyncContext` があるが、現時点で Provider には組み込まれていない（#62 で対応中）。

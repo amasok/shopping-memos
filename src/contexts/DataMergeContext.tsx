@@ -11,6 +11,13 @@ import {
 } from "react"
 import { useAuth } from "@/contexts/AuthContext"
 import { db } from "@/lib/db"
+import {
+  MERGE_COMPLETED_KEY,
+  SELECTED_GROUP_KEY,
+  clearGuestData,
+  clearLoginScopedState,
+  hasGuestDataToMerge,
+} from "@/lib/db/guestData"
 import { trpc } from "@/infrastructure/trpc/client"
 import { MERGE_LIMITS } from "@/shared/schemas/sync"
 import { REQUEST_LIMITS, TEXT_LIMITS, clampQuantity, clipText } from "@/shared/schemas/limits"
@@ -20,10 +27,8 @@ import { applyTagIdMappings } from "@/lib/merge/applyTagIdMappings"
 const clipNullable = (value: string | null | undefined, max: number) =>
   value == null ? null : clipText(value, max)
 
-const MERGE_COMPLETED_KEY = "data-merge-completed"
 /** 取り込めなかった件数（リロードをまたいで表示するため localStorage に保存する） */
 const MERGE_SKIPPED_KEY = "data-merge-skipped"
-const SELECTED_GROUP_KEY = "selectedGroupId"
 /**
  * 1 回の sync.merge のボディの目安。サーバーの上限（sync.merge 単独で 4MB）より少し小さくして、
  * 見積もりの誤差があっても 413 にならないようにする（#116）
@@ -79,6 +84,9 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     if (!user) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- ユーザーログアウト時にリセットが必要
       setIsMergeCompleted(false)
+      // ゲストに戻った（ログアウト・セッション切れ）ら、ログイン中だけの状態を消す。
+      // 次にログインしたときに、ゲストのデータがあればもう一度 merge する
+      if (!isAuthLoading) clearLoginScopedState()
       return
     }
 
@@ -90,7 +98,7 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     // マージ後のリロードをまたいで、取り込めなかった件数を通知する
     const skipped = Number(localStorage.getItem(`${MERGE_SKIPPED_KEY}-${user.id}`) ?? 0)
     setSkippedCount(Number.isFinite(skipped) && skipped > 0 ? skipped : 0)
-  }, [user])
+  }, [user, isAuthLoading])
 
   const dismissSkipped = useCallback(() => {
     if (user) localStorage.removeItem(`${MERGE_SKIPPED_KEY}-${user.id}`)
@@ -125,12 +133,14 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
       // 履歴はlistsのpurchasedAtが設定されているもの
       const localHistory = localLists.filter((list) => !!list.purchasedAt)
 
-      // ローカルにデータがなければマージ不要
+      // 送るデータがなければマージ不要（初期タグだけのゲストも送らない）
       if (
-        localItems.length === 0 &&
-        localTags.length === 0 &&
-        localLists.length === 0 &&
-        localListItems.length === 0
+        !hasGuestDataToMerge({
+          tags: localTags,
+          items: localItems,
+          lists: localLists,
+          listItems: localListItems,
+        })
       ) {
         localStorage.setItem(mergeKey, "true")
         setIsMerging(false)
@@ -204,12 +214,16 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
         console.log(`Data merge ${index + 1}/${chunks.length} completed:`, result.mergeResult)
       }
 
-      // 最後の分まで成功してから、マージ完了をマーク
+      // 最後の分まで成功してから、このログインの間は merge 済みにする（ゲストに戻ったら消える）
       localStorage.setItem(mergeKey, "true")
 
-      // 取り込めなかったデータ（形式が不正など）があれば、リロード後に件数を通知する
       if (skipped > 0) {
+        // 取り込めなかったデータがあれば、リロード後に件数を通知する。
+        // ゲストのデータは全部残し、次のログインで送り直す（取り込み済みの分は「取り込み済み」になるだけ）
         localStorage.setItem(`${MERGE_SKIPPED_KEY}-${user.id}`, String(skipped))
+      } else {
+        // 全部取り込めたら、ゲストのデータを空にする（ログアウトしても、ログイン前のデータが見えないように）
+        await clearGuestData()
       }
 
       // マージされたアイテムが個人アイテム（groupId = undefined）を含む場合、

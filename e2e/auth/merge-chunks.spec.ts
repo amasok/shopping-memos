@@ -39,7 +39,8 @@ test.describe("sync.merge の分割送信 (#116)", () => {
       listId,
       itemName,
       first: {
-        tags: [{ id: tagId, name: "分割タグ", createdAt: now }],
+        // タグは同じ名前の自分のタグにまとめるので、テストごとに名前を変える
+        tags: [{ id: tagId, name: `分割タグ-${tagId.slice(0, 8)}`, createdAt: now }],
         items: [{ id: itemId, name: itemName, quantity: 1, tagIds: [tagId], createdAt: now }],
       },
       second: {

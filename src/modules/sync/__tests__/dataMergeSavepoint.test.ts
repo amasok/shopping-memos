@@ -411,3 +411,38 @@ describe("DataMergeService.merge: ゲストのタグの ID がほかのユーザ
     errorLog.mockRestore()
   })
 })
+
+describe("DataMergeService.merge: タグは同じ名前の自分のタグにまとめる", () => {
+  it("ID が重なっていなくても、同じ名前の個人タグがあれば新しく作らず、アイテムのタグもそれに付け替える", async () => {
+    owners.clear()
+    tagsByName.clear()
+    tagsByName.set("食品", "tag-mine")
+    const fake = createPgLikeDb([])
+    state.db = fake.db
+
+    const result = await new DataMergeService().merge("user-me", {
+      ...emptyData,
+      // ゲストに戻ったあとに作り直された初期タグ（新しい ID）
+      tags: [tag("tag-guest-new", "食品"), tag("tag-guest-2", "お気に入り")],
+      items: [item("item-1", "牛乳", ["tag-guest-new"])],
+    })
+
+    expect(result).toMatchObject({ failedCount: 0, errors: [], mergedCounts: { tags: 1, items: 1 } })
+    expect(result.idMappings).toEqual([{ entity: "tag", localId: "tag-guest-new", serverId: "tag-mine" }])
+    // 「食品」は作らず、「お気に入り」だけを作る
+    expect(fake.committed.filter((r) => r.table === "tags").map((r) => r.values.name)).toEqual(["お気に入り"])
+    expect(fake.committed.find((r) => r.table === "item_tags")?.values).toEqual({ itemId: "item-1", tagId: "tag-mine" })
+  })
+
+  it("同じ名前・同じ ID の自分のタグは、取り込み済みとして数える（付け替えない）", async () => {
+    owners.clear()
+    tagsByName.clear()
+    tagsByName.set("食品", "tag-done")
+    const fake = createPgLikeDb([{ table: "tags", id: "tag-done" }])
+    state.db = fake.db
+
+    const result = await new DataMergeService().merge("user-me", { ...emptyData, tags: [tag("tag-done", "食品")] })
+
+    expect(result).toMatchObject({ failedCount: 0, alreadyMergedCount: 1, idMappings: [] })
+  })
+})

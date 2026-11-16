@@ -24,6 +24,13 @@ vi.mock("@/infrastructure/trpc/client", () => ({
   trpc: { sync: { merge: { useMutation: () => ({ mutateAsync: state.mutateAsync }) } } },
 }))
 
+// merge の後にゲストのデータを消す処理は、この疑似 DB では呼び出しだけを記録する
+const guestData = vi.hoisted(() => ({ clearGuestData: vi.fn(async () => {}) }))
+vi.mock("@/lib/db/guestData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
+  clearGuestData: guestData.clearGuestData,
+}))
+
 import { DataMergeProvider } from "../DataMergeContext"
 import { syncMergeStrictInputSchema as syncMergeInputSchema } from "@/shared/schemas/sync"
 
@@ -53,7 +60,7 @@ beforeEach(() => {
 })
 
 describe("DataMergeContext が送る入力は、sync.merge のスキーマを満たす (#86)", () => {
-  it("初期状態（デフォルトタグだけ）のゲストデータを受け付ける", async () => {
+  it("初期タグ（デフォルトタグ）を含むゲストデータを受け付ける", async () => {
     // initializeDefaultTags が作るのと同じ形（Dexie には Date で入っている）
     state.tags = ["食品", "日用品", "エンタメ"].map((name) => ({
       id: uuid(),
@@ -61,7 +68,8 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
       createdAt: NOW,
       updatedAt: NOW,
     }))
-    state.items = []
+    // 初期タグだけのゲストは送らないので、アイテムを 1 件入れる
+    state.items = [{ id: uuid(), name: "牛乳", quantity: 1, tagIds: [], createdAt: NOW, updatedAt: NOW }]
     state.lists = []
     state.listItems = []
 
@@ -162,7 +170,7 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
   })
 
   it("取り込めなかったデータがあれば、リロードをまたいで通知できるよう件数を保存する", async () => {
-    state.tags = [{ id: uuid(), name: "食品", createdAt: NOW, updatedAt: NOW }]
+    state.tags = [{ id: uuid(), name: "お気に入り", createdAt: NOW, updatedAt: NOW }]
     state.items = []
     state.lists = []
     state.listItems = []
@@ -176,7 +184,7 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
   })
 
   it("取り込めなかったデータがなければ、件数を保存しない", async () => {
-    state.tags = [{ id: uuid(), name: "食品", createdAt: NOW, updatedAt: NOW }]
+    state.tags = [{ id: uuid(), name: "お気に入り", createdAt: NOW, updatedAt: NOW }]
     state.items = []
     state.lists = []
     state.listItems = []
