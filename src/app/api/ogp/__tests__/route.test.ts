@@ -488,3 +488,80 @@ describe("GET /api/ogp: 画像ファイルを直接指す URL (#140)", () => {
     }
   )
 })
+
+describe("GET /api/ogp: UTF-8 以外の文字コード (#105)", () => {
+  // 「日本語の商品」の Shift_JIS と EUC-JP のバイト列（Node には SJIS のエンコーダがないので直接書く）
+  const SJIS = Buffer.from("93fa967b8cea82cc8fa49569", "hex")
+  const EUCJP = Buffer.from("c6fccbdcb8eca4cebea6c9ca", "hex")
+  const TITLE = "日本語の商品"
+
+  /** <head> の中に og:title を置いた HTML（title だけを指定の文字コードのバイト列にする） */
+  function html(titleBytes: Buffer, head = "") {
+    return Buffer.concat([
+      Buffer.from(`<html><head>${head}<meta property="og:title" content="`),
+      titleBytes,
+      Buffer.from(`"></head><body></body></html>`),
+    ])
+  }
+
+  function bytesResponse(body: Buffer, contentType: string, extra: Record<string, string> = {}) {
+    return Object.assign(Readable.from([body]), {
+      statusCode: 200,
+      headers: { "content-type": contentType, ...extra },
+    })
+  }
+
+  async function titleOf(body: Buffer, contentType: string, extra: Record<string, string> = {}) {
+    mockFetch.mockResolvedValueOnce(bytesResponse(body, contentType, extra))
+    const res = await GET(makeRequest("https://example.co.jp/"))
+    expect(res.status).toBe(200)
+    return (await res.json()).title as string
+  }
+
+  beforeEach(() => {
+    mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
+  })
+
+  it.each([
+    ["text/html; charset=Shift_JIS", SJIS],
+    ["text/html; charset=\"shift_jis\"", SJIS],
+    ["text/html;charset=windows-31j", SJIS],
+    ["text/html; charset=EUC-JP", EUCJP],
+  ])("Content-Type の charset（%s）でデコードする", async (contentType, bytes) => {
+    expect(await titleOf(html(bytes), contentType)).toBe(TITLE)
+  })
+
+  it.each([
+    ['<meta charset="Shift_JIS">', SJIS],
+    ["<meta charset=shift_jis>", SJIS],
+    ['<meta http-equiv="Content-Type" content="text/html; charset=EUC-JP">', EUCJP],
+    ['<META HTTP-EQUIV="content-type" CONTENT="text/html;charset=x-sjis">', SJIS],
+  ])("Content-Type に charset がなければ、<meta>（%s）でデコードする", async (meta, bytes) => {
+    expect(await titleOf(html(bytes, meta), "text/html")).toBe(TITLE)
+  })
+
+  it("Content-Type の charset を <meta> より優先する", async () => {
+    expect(await titleOf(html(SJIS, '<meta charset="utf-8">'), "text/html; charset=Shift_JIS")).toBe(TITLE)
+  })
+
+  it("UTF-8 の BOM があれば、charset の指定より優先して UTF-8 にする", async () => {
+    const body = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), html(Buffer.from(TITLE))])
+    expect(await titleOf(body, "text/html; charset=Shift_JIS")).toBe(TITLE)
+  })
+
+  it.each([["text/html; charset=no-such-encoding"], ["text/html"]])(
+    "指定がない・未知の文字コード（%s）は UTF-8 として読む",
+    async (contentType) => {
+      expect(await titleOf(html(Buffer.from(TITLE)), contentType)).toBe(TITLE)
+    }
+  )
+
+  it("<meta> の utf-16 は UTF-8 として読む（HTML の仕様どおり。ASCII 互換のバイト列から見つけた指定なので）", async () => {
+    expect(await titleOf(html(Buffer.from(TITLE), '<meta charset="utf-16">'), "text/html")).toBe(TITLE)
+  })
+
+  it("gzip で圧縮された Shift_JIS も、展開してからデコードする", async () => {
+    const body = zlib.gzipSync(html(SJIS, '<meta charset="Shift_JIS">'))
+    expect(await titleOf(body, "text/html", { "content-encoding": "gzip" })).toBe(TITLE)
+  })
+})

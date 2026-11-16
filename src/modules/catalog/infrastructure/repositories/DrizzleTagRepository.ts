@@ -1,6 +1,7 @@
 import { eq, and, sql, isNull } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
-import { tags, itemTags, groupMembers } from "@/infrastructure/db/drizzle/schema"
+import { canAccessScope } from "@/infrastructure/db/ownership"
+import { tags, itemTags } from "@/infrastructure/db/drizzle/schema"
 import type { TagRepository } from "../../domain/repositories/TagRepository"
 import type {
   Tag,
@@ -110,23 +111,8 @@ export class DrizzleTagRepository implements TagRepository {
       return false
     }
 
-    // グループなしのタグは作成者のみアクセス可能
-    if (!tag.groupId) {
-      return tag.userId === userId
-    }
-
-    // グループメンバーか確認
-    const membership = await db
-      .select({ id: groupMembers.id })
-      .from(groupMembers)
-      .where(
-        and(
-          eq(groupMembers.groupId, tag.groupId),
-          eq(groupMembers.userId, userId)
-        )
-      )
-
-    return membership.length > 0
+    // グループのタグはメンバー、個人のタグは作成者だけ（共通の判定。#101）
+    return canAccessScope(db, tag, userId)
   }
 }
 

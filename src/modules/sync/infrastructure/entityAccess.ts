@@ -1,49 +1,11 @@
-import { and, eq } from "drizzle-orm"
-import type { DrizzleDB } from "@/infrastructure/db/drizzle/client"
-import {
-  items,
-  tags,
-  shoppingLists,
-  listItems,
-  groupMembers,
-} from "@/infrastructure/db/drizzle/schema"
+import { eq } from "drizzle-orm"
+import { items, tags, shoppingLists, listItems } from "@/infrastructure/db/drizzle/schema"
+import { canAccessScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
 import type { SyncEntity, EntityAccess } from "../domain/entities/SyncOperation"
 
-/**
- * DB実行コンテキスト（db 本体またはトランザクション）
- */
-export type DbExecutor = DrizzleDB | Parameters<Parameters<DrizzleDB["transaction"]>[0]>[0]
-
-/**
- * データの所有スコープ
- * - groupId あり: グループのデータ（メンバーのみアクセス可）
- * - groupId なし: userId（作成者）の個人データ
- */
-export interface OwnerScope {
-  userId: string | null
-  groupId: string | null
-}
-
-/**
- * スコープにユーザーがアクセスできるか判定する
- */
-export async function canAccessScope(
-  executor: DbExecutor,
-  scope: OwnerScope,
-  userId: string
-): Promise<boolean> {
-  if (!scope.groupId) {
-    return scope.userId !== null && scope.userId === userId
-  }
-
-  const membership = await executor
-    .select({ id: groupMembers.id })
-    .from(groupMembers)
-    .where(and(eq(groupMembers.groupId, scope.groupId), eq(groupMembers.userId, userId)))
-    .limit(1)
-
-  return membership.length > 0
-}
+// 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
+// 既存の import のために再エクスポートする
+export { canAccessScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
 
 /**
  * エンティティの所有スコープを取得する
