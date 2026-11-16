@@ -307,6 +307,13 @@ describe("develop 用 DB のマイグレーション（migrate-develop ジョブ
       expect(exec(`${DEV}&options=@ep-cool-name-123.ap-southeast-1.aws.neon.tech/neondb`, PROD).status).toBe(0)
     })
 
+    it.each([["末尾の改行", `${PROD.replace("?sslmode=require", "")}\n`], ["前後の空白", `  ${PROD.replace("?sslmode=require", "")}  `]])(
+      "secret に紛れた空白（%s）は無視する（本番を指していれば止まる）",
+      (_label, develop) => {
+        expect(exec(develop, PROD).status).toBe(1)
+      }
+    )
+
     it("DB 名の末尾の / は無視する（本番を指していれば止まる）", () => {
       expect(exec(PROD.replace("/neondb?", "/neondb/?"), PROD).status).toBe(1)
     })
