@@ -334,6 +334,14 @@ describe("CI の起動条件（Actions の使用量削減）", () => {
     expect(trigger?.paths?.length ?? 0).toBeGreaterThan(0)
   })
 
+  it("ルート直下の .md も明示して除外する（`**/` がディレクトリ 0 個に一致するかに頼らない）", () => {
+    const paths = workflow.on.push?.paths ?? []
+    expect(paths).toContain("!*.md")
+    // AGENTS.md・CLAUDE.md を戻す行は、除外の行より後に置く
+    expect(paths.indexOf("AGENTS.md")).toBeGreaterThan(paths.indexOf("!*.md"))
+    expect(paths.indexOf("CLAUDE.md")).toBeGreaterThan(paths.indexOf("!*.md"))
+  })
+
   it.each([
     ["docs/features/sharing.md", false],
     ["docs/ogp-link-preview.md", false],

@@ -3,6 +3,7 @@ name: CI
 # ドキュメントだけの変更では動かさない（Actions の使用量削減）。
 # paths-ignore では例外を書けないため、paths と否定パターンで書く（後に書いたパターンほど優先）。
 # AGENTS.md と CLAUDE.md は #122 の検査（repo-invariants.test.ts）の対象なので、除外したあとで戻す。
+# "!*.md" はルート直下の .md 用（"**/" がディレクトリ 0 個に一致しない場合に備える）。
 # push と pull_request の paths は同じにする（ci-workflow.test.ts で検査）
 on:
   push:
@@ -11,6 +12,7 @@ on:
       - "**"
       - "!docs/**"
       - "!**/*.md"
+      - "!*.md"
       - "!.claude/**"
       - "AGENTS.md"
       - "CLAUDE.md"
@@ -21,6 +23,7 @@ on:
       - "**"
       - "!docs/**"
       - "!**/*.md"
+      - "!*.md"
       - "!.claude/**"
       - "AGENTS.md"
       - "CLAUDE.md"
