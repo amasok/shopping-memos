@@ -12,7 +12,7 @@ import { describe, it, expect } from "vitest"
  * main の CI が失敗し続けていた。同じ問題の再発を防ぐ。
  */
 
-type Step = { name?: string; run?: string }
+type Step = { name?: string; run?: string; env?: Record<string, string> }
 type Job = {
   "runs-on"?: string
   needs?: string | string[]
@@ -85,7 +85,38 @@ describe("CI ワークフローの E2E ジョブ", () => {
     )
     expect(config).toContain("process.env.CI")
     expect(config).toContain("E2E_TEST=true npm run start")
-    expect(config).toContain("E2E_TEST=true npm run dev")
+    expect(config).toContain("E2E_BUILD=true E2E_TEST=true npm run dev")
+  })
+
+  it("E2E 用のビルドは E2E_BUILD=true で作成する（E2E 専用ルートを含める。#70）", () => {
+    const build = e2e.steps[stepIndex("npm run build")]
+    expect(build.env?.E2E_BUILD ?? "").toBe("true")
+  })
+
+  it("通常の Build ジョブは E2E_BUILD を設定しない（本番相当のビルドに E2E 専用ルートを含めない）", () => {
+    const build = workflow.jobs.build
+    expect(build.env?.E2E_BUILD).toBeUndefined()
+    for (const step of build.steps) {
+      expect(step.env?.E2E_BUILD).toBeUndefined()
+      expect(step.run ?? "").not.toContain("E2E_BUILD")
+    }
+  })
+
+  it("E2E 実行前に x-e2e-token 用の E2E_SEED_TOKEN をランダムに生成する", () => {
+    const token = e2e.steps.findIndex((s) => s.run?.includes("E2E_SEED_TOKEN="))
+    expect(token).toBeGreaterThanOrEqual(0)
+    expect(e2e.steps[token].run).toContain("openssl rand")
+    expect(token).toBeLessThan(stepIndex("test:e2e"))
+    // 固定値をワークフローに書かない
+    expect(e2e.env?.E2E_SEED_TOKEN).toBeUndefined()
+  })
+
+  it("playwright.config.ts は E2E_SEED_TOKEN が未設定ならランダムに生成する", () => {
+    const config = readFileSync(
+      path.resolve(__dirname, "../../playwright.config.ts"),
+      "utf-8"
+    )
+    expect(config).toContain("process.env.E2E_SEED_TOKEN ||= randomBytes(32)")
   })
 
   it("通常の E2E の後に offline プロジェクトを E2E_OFFLINE=true で実行する", () => {

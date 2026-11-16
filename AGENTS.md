@@ -53,7 +53,7 @@ npm run db:reset              # ローカル DB の public スキーマを作り
 npm test                      # Vitest（watch）
 npm run test:run              # Vitest 1回実行
 npm run test:coverage         # カバレッジ付き
-npm run test:e2e              # Playwright（E2E_TEST=true で dev サーバーを自動起動）
+npm run test:e2e              # Playwright（E2E_BUILD=true E2E_TEST=true で dev サーバーを自動起動。E2E_SEED_TOKEN は自動生成）
 npm run test:e2e:ui           # Playwright UI モード
 
 # Docker
@@ -82,7 +82,7 @@ src/
 │       ├── auth/[...nextauth]/  # NextAuth
 │       ├── trpc/[trpc]/         # tRPC エンドポイント
 │       ├── ogp/                 # OGP 取得
-│       └── e2e/seed/            # E2E 用シード（E2E_TEST=true のときのみ有効）
+│       └── e2e/seed/            # E2E 用シード（route.e2e.ts。E2E_BUILD のビルドだけに含まれ、E2E_TEST・VERCEL_ENV・x-e2e-token で守る）
 ├── modules/                # 境界づけられたコンテキスト（ADR 002）。DDD の層構成
 │   ├── catalog/            # アイテム・タグ
 │   ├── identity/           # グループ・メンバー・招待リンク
