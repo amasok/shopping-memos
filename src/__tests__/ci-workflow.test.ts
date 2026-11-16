@@ -163,6 +163,12 @@ describe("SW ライフサイクル E2E のワークフロー（sw-e2e.yml）", (
       "src/components/pwa/**",
       "src/app/serwist/**",
       "next.config.ts",
+      "package.json",
+      "package-lock.json",
+      "playwright.config.ts",
+      "src/hooks/useServiceWorkerUpdate.ts",
+      "src/app/api/version/**",
+      "src/app/layout.tsx",
     ]) {
       expect(paths).toContain(p)
     }
