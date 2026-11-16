@@ -299,6 +299,18 @@ describe("develop 用 DB のマイグレーション（migrate-develop ジョブ
       }
     })
 
+    it("クエリの値に @ が入っていても、host を取り違えない（本番を指していれば止まる）", () => {
+      expect(exec(`${PROD}&options=@ep-other-name-456.ap-southeast-1.aws.neon.tech/neondb`, PROD).status).toBe(1)
+    })
+
+    it("クエリの値に @ と本番の host が入っていても、別の DB なら通る", () => {
+      expect(exec(`${DEV}&options=@ep-cool-name-123.ap-southeast-1.aws.neon.tech/neondb`, PROD).status).toBe(0)
+    })
+
+    it("DB 名の末尾の / は無視する（本番を指していれば止まる）", () => {
+      expect(exec(PROD.replace("/neondb?", "/neondb/?"), PROD).status).toBe(1)
+    })
+
     it("同じ host でも DB 名が違えば通る", () => {
       expect(exec(PROD.replace("/neondb?", "/develop?"), PROD).status).toBe(0)
     })

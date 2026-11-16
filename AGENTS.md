@@ -78,9 +78,11 @@ CI（`.github/workflows/ci.yml`）は、PR と main への push で lint・typec
 | secret | 中身 | 使う job |
 |--------|------|----------|
 | `NEON_DATABASE_URL` | 本番の DB（Neon の本番ブランチ） | `migrate`（main への push） |
-| `DEVELOP_DATABASE_URL` | Neon の develop ブランチの接続文字列 | `migrate-develop`（develop への push） |
+| `DEVELOP_DATABASE_URL` | Neon の console で develop ブランチを選び、Connect から取った接続文字列（pooling オフ） | `migrate-develop`（develop への push） |
 
-- Vercel の環境変数 `DATABASE_URL` は Production と Preview で共通の本番の値なので、`DEVELOP_DATABASE_URL` には使わない（コピーすると、develop の migration が本番に当たる）
+- Preview（develop のデプロイ）は、Neon の develop ブランチにつながっている（実測。develop ブランチに migrate すると Preview のエラーが消えた）
+- Vercel の画面の `DATABASE_URL` は Production と Preview で共通の 1 つで、値は本番なので、`DEVELOP_DATABASE_URL` には使わない（コピーすると、develop の migration が本番に当たる）
+- Preview が develop ブランチにつながる仕組みは未確認。Neon の Vercel 連携が、git ブランチ develop 向けの値を別に入れていると推測している
 - `migrate-develop` は、`DEVELOP_DATABASE_URL` が本番と同じ DB（host と DB 名）を指していたら止まる（#139）
 
 ## アーキテクチャ
