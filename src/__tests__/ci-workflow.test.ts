@@ -12,12 +12,14 @@ import { describe, it, expect } from "vitest"
  * main の CI が失敗し続けていた。同じ問題の再発を防ぐ。
  */
 
-type Step = { name?: string; run?: string; env?: Record<string, string> }
+type Step = { name?: string; run?: string; uses?: string; if?: string; env?: Record<string, string> }
 type Job = {
   "runs-on"?: string
   needs?: string | string[]
   if?: string
   "timeout-minutes"?: number
+  environment?: string
+  concurrency?: { group?: string; "cancel-in-progress"?: string | boolean }
   services?: Record<string, { image?: string; env?: Record<string, string> }>
   env?: Record<string, string>
   steps: Step[]
@@ -151,6 +153,36 @@ describe("CI ワークフローの E2E ジョブ", () => {
 
   it("ジョブにタイムアウトが設定されている", () => {
     expect(e2e["timeout-minutes"]).toBeGreaterThan(0)
+  })
+})
+
+describe("本番DBマイグレーション（migrate ジョブ）(#94)", () => {
+  const migrate = workflow.jobs.migrate
+  const migrateStep = () => migrate.steps.find((s) => s.run?.includes("db:migrate"))
+
+  it("main への push だけで、production 環境のシークレットを使って実行する", () => {
+    expect(migrate.if).toBe("github.ref == 'refs/heads/main'")
+    expect(migrate.environment).toBe("production")
+    expect(migrateStep()?.env?.DATABASE_URL).toBe("${{ secrets.NEON_DATABASE_URL }}")
+  })
+
+  it("本番DBへの migrate は、job 単位の concurrency で常に 1 本ずつ実行し、実行中のものは取り消さない", () => {
+    expect(migrate.concurrency?.group).toBe("migrate-production")
+    // github.ref や github.sha を含めると、commit・ブランチごとに別 group になり直列にならない
+    expect(migrate.concurrency?.group).not.toContain("${{")
+    expect(migrate.concurrency?.["cancel-in-progress"]).toBe(false)
+  })
+
+  it("変更の有無（paths-filter）で判定せず、毎回 db:migrate を実行する（取り消された実行の分も次で適用される）", () => {
+    expect(migrate.steps.some((s) => s.uses?.startsWith("dorny/paths-filter"))).toBe(false)
+    const step = migrateStep()
+    expect(step).toBeDefined()
+    expect(step?.if).toBeUndefined()
+    for (const s of migrate.steps) expect(s.if ?? "").not.toContain("steps.changes")
+  })
+
+  it("ビルドが通ってから実行する", () => {
+    expect([migrate.needs ?? []].flat()).toContain("build")
   })
 })
 
