@@ -140,7 +140,15 @@ describe("同期スキーマ", () => {
   describe("syncMergeInputSchema", () => {
     const validInput = {
       data: {
-        items: [{ id: "item-1", name: "テスト" }],
+        items: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            name: "テスト",
+            quantity: 1,
+            tagIds: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
         tags: [],
         lists: [],
         listItems: [],

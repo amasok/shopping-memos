@@ -89,10 +89,28 @@ describe("Sync API スキーマテスト", () => {
       const input = {
         data: {
           items: [
-            { id: "item-1", name: "アイテム1" },
-            { id: "item-2", name: "アイテム2" },
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              name: "アイテム1",
+              quantity: 1,
+              tagIds: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+            {
+              id: "22222222-2222-4222-8222-222222222222",
+              name: "アイテム2",
+              quantity: 2,
+              tagIds: [],
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
           ],
-          tags: [{ id: "tag-1", name: "タグ1" }],
+          tags: [
+            {
+              id: "33333333-3333-4333-8333-333333333333",
+              name: "タグ1",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
           lists: [],
           listItems: [],
           history: [],

@@ -103,13 +103,77 @@ export type SyncPullOutput = z.infer<typeof syncPullOutputSchema>
 /**
  * 初回ログイン時のマージリクエスト
  */
+/** マージ入力の上限（巨大なペイロードで DB の容量や処理時間を消費されないようにする） */
+export const MERGE_LIMITS = {
+  items: 1000,
+  tags: 500,
+  lists: 500,
+  listItems: 1000,
+  history: 500,
+  tagIdsPerEntity: 50,
+  quantityMax: 9999,
+} as const
+
+// 日付は ISO 文字列（または Date）。Invalid Date は拒否する。null / undefined は coerce せずにそのまま通す
+const mergeDate = z.coerce.date()
+const mergeId = z.string().uuid()
+const mergeTagIds = z.array(mergeId).max(MERGE_LIMITS.tagIdsPerEntity)
+const mergeQuantity = z.number().int().min(1).max(MERGE_LIMITS.quantityMax)
+const mergeMemo = z.string().max(500).nullish()
+
+// 文字数の上限は、各エンティティの作成スキーマ（item / tag / list）に合わせる。
+// 未知のキーは取り除かれる（クライアントが余分な項目を送っても受け付ける）
+export const mergeItemSchema = z.object({
+  id: mergeId,
+  name: z.string().min(1).max(100),
+  quantity: mergeQuantity,
+  memo: mergeMemo,
+  tagIds: mergeTagIds,
+  purchasedAt: mergeDate.nullish(),
+  createdAt: mergeDate,
+})
+
+export const mergeTagSchema = z.object({
+  id: mergeId,
+  name: z.string().min(1).max(50),
+  createdAt: mergeDate,
+})
+
+export const mergeListSchema = z.object({
+  id: mergeId,
+  name: z.string().min(1).max(100),
+  status: z.enum(["in_progress", "completed"]),
+  createdAt: mergeDate,
+  completedAt: mergeDate.nullish(),
+  purchasedAt: mergeDate.nullish(),
+  location: z.string().max(100).nullish(),
+})
+
+export const mergeListItemSchema = z.object({
+  id: mergeId,
+  listId: mergeId,
+  name: z.string().min(1).max(100),
+  quantity: mergeQuantity,
+  memo: mergeMemo,
+  tagIds: mergeTagIds,
+  checked: z.boolean(),
+  createdAt: mergeDate,
+})
+
+export const mergeHistorySchema = z.object({
+  id: mergeId,
+  listId: mergeId,
+  location: z.string().max(100).nullish(),
+  purchasedAt: mergeDate,
+})
+
 export const syncMergeInputSchema = z.object({
   data: z.object({
-    items: z.array(z.record(z.string(), z.unknown())),
-    tags: z.array(z.record(z.string(), z.unknown())),
-    lists: z.array(z.record(z.string(), z.unknown())),
-    listItems: z.array(z.record(z.string(), z.unknown())),
-    history: z.array(z.record(z.string(), z.unknown())),
+    items: z.array(mergeItemSchema).max(MERGE_LIMITS.items),
+    tags: z.array(mergeTagSchema).max(MERGE_LIMITS.tags),
+    lists: z.array(mergeListSchema).max(MERGE_LIMITS.lists),
+    listItems: z.array(mergeListItemSchema).max(MERGE_LIMITS.listItems),
+    history: z.array(mergeHistorySchema).max(MERGE_LIMITS.history),
   }),
 })
 
