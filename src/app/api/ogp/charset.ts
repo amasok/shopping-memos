@@ -13,7 +13,9 @@
 /** <meta> を探す範囲。HTML の仕様は 1024 バイトだが、<head> の前に長いコメントなどがあるページのために少し広くする */
 const META_PRESCAN_BYTES = 4096
 
-const CHARSET_IN_VALUE = /charset\s*=\s*["']?\s*([A-Za-z0-9_:.-]+)/i
+// 引用符の前後の空白を 1 つの \s* だけが取るようにする。`\s*["']?\s*` だと、引用符がないときに 2 つの \s* が
+// 同じ空白を取り合い、空白が長く続くと二乗の時間になる（Content-Type は取得先が自由に返せる。#105 のレビュー）
+const CHARSET_IN_VALUE = /charset\s*=\s*(?:["']\s*)?([A-Za-z0-9_:.-]+)/i
 
 export function charsetFromContentType(contentType: string): string | null {
   return CHARSET_IN_VALUE.exec(contentType)?.[1] ?? null

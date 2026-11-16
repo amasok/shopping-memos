@@ -11,8 +11,18 @@ describe("charsetFromContentType (#105)", () => {
     ["text/html; CHARSET = 'windows-31j'", "windows-31j"],
     ["text/html", null],
     ["text/html; charset=", null],
+    ["text/html; charset=\" shift_jis\"", "shift_jis"],
   ])("%j → %j", (value, expected) => {
     expect(charsetFromContentType(value)).toBe(expected)
+  })
+
+  it("charset= の後に空白が長く続いても、すぐ返る（二乗の時間にならない）", () => {
+    // Node のヘッダの上限（16KB）いっぱいの空白
+    const value = `text/html; charset=${" ".repeat(16000)}!`
+    const start = performance.now()
+    expect(charsetFromContentType(value)).toBeNull()
+    expect(charsetFromMeta(Buffer.from(`<meta http-equiv="Content-Type" content="text/html; charset=${" ".repeat(4000)}!">`, "latin1"))).toBeNull()
+    expect(performance.now() - start).toBeLessThan(50)
   })
 })
 
