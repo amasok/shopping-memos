@@ -21,6 +21,11 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching,
+  // プリキャッシュの HTML にユーザー固有のデータは入らない。クエリ（/lists/detail?id=…、/lists/new?groupId=…）が違っても
+  // 同じシェルを返す。既定の utm_ / fbclid も維持する
+  precacheOptions: {
+    ignoreURLParametersMatching: [/^utm_/, /^fbclid$/, /^id$/, /^groupId$/],
+  },
   fallbacks: {
     entries: [
       {

@@ -6,14 +6,14 @@ import {
   NetworkOnly,
   StaleWhileRevalidate,
   type RuntimeCaching,
-} from "serwist";
-import { CACHE_NAMES } from "./config";
+} from "serwist"
+import { CACHE_NAMES } from "./config"
 
-const DAY = 24 * 60 * 60;
+const DAY = 24 * 60 * 60
 
 /** `/api/**` は allowlist 方式でキャッシュしない（認証・ユーザーデータを Cache Storage に残さない） */
 export function isApiRequest(url: URL): boolean {
-  return url.pathname === "/api" || url.pathname.startsWith("/api/");
+  return url.pathname === "/api" || url.pathname.startsWith("/api/")
 }
 
 export const runtimeCaching: RuntimeCaching[] = [
@@ -67,4 +67,4 @@ export const runtimeCaching: RuntimeCaching[] = [
       ],
     }),
   },
-];
+]

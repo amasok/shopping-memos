@@ -1,5 +1,6 @@
 "use client"
 
+import { listDetailHref } from "@/lib/routes"
 import { GroupSelector } from "@/components/features/groups/GroupSelector"
 import { ItemSelector } from "@/components/features/items/ItemSelector"
 import { AppLayout } from "@/components/layouts/AppLayout"
@@ -74,7 +75,7 @@ function NewListPageContent() {
       )
     }
 
-    router.push(`/lists/${list?.id}`)
+    router.push(listDetailHref(list?.id ?? ""))
   }
 
   if (isLoading) {

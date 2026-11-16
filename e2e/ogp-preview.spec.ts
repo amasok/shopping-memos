@@ -118,7 +118,7 @@ test.describe("OGPプレビュー", () => {
     await seedTable(page, "lists", [list])
     await seedTable(page, "listItems", [listItem])
 
-    await page.goto(`/lists/${list.id}`)
+    await page.goto(`/lists/detail?id=${list.id}`)
 
     // OGPプレビューカードが表示される
     const card = page.locator("[data-testid='ogp-preview']")

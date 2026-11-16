@@ -86,7 +86,10 @@ test.describe("Service Worker (O1)", () => {
   test("O-14（簡易）: 最低リリース番号を上回るとき、強制更新のモーダルが出る", async ({ page }) => {
     await page.route("**/api/version", (route) =>
       route.fulfill({
-        json: { buildTime: 1, minClientRelease: Number.MAX_SAFE_INTEGER },
+        json: {
+          buildTime: Number.MAX_SAFE_INTEGER,
+          minClientRelease: Number.MAX_SAFE_INTEGER,
+        },
       })
     )
     await page.goto("/")
@@ -97,5 +100,19 @@ test.describe("Service Worker (O1)", () => {
     await waitForControl(page)
     await expect(page.getByTestId("update-available-toast")).toHaveCount(0)
     await expect(page.getByTestId("force-update-modal")).toHaveCount(0)
+  })
+
+  test("O2: 旧 URL /lists/<id> は /lists/detail?id=<id> にリダイレクトされる", async ({ page }) => {
+    await page.goto("/lists/legacy-id")
+    await expect(page).toHaveURL(/\/lists\/detail\?id=legacy-id$/)
+  })
+
+  test("O2: 未訪問のリスト詳細（/lists/detail?id=…）もオフラインで開ける（/~offline にならない）", async ({ page, context }) => {
+    await waitForControl(page)
+    await context.setOffline(true)
+    await page.goto("/lists/detail?id=never-visited-list")
+    await expect(page.getByText("オフラインです")).toHaveCount(0)
+    await expect(page).toHaveURL(/\/lists\/detail\?id=never-visited-list/)
+    await expect(page.locator("body")).not.toBeEmpty()
   })
 })
