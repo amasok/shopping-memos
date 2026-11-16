@@ -37,6 +37,27 @@ const URL_ERROR_MESSAGES: Record<UrlValidationError, string> = {
   credentials_not_allowed: "URLs with credentials are not allowed",
 }
 
+const CACHE_CONTROL = "public, max-age=60, s-maxage=300, stale-while-revalidate=60"
+
+/** カードにする画像の種類（#140）。SVG はスクリプトを含みうるので入れない */
+const DIRECT_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"])
+
+/** Content-Type の `;` より前を、空白を除いて小文字で返す */
+function mimeTypeOf(contentType: string): string {
+  return contentType.split(";")[0].trim().toLowerCase()
+}
+
+/** 画像の URL のファイル名（パーセントデコード）。ファイル名がなければドメイン */
+function imageTitleOf(imageUrl: URL): string {
+  const name = imageUrl.pathname.split("/").pop() ?? ""
+  if (name === "") return imageUrl.hostname
+  try {
+    return decodeURIComponent(name)
+  } catch {
+    return name
+  }
+}
+
 class BlockedUrlError extends Error {}
 class UpstreamError extends Error {}
 
@@ -216,6 +237,20 @@ export async function GET(request: NextRequest) {
     }
 
     const contentType = response.headers["content-type"] ?? ""
+
+    // 画像ファイルを直接指す URL は、本文を読まずにその画像をカードにする（#140）
+    if (DIRECT_IMAGE_TYPES.has(mimeTypeOf(contentType))) {
+      discard(response)
+      // http の画像は表示しない（#73-4）
+      if (finalUrl.protocol !== "https:") {
+        return NextResponse.json({ error: "Image URL is not https" }, { status: 422 })
+      }
+      return NextResponse.json(
+        { url, image: finalUrl.href, title: imageTitleOf(finalUrl) },
+        { headers: { "Cache-Control": CACHE_CONTROL } }
+      )
+    }
+
     // Content-Typeが明示的に非HTMLの場合のみ拒否（空の場合はHTMLとして試みる）
     if (contentType !== "" && !contentType.includes("text/html")) {
       discard(response)
@@ -229,9 +264,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "No OGP tags found" }, { status: 422 })
     }
 
-    return NextResponse.json(ogpData, {
-      headers: { "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=60" },
-    })
+    return NextResponse.json(ogpData, { headers: { "Cache-Control": CACHE_CONTROL } })
   } catch (error) {
     if (error instanceof PrivateAddressError || error instanceof HostResolutionError) {
       return NextResponse.json({ error: error.message }, { status: 400 })

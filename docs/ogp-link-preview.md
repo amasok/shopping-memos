@@ -295,6 +295,19 @@ Accept-Encoding: gzip, br   // #140 で identity から変更。展開は「3.11
 - 複数の gzip メンバーが続く応答（空のメンバーを含む）は、続けて展開する（Node の gunzip の既定の動き）
 - それでも楽天・ニトリは応答しない（相手のボット対策）。この場合は「リンクだけのカード」になる
 
+### 3.12 画像ファイルを直接指す URL（#140）
+
+メモに画像ファイルの URL（例: `https://example.com/uploads/photo.jpg`）を貼ったときも、カードを出す。
+
+- サーバー: リダイレクトを追従した最終の応答の `Content-Type`（`;` より前、大文字小文字を区別しない）が `image/jpeg`・`image/png`・`image/webp`・`image/gif` なら、本文は読まずに接続を閉じ、次を返す
+  ```
+  { "url": <入力の URL>, "image": <最終 URL>, "title": <最終 URL のファイル名（パーセントデコード）。空ならドメイン> }
+  ```
+- SSRF の検証とリダイレクトの扱いは HTML と同じ経路（各ホップでスキーム・ポート・全 IP を検証し、検証した IP にだけ接続する）
+- 最終 URL が https でなければ 422（http の画像は表示しない。#73-4）
+- `image/svg+xml` など、上の 4 つ以外の画像は従来どおり 422（SVG はスクリプトを含みうるため）
+- クライアント: 既存のカードでそのまま表示する（og:image と同じく、ブラウザが画像を直接読む。CSP の img-src は `https:` を許可済み）。ホーム・買い物リスト・ItemForm のどれでも通常のカードとして出す
+
 ---
 
 ## 4. テスト計画
@@ -305,6 +318,7 @@ Accept-Encoding: gzip, br   // #140 で identity から変更。展開は「3.11
 | Unit | `src/app/api/ogp/route.ts` | SSRF対策、タイムアウト、レスポンス形式 |
 | Unit | `OGPPreview.tsx` | ローディング・エラー・正常表示の各状態。`fallback="link"` の失敗（422 / 500 / 通信エラー）ではリンクだけのカード、既定では何も出さない（#140） |
 | Unit | `src/app/api/ogp/route.ts` | 圧縮された応答: gzip / x-gzip / br、大文字・空白、zip bomb、途中で切れたデータ、空のメンバーが続く gzip、壊れたデータ、未対応の方式（#140） |
+| Unit | `src/app/api/ogp/route.ts` | 画像ファイルの URL: jpeg / png / webp / gif は本文を読まずに image と title を返す、Content-Type の引数と大文字、リダイレクト後の最終 URL、ファイル名のデコード、SVG と http は 422（#140） |
 | E2E | `e2e/ogp-preview.spec.ts` | L-4（ホームは取得失敗時にカードなし・URL リンクのみ）は維持。ItemForm で取得失敗時にリンクだけのカードが出るテストを追加（#140） |
 | Unit | `MemoText.tsx` | URLリンク化の正常系（テキスト分割） |
 | E2E | ホーム画面 | URLを含むアイテムにプレビューが表示される |

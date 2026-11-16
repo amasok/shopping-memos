@@ -361,3 +361,116 @@ describe("GET /api/ogp: 圧縮された応答", () => {
     expect(res.status).toBe(422)
   })
 })
+
+describe("GET /api/ogp: 画像ファイルを直接指す URL (#140)", () => {
+  const IMAGE_URL = "https://scienceportal.jst.go.jp/wp-content/uploads/20250828_n01_01.jpg"
+
+  /** 本文が読まれたかを記録する画像の応答 */
+  function imageResponse(contentType: string) {
+    const stream = Readable.from([Buffer.alloc(1024, 0xff)])
+    const read = vi.spyOn(stream, "read")
+    const destroy = vi.spyOn(stream, "destroy")
+    return {
+      response: Object.assign(stream, { statusCode: 200, headers: { "content-type": contentType } }),
+      read,
+      destroy,
+    }
+  }
+
+  beforeEach(() => {
+    mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
+  })
+
+  it.each([["image/jpeg"], ["image/png"], ["image/webp"], ["image/gif"]])(
+    "%s は本文を読まずに、最終 URL を image、ファイル名を title にして返す",
+    async (contentType) => {
+      const { response, read, destroy } = imageResponse(contentType)
+      mockFetch.mockResolvedValueOnce(response)
+
+      const res = await GET(makeRequest(IMAGE_URL))
+
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        url: IMAGE_URL,
+        image: IMAGE_URL,
+        title: "20250828_n01_01.jpg",
+      })
+      expect(read).not.toHaveBeenCalled()
+      expect(destroy).toHaveBeenCalled()
+    }
+  )
+
+  it.each([["IMAGE/JPEG"], ["image/png; charset=binary"], [" image/webp "]])(
+    "Content-Type の大文字・引数・空白は区別しない（%j）",
+    async (contentType) => {
+      mockFetch.mockResolvedValueOnce(imageResponse(contentType).response)
+
+      const res = await GET(makeRequest(IMAGE_URL))
+
+      expect(res.status).toBe(200)
+      expect((await res.json()).image).toBe(IMAGE_URL)
+    }
+  )
+
+  it("リダイレクトした先の画像は、最終 URL を image にし、各ホップで名前解決して検証する", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse(302, { location: "https://cdn.example/img/a%20b.png" }))
+    mockFetch.mockResolvedValueOnce(imageResponse("image/png").response)
+
+    const res = await GET(makeRequest("https://short.example/x"))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      url: "https://short.example/x",
+      image: "https://cdn.example/img/a%20b.png",
+      title: "a b.png",
+    })
+    expect(mockLookup).toHaveBeenCalledWith("cdn.example", expect.anything())
+  })
+
+  it("リダイレクト先が内部 IP なら、画像でも 400 で接続しない", async () => {
+    mockLookup.mockImplementation(async (host: string) =>
+      resolvedTo(host === "internal.example" ? "10.0.0.5" : "93.184.216.34")
+    )
+    mockFetch.mockResolvedValueOnce(mockResponse(302, { location: "https://internal.example/a.jpg" }))
+
+    const res = await GET(makeRequest("https://short.example/x"))
+
+    expect(res.status).toBe(400)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it("パスにファイル名がなければ、ドメインを title にする", async () => {
+    mockFetch.mockResolvedValueOnce(imageResponse("image/jpeg").response)
+
+    const res = await GET(makeRequest("https://img.example/"))
+
+    expect((await res.json()).title).toBe("img.example")
+  })
+
+  it("デコードできないファイル名は、そのまま title にする", async () => {
+    mockFetch.mockResolvedValueOnce(imageResponse("image/jpeg").response)
+
+    const res = await GET(makeRequest("https://img.example/%E0%A4%A.jpg"))
+
+    expect((await res.json()).title).toBe("%E0%A4%A.jpg")
+  })
+
+  it("最終 URL が http の画像は 422（http の画像は表示しない）", async () => {
+    mockFetch.mockResolvedValueOnce(imageResponse("image/jpeg").response)
+
+    const res = await GET(makeRequest("http://img.example/a.jpg"))
+
+    expect(res.status).toBe(422)
+  })
+
+  it.each([["image/svg+xml"], ["image/avif"], ["image/x-icon"]])(
+    "%s は対象外で 422 を返す",
+    async (contentType) => {
+      mockFetch.mockResolvedValueOnce(imageResponse(contentType).response)
+
+      const res = await GET(makeRequest("https://img.example/a.svg"))
+
+      expect(res.status).toBe(422)
+    }
+  )
+})

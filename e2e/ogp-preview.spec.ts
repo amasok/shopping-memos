@@ -184,4 +184,35 @@ test.describe("OGPプレビュー", () => {
     await expect(page.locator(".animate-pulse")).toHaveCount(0)
     await expect(page.locator("[data-testid='ogp-link-fallback']")).toHaveCount(0)
   })
+
+  test("L-10: 画像ファイルのURLは、ホームでも画像付きのカードとして表示される（#140）", async ({ page }) => {
+    const imageUrl = "https://example.com/uploads/photo.jpg"
+    await page.route("**/api/ogp**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ url: imageUrl, image: imageUrl, title: "photo.jpg" }),
+      })
+    )
+    // 外部の画像は読みに行かず、1x1 の PNG を返す
+    await page.route(imageUrl, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+          "base64"
+        ),
+      })
+    )
+
+    const item = createItem({ name: "写真", memo: imageUrl })
+    await seedTable(page, "items", [item])
+    await page.reload()
+
+    const card = page.locator("[data-testid='ogp-preview']")
+    await expect(card).toBeVisible()
+    await expect(card).toContainText("photo.jpg")
+    await expect(card.locator("img")).toHaveAttribute("src", imageUrl)
+  })
 })
