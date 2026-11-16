@@ -19,6 +19,7 @@ const base = {
   retryMerge: vi.fn(),
   skippedCount: 0,
   dismissSkipped: vi.fn(),
+  discardSkipped: vi.fn(async () => {}),
 }
 
 describe("DataMergeStatus: 取り込めなかったデータの通知 (#86)", () => {
@@ -28,6 +29,22 @@ describe("DataMergeStatus: 取り込めなかったデータの通知 (#86)", ()
     expect(screen.getByTestId("merge-skipped-notice")).toHaveTextContent(
       "3件のデータは取り込めませんでした",
     )
+  })
+
+  it("［破棄する］で、取り込めなかったデータを消す処理を呼ぶ（［閉じる］は呼ばない）(#144)", () => {
+    const discardSkipped = vi.fn(async () => {})
+    const dismissSkipped = vi.fn()
+    state.value = { ...base, skippedCount: 2, discardSkipped, dismissSkipped }
+    render(<DataMergeStatus />)
+    fireEvent.click(screen.getByTestId("merge-skipped-discard"))
+    expect(discardSkipped).toHaveBeenCalledTimes(1)
+    expect(dismissSkipped).not.toHaveBeenCalled()
+  })
+
+  it("取り込めなかったデータは次のログインで送り直すことを、通知で伝える (#144)", () => {
+    state.value = { ...base, skippedCount: 1 }
+    render(<DataMergeStatus />)
+    expect(screen.getByTestId("merge-skipped-notice")).toHaveTextContent("次のログインでもう一度送ります")
   })
 
   it("［閉じる］で通知を閉じる処理を呼ぶ", () => {
