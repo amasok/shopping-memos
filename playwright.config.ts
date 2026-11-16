@@ -42,16 +42,20 @@ export default defineConfig({
       testDir: "./e2e/auth",
       testIgnore: /auth\.setup\.ts/,
     },
-    // SW・オフライン（本番ビルドが必要: npm run build 後に E2E_OFFLINE=true で実行）
-    {
-      name: "offline",
-      use: {
-        ...devices["Desktop Chrome"],
-        baseURL: "http://localhost:3100",
-        serviceWorkers: "allow",
-      },
-      testDir: "./e2e/offline",
-    },
+    // SW・オフライン（本番ビルドが必要。E2E_OFFLINE=true のときだけ有効: npm run build 後に実行）
+    ...(process.env.E2E_OFFLINE
+      ? [
+        {
+          name: "offline",
+          use: {
+            ...devices["Desktop Chrome"],
+            baseURL: "http://localhost:3100",
+            serviceWorkers: "allow" as const,
+          },
+          testDir: "./e2e/offline",
+        },
+        ]
+      : []),
   ],
   webServer: [
     ...(process.env.E2E_OFFLINE

@@ -173,6 +173,10 @@ jobs:
       - name: Run E2E tests
         run: npm run test:e2e
 
+      # SW・オフライン（e2e/offline）。SW を有効にするため本番ビルド（next start, port 3100）で実行する
+      - name: Run offline E2E tests
+        run: E2E_OFFLINE=true npx playwright test --project=offline
+
       - name: Upload E2E report
         uses: actions/upload-artifact@v4
         if: always()

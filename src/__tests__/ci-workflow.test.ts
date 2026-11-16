@@ -88,6 +88,22 @@ describe("CI ワークフローの E2E ジョブ", () => {
     expect(config).toContain("E2E_TEST=true npm run dev")
   })
 
+  it("通常の E2E の後に offline プロジェクトを E2E_OFFLINE=true で実行する", () => {
+    const runE2E = stepIndex("test:e2e")
+    const offline = stepIndex("--project=offline")
+    expect(offline).toBeGreaterThan(runE2E)
+    expect(e2e.steps[offline].run).toContain("E2E_OFFLINE=true")
+  })
+
+  it("playwright.config.ts の offline プロジェクトは E2E_OFFLINE のときだけ有効（通常の test:e2e に混ざらない）", () => {
+    const config = readFileSync(
+      path.resolve(__dirname, "../../playwright.config.ts"),
+      "utf-8"
+    )
+    expect(config).toMatch(/process\.env\.E2E_OFFLINE\s*\?\s*\[\s*\{\s*name: "offline"/)
+    expect(config).toContain("npx next start -p 3100")
+  })
+
   it("本番DBマイグレーション（migrate ジョブ）に依存しない", () => {
     const needs = [e2e.needs ?? []].flat()
     expect(needs).not.toContain("migrate")
