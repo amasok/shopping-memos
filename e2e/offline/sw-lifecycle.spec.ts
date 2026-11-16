@@ -1,6 +1,7 @@
 import { test, expect, chromium, type BrowserContext, type Page } from "@playwright/test"
 import { createItem } from "../fixtures/test-data"
 import { seedTable } from "../fixtures/test-helpers"
+import { E2E_OFFLINE_ORIGIN } from "../ports"
 
 /**
  * SW のライフサイクル E2E（O-9 / O-10 / O-14）。
@@ -23,7 +24,7 @@ import { seedTable } from "../fixtures/test-helpers"
 
 const STAGE = process.env.SW_STAGE
 const PROFILE = process.env.SW_PROFILE
-const BASE = "http://localhost:3100"
+const BASE = E2E_OFFLINE_ORIGIN
 const ITEM_NAME = "ライフサイクル確認アイテム"
 
 test.skip(!STAGE || !PROFILE, "SW_STAGE / SW_PROFILE が未設定（scripts/e2e-sw-lifecycle.sh から実行する）")

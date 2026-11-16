@@ -1,6 +1,7 @@
 import { type APIRequestContext } from "@playwright/test"
+import { E2E_ORIGIN } from "../../ports"
 
-const ORIGIN = "http://localhost:3000"
+const ORIGIN = E2E_ORIGIN
 const TRPC_URL = `${ORIGIN}/api/trpc`
 // same-origin 検証が入っても通るよう、ブラウザ相当の Origin を付ける
 const HEADERS = { Origin: ORIGIN }
