@@ -122,6 +122,10 @@ test("取り込めなかったものだけがアカウントごとに残り、�
   await loginAndMerge(page, ACCOUNT_P)
   await expect(page.getByTestId("merge-skipped-notice")).toBeVisible()
   await page.getByTestId("merge-skipped-discard").click()
+  // 取り消せない削除なので、確認が出る（件数と、元に戻せないこと）。確認してから消す
+  const confirm = page.getByRole("dialog")
+  await expect(confirm).toContainText("取り込めなかった 1 件を破棄します。元に戻せません。")
+  await confirm.getByRole("button", { name: "破棄する" }).click()
   await expect(page.getByTestId("merge-skipped-notice")).toHaveCount(0)
   await expect.poll(() => rowCount(page, "pendingMerge")).toBe(0)
   expect(await serverItemNames(page)).not.toContain(bad)
