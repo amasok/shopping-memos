@@ -446,3 +446,50 @@ describe("DataMergeService.merge: タグは同じ名前の自分のタグにま�
     expect(result).toMatchObject({ failedCount: 0, alreadyMergedCount: 1, idMappings: [] })
   })
 })
+
+describe("DataMergeService.merge: 取り込めなかったレコードの位置 (#144)", () => {
+  it("失敗したレコードを、エンティティと data の配列での位置で返す（failedCount と同じ件数）", async () => {
+    owners.clear()
+    tagsByName.clear()
+    owners.set("item-other", { userId: "user-other", groupId: null })
+    const fake = createPgLikeDb([{ table: "items", id: "item-other" }])
+    state.db = fake.db
+
+    const result = await new DataMergeService().merge("user-me", {
+      ...emptyData,
+      items: [item("item-ok", "牛乳"), item("item-other", "卵")],
+      listItems: [
+        { id: "li-1", listId: "list-missing", name: "x", quantity: 1, tagIds: [], checked: false, createdAt: NOW },
+      ],
+      history: [{ id: "h-1", listId: "list-missing", purchasedAt: NOW }],
+    })
+
+    expect(result.failedRecords).toEqual([
+      { entity: "items", index: 1 },
+      { entity: "listItems", index: 0 },
+      { entity: "history", index: 0 },
+    ])
+    expect(result.failedCount).toBe(result.failedRecords.length)
+  })
+
+  it("取り込み済み・タグの付け替え・まとめは、失敗の位置に入れない", async () => {
+    owners.clear()
+    tagsByName.clear()
+    owners.set("tag-done", { userId: "user-me", groupId: null })
+    owners.set("tag-foreign", { userId: "user-other", groupId: null })
+    tagsByName.set("日用品", "tag-mine")
+    const fake = createPgLikeDb([
+      { table: "tags", id: "tag-done" },
+      { table: "tags", id: "tag-foreign" },
+    ])
+    state.db = fake.db
+
+    const result = await new DataMergeService().merge("user-me", {
+      ...emptyData,
+      tags: [tag("tag-done", "食品"), tag("tag-foreign", "エンタメ"), tag("tag-same-name", "日用品")],
+    })
+
+    expect(result.failedRecords).toEqual([])
+    expect(result.failedCount).toBe(0)
+  })
+})

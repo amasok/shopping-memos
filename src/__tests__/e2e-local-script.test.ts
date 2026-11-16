@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { spawn, spawnSync } from "child_process"
-import { existsSync, mkdtempSync } from "fs"
+import { lstatSync, mkdtempSync, readlinkSync, rmSync, symlinkSync } from "fs"
 import { tmpdir } from "os"
 import path from "path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -18,15 +18,33 @@ function bash(body: string, env: Record<string, string> = {}) {
   })
 }
 
+const tempDirs: string[] = []
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix))
+  tempDirs.push(dir)
+  return dir
+}
+
 function gitRepo(branch: string): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "e2e-local-repo-"))
+  const dir = tempDir("e2e-local-repo-")
   spawnSync("git", ["init", "-q", "-b", branch, dir])
   return dir
+}
+
+/** シンボリックリンク自体があるか（リンク先の PID は実在のパスではないので existsSync は使えない） */
+function linkExists(p: string): boolean {
+  try {
+    lstatSync(p)
+    return true
+  } catch {
+    return false
+  }
 }
 
 const children: { kill: () => void }[] = []
 afterEach(() => {
   for (const child of children.splice(0)) child.kill()
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
 describe("e2e-local.sh の DB 名 (#142)", () => {
@@ -74,9 +92,12 @@ describe("e2e-local.sh の DB 名 (#142)", () => {
 })
 
 describe("e2e-local.sh の同時実行のロック (#142)", () => {
+  const lockPath = (root: string, tmp: string) =>
+    path.join(tmp, `shopping-memos-e2e-local-${bash(`ROOT="${root}"; worktree_hash`).stdout.trim()}.lock`)
+
   it("同じ worktree で実行中なら、2 つ目は分かりやすいメッセージで止まり、終わったプロセスのロックは取り直す", async () => {
     const root = gitRepo("lock-test")
-    const env = { TMPDIR: mkdtempSync(path.join(tmpdir(), "e2e-local-lock-")) }
+    const env = { TMPDIR: tempDir("e2e-local-lock-") }
 
     // 1 つ目: ロックを取って待つ
     const first = spawn("bash", ["-c", `source "${SCRIPT}"\nROOT="${root}"; acquire_lock; echo locked; sleep 30`], {
@@ -84,6 +105,9 @@ describe("e2e-local.sh の同時実行のロック (#142)", () => {
     })
     children.push(first)
     await new Promise<void>((resolve) => first.stdout.on("data", (d) => String(d).includes("locked") && resolve()))
+
+    // ロックは、持ち主の PID を指すシンボリックリンク（作成と PID の記録が 1 回で済む）
+    expect(readlinkSync(lockPath(root, env.TMPDIR))).toBe(String(first.pid))
 
     const second = bash(`ROOT="${root}"; acquire_lock`, env)
     expect(second.status).toBe(1)
@@ -96,17 +120,36 @@ describe("e2e-local.sh の同時実行のロック (#142)", () => {
     // 1 つ目が（後始末をせずに）終わったら、残ったロックを取り直せる
     first.kill("SIGKILL")
     await new Promise((resolve) => first.on("exit", resolve))
-    expect(bash(`ROOT="${root}"; acquire_lock`, env).status).toBe(0)
+    const third = bash(`ROOT="${root}"; acquire_lock; readlink "$LOCK_PATH"; echo "self=$$"`, env)
+    expect(third.status, third.stderr).toBe(0)
+    const [owner, self] = third.stdout.trim().split("\n")
+    expect(`self=${owner}`).toBe(self)
   })
 
-  it("cleanup でロックを消す", () => {
-    const root = gitRepo("cleanup-test")
-    const tmp = mkdtempSync(path.join(tmpdir(), "e2e-local-lock-"))
-    const result = bash(`ROOT="${root}"; acquire_lock; echo "$LOCK_DIR"; cleanup`, { TMPDIR: tmp })
+  it("終わったプロセスのロックが残っていても、取り直して退かしたものは残さない", () => {
+    const root = gitRepo("stale-test")
+    const tmp = tempDir("e2e-local-lock-")
+    // 存在しない PID を指す古いロック
+    symlinkSync("999999", lockPath(root, tmp))
+
+    const result = bash(`ROOT="${root}"; acquire_lock; ls -a "${tmp}"`, { TMPDIR: tmp })
 
     expect(result.status, result.stderr).toBe(0)
-    const lockDir = result.stdout.trim()
-    expect(lockDir.startsWith(tmp)).toBe(true)
-    expect(existsSync(lockDir)).toBe(false)
+    expect(result.stdout).not.toContain(".stale.")
+  })
+
+  it("cleanup は自分のロックだけを消し、ほかの実行のロックは消さない", () => {
+    const root = gitRepo("cleanup-test")
+    const tmp = tempDir("e2e-local-lock-")
+    const lock = lockPath(root, tmp)
+
+    const own = bash(`ROOT="${root}"; acquire_lock; cleanup`, { TMPDIR: tmp })
+    expect(own.status, own.stderr).toBe(0)
+    expect(linkExists(lock)).toBe(false)
+
+    // ほかの実行（PID 1 は常に生きている）のロックに差し替わっていたら、消さない
+    const other = bash(`ROOT="${root}"; acquire_lock; ln -sfn 1 "$LOCK_PATH"; cleanup`, { TMPDIR: tmp })
+    expect(other.status, other.stderr).toBe(0)
+    expect(readlinkSync(lock)).toBe("1")
   })
 })

@@ -25,10 +25,24 @@ vi.mock("@/infrastructure/trpc/client", () => ({
 }))
 
 // merge の後にゲストのデータを消す処理は、この疑似 DB では呼び出しだけを記録する
-const guestData = vi.hoisted(() => ({ clearGuestData: vi.fn(async () => {}) }))
+const guestData = vi.hoisted(() => ({
+  clearGuestData: vi.fn(async () => {}),
+  applyMergeOutcome: vi.fn<(userId: string, outcome: unknown) => Promise<void>>(async () => {}),
+}))
 vi.mock("@/lib/db/guestData", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
   clearGuestData: guestData.clearGuestData,
+  // ゲストの DB の読み書きは、このテストの疑似 DB（@/lib/db のモック）から読み、結果の反映は呼び出しだけを記録する
+  loadGuestDataForMerge: async () => {
+    const { db } = await import("@/lib/db")
+    return {
+      tags: await db.tags.toArray(),
+      items: await db.items.toArray(),
+      lists: await db.lists.toArray(),
+      listItems: await db.listItems.toArray(),
+    }
+  },
+  applyMergeOutcome: guestData.applyMergeOutcome,
   // 以前の仕組みからの移行は guestData.test.ts で確かめる
   ensureGuestDataMigrated: async () => true,
 }))

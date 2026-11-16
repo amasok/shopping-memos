@@ -5,6 +5,7 @@ import { areTagsInScope } from "@/modules/catalog/application/services/ownership
 import { canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
 import { findEntityScope, findListScope } from "@/modules/sync/infrastructure/entityAccess"
 import type { SyncEntity } from "@/modules/sync/domain/entities/SyncOperation"
+import type { MergeEntityName } from "@/shared/schemas/sync"
 import {
   items,
   tags,
@@ -80,6 +81,11 @@ export interface MergeResult {
    * タグの関連付けだけのスキップや、同じユーザーが取り込み済みのレコード（再試行の重複）は数えない
    */
   failedCount: number
+  /**
+   * レコード単位で取り込めなかったもの（#144）。index は data の各配列（検証を通ったもの）での位置。
+   * router が、リクエストの中での位置（NotImportedRecordRef.requestIndex）に戻す。failedCount と同じ件数
+   */
+  failedRecords: Array<{ entity: MergeEntityName; index: number }>
   /** 同じユーザーが前回までに取り込み済みだったレコードの件数（分割送信の再試行で送り直した分） */
   alreadyMergedCount: number
   /** トランザクション全体が失敗した（何も取り込まれていない） */
@@ -141,7 +147,7 @@ export class DataMergeService {
     // ゲストのタグの ID → サーバーで使う ID（付け替えたものだけ）
     const tagIdMap = new Map<string, string>()
     const resolveTagId = (id: string) => tagIdMap.get(id) ?? id
-    let failedCount = 0
+    const failedRecords: MergeResult["failedRecords"] = []
     let alreadyMergedCount = 0
     const mergedCounts = {
       items: 0,
@@ -194,6 +200,7 @@ export class DataMergeService {
       executor: DbExecutor,
       entity: SyncEntity,
       id: string,
+      ref: MergeResult["failedRecords"][number],
       message: string,
       error: DbErrorKind
     ) => {
@@ -202,13 +209,12 @@ export class DataMergeService {
         return
       }
       logMergeFailure(`${entity}:${id}`, error)
-      failedCount++
-      errors.push(message)
+      recordFailure(ref, message)
     }
 
-    /** INSERT 以外の理由でレコードを取り込めなかった */
-    const recordFailure = (message: string) => {
-      failedCount++
+    /** レコード単位で取り込めなかった（どのレコードかを記録する） */
+    const recordFailure = (ref: MergeResult["failedRecords"][number], message: string) => {
+      failedRecords.push(ref)
       errors.push(message)
     }
 
@@ -279,7 +285,7 @@ export class DataMergeService {
     try {
       await db.transaction(async (tx) => {
         // 1. タグをマージ（アイテムより先に）
-        for (const tag of data.tags) {
+        for (const [index, tag] of data.tags.entries()) {
           // 同じ名前の自分のタグがあれば、新しく作らずにそれにまとめる。
           // ゲストに戻るたびに初期タグ（食品など）が新しい ID で作られるので、ログインのたびに二重にならないようにする
           const sameNameId = await findOwnTagIdByName(tx, tag.name)
@@ -310,11 +316,18 @@ export class DataMergeService {
             result.error.code === "23505" && (await findEntityScope(tx, "tag", tag.id).catch(() => null)) !== null
           if (isForeignId && (await createTagWithNewId(tx, tag))) continue
 
-          await handleInsertFailure(tx, "tag", tag.id, `タグ "${tag.name}" のマージに失敗`, result.error)
+          await handleInsertFailure(
+            tx,
+            "tag",
+            tag.id,
+            { entity: "tags", index },
+            `タグ "${tag.name}" のマージに失敗`,
+            result.error
+          )
         }
 
         // 2. アイテムをマージ
-        for (const item of data.items) {
+        for (const [index, item] of data.items.entries()) {
           // ID を付け替えたタグを参照していれば、付け替え後の ID にする
           const itemTagIds = item.tagIds.map(resolveTagId)
           const result = await inSavepoint(tx, async (sp) => {
@@ -368,12 +381,19 @@ export class DataMergeService {
           if (result.ok) {
             mergedCounts.items++
           } else {
-            await handleInsertFailure(tx, "item", item.id, `アイテム "${item.name}" のマージに失敗`, result.error)
+            await handleInsertFailure(
+              tx,
+              "item",
+              item.id,
+              { entity: "items", index },
+              `アイテム "${item.name}" のマージに失敗`,
+              result.error
+            )
           }
         }
 
         // 3. リストをマージ
-        for (const list of data.lists) {
+        for (const [index, list] of data.lists.entries()) {
           const result = await inSavepoint(tx, async (sp) => {
             await sp.insert(shoppingLists).values({
               id: list.id,
@@ -401,14 +421,24 @@ export class DataMergeService {
             mergedListIds.add(list.id)
             mergedCounts.lists++
           } else {
-            await handleInsertFailure(tx, "list", list.id, `リスト "${list.name}" のマージに失敗`, result.error)
+            await handleInsertFailure(
+              tx,
+              "list",
+              list.id,
+              { entity: "lists", index },
+              `リスト "${list.name}" のマージに失敗`,
+              result.error
+            )
           }
         }
 
         // 4. リストアイテムをマージ
-        for (const listItem of data.listItems) {
+        for (const [index, listItem] of data.listItems.entries()) {
           if (!(await canWriteList(tx, listItem.listId))) {
-            recordFailure(`リストアイテム "${listItem.name}" のマージに失敗（リストにアクセスできません）`)
+            recordFailure(
+              { entity: "listItems", index },
+              `リストアイテム "${listItem.name}" のマージに失敗（リストにアクセスできません）`
+            )
             continue
           }
           const listItemTagIds = listItem.tagIds.map(resolveTagId)
@@ -443,6 +473,7 @@ export class DataMergeService {
               tx,
               "listItem",
               listItem.id,
+              { entity: "listItems", index },
               `リストアイテム "${listItem.name}" のマージに失敗`,
               result.error
             )
@@ -450,9 +481,9 @@ export class DataMergeService {
         }
 
         // 5. 履歴をマージ（リストのpurchasedAtを更新）
-        for (const history of data.history) {
+        for (const [index, history] of data.history.entries()) {
           if (!(await canWriteList(tx, history.listId))) {
-            recordFailure(`履歴のマージに失敗（リストにアクセスできません）`)
+            recordFailure({ entity: "history", index }, `履歴のマージに失敗（リストにアクセスできません）`)
             continue
           }
           let notFound = false
@@ -493,12 +524,12 @@ export class DataMergeService {
           })
           // 履歴は UPDATE なので、送り直しても同じ値で上書きされるだけ（重複にならない）
           if (notFound) {
-            recordFailure(`履歴のマージに失敗（リストにアクセスできません）`)
+            recordFailure({ entity: "history", index }, `履歴のマージに失敗（リストにアクセスできません）`)
           } else if (result.ok) {
             mergedCounts.history++
           } else {
             logMergeFailure(`history:${history.id}`, result.error)
-            recordFailure(`履歴のマージに失敗`)
+            recordFailure({ entity: "history", index }, `履歴のマージに失敗`)
           }
         }
       })
@@ -506,7 +537,8 @@ export class DataMergeService {
       return {
         success: errors.length === 0,
         mergedCounts,
-        failedCount,
+        failedCount: failedRecords.length,
+        failedRecords,
         alreadyMergedCount,
         fatal: false,
         idMappings,
@@ -518,6 +550,7 @@ export class DataMergeService {
         success: false,
         mergedCounts: { items: 0, tags: 0, lists: 0, listItems: 0, history: 0 },
         failedCount: 0,
+        failedRecords: [],
         alreadyMergedCount: 0,
         fatal: true,
         idMappings: [],

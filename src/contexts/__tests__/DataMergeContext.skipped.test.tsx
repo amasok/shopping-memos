@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 
 vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({ user: { id: "user-1" }, isLoading: false }),
@@ -17,10 +17,26 @@ vi.mock("@/infrastructure/trpc/client", () => ({
 }))
 
 // merge の後にゲストのデータを消す処理は、この疑似 DB では呼び出しだけを記録する
-const guestData = vi.hoisted(() => ({ clearGuestData: vi.fn(async () => {}) }))
+const guestData = vi.hoisted(() => ({
+  clearGuestData: vi.fn(async () => {}),
+  applyMergeOutcome: vi.fn<(userId: string, outcome: unknown) => Promise<void>>(async () => {}),
+  discardPendingMerge: vi.fn<(userId: string) => Promise<void>>(async () => {}),
+}))
 vi.mock("@/lib/db/guestData", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
   clearGuestData: guestData.clearGuestData,
+  // ゲストの DB の読み書きは、このテストの疑似 DB（@/lib/db のモック）から読み、結果の反映は呼び出しだけを記録する
+  loadGuestDataForMerge: async () => {
+    const { db } = await import("@/lib/db")
+    return {
+      tags: await db.tags.toArray(),
+      items: await db.items.toArray(),
+      lists: await db.lists.toArray(),
+      listItems: await db.listItems.toArray(),
+    }
+  },
+  applyMergeOutcome: guestData.applyMergeOutcome,
+  discardPendingMerge: guestData.discardPendingMerge,
   // 以前の仕組みからの移行は guestData.test.ts で確かめる
   ensureGuestDataMigrated: async () => true,
 }))
@@ -30,11 +46,12 @@ import { DataMergeProvider, useDataMerge } from "../DataMergeContext"
 const SKIPPED_KEY = "data-merge-skipped-user-1"
 
 function Probe() {
-  const { skippedCount, dismissSkipped } = useDataMerge()
+  const { skippedCount, dismissSkipped, discardSkipped } = useDataMerge()
   return (
     <div>
       <span data-testid="skipped">{skippedCount}</span>
       <button onClick={dismissSkipped}>dismiss</button>
+      <button onClick={() => void discardSkipped()}>discard</button>
     </div>
   )
 }
@@ -91,5 +108,16 @@ describe("DataMergeContext の取り込めなかった件数の通知 (#86)", ()
     renderProvider()
 
     expect(screen.getByTestId("skipped")).toHaveTextContent("0")
+  })
+
+  it("破棄すると、このアカウントで取り込めずに残したデータを消し、通知も閉じる (#144)", async () => {
+    localStorage.setItem(SKIPPED_KEY, "2")
+    renderProvider()
+
+    fireEvent.click(screen.getByText("discard"))
+
+    await waitFor(() => expect(screen.getByTestId("skipped")).toHaveTextContent("0"))
+    expect(guestData.discardPendingMerge).toHaveBeenCalledWith("user-1")
+    expect(localStorage.getItem(SKIPPED_KEY)).toBeNull()
   })
 })

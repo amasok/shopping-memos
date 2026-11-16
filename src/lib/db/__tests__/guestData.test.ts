@@ -9,9 +9,12 @@ import {
   GUEST_DATA_VERSION_KEY,
   MERGE_COMPLETED_KEY,
   SELECTED_GROUP_KEY,
+  applyMergeOutcome,
   clearGuestData,
   clearLoginScopedState,
+  discardPendingMerge,
   ensureGuestDataMigrated,
+  loadGuestDataForMerge,
   hasGuestDataToMerge,
   migrateLegacyGuestData,
 } from "../guestData"
@@ -43,6 +46,13 @@ async function seedEveryTable() {
   await db.groups.add({ id: "g1", name: "家族", ownerId: "u1", inviteCode: "ABC", createdAt: NOW } as never)
   await db.groupMembers.add({ id: "gm1", groupId: "g1", userId: "u1" } as never)
   await db.syncQueue.add({ id: "q1", entity: "item", entityId: "i1", operation: "create", payload: {}, createdAt: NOW, retryCount: 0 } as never)
+  await db.pendingMerge.add({
+    key: "user-x:items:p1",
+    entity: "items",
+    userId: "user-x",
+    record: { id: "p1", name: "残した", quantity: 1, tagIds: [], createdAt: NOW, updatedAt: NOW } as never,
+    createdAt: NOW,
+  })
 }
 
 async function rowCounts(): Promise<Record<string, number>> {
@@ -181,5 +191,118 @@ describe("clearLoginScopedState", () => {
     // 取り込めなかった件数の通知（閉じるまで）と、移行済みのバージョンは残す
     expect(storage.getItem("data-merge-skipped-user-1")).toBe("2")
     expect(storage.getItem(GUEST_DATA_VERSION_KEY)).toBe(GUEST_DATA_VERSION)
+  })
+})
+
+// === #144: 取り込めなかったものだけを残す ===
+
+const item = (id: string, name = id, tagIds: string[] = []) =>
+  ({ id, name, quantity: 1, tagIds, createdAt: NOW, updatedAt: NOW }) as never
+const tagRow = (id: string, name = id) => ({ id, name, createdAt: NOW, updatedAt: NOW }) as never
+const pending = (userId: string, entity: "tags" | "items", record: { id: string }) => ({
+  key: `${userId}:${entity}:${record.id}`,
+  entity,
+  userId,
+  record: record as never,
+  createdAt: NOW,
+})
+const noIds = { tags: [], items: [], lists: [], listItems: [] }
+
+describe("loadGuestDataForMerge（本物の Dexie）", () => {
+  it("通常のテーブルと、このアカウントの pendingMerge を合わせ、ほかのアカウントの分は含めない", async () => {
+    await db.items.add(item("i-guest"))
+    await db.pendingMerge.bulkAdd([
+      pending("user-a", "items", item("i-a")),
+      pending("user-b", "items", item("i-b")),
+    ])
+
+    const data = await loadGuestDataForMerge("user-a")
+
+    expect(data.items.map((i) => i.id).sort()).toEqual(["i-a", "i-guest"])
+  })
+})
+
+describe("applyMergeOutcome（本物の Dexie）", () => {
+  it("送ったものは消し、取り込めなかったものだけを、このアカウントの pendingMerge に移す（ゲストの画面のテーブルには残さない）", async () => {
+    await db.tags.bulkAdd([tagRow("t-ok", "食品"), tagRow("t-ref", "お気に入り")])
+    await db.items.bulkAdd([item("i-ok"), item("i-ng", "取り込めない", ["t-ref"])])
+    const guest = await loadGuestDataForMerge("user-a")
+
+    await applyMergeOutcome("user-a", {
+      sent: { tags: ["t-ok", "t-ref"], items: ["i-ok", "i-ng"], lists: [], listItems: [] },
+      keep: { tags: ["t-ref"], items: ["i-ng"], lists: [], listItems: [] },
+      records: guest,
+    })
+
+    // 通常のテーブル（ゲストの画面が読むもの）には、残したものも出ない。タグは初期タグだけに戻る
+    expect(await db.items.count()).toBe(0)
+    expect((await db.tags.toArray()).map((t) => t.name).sort()).toEqual([...DEFAULT_TAG_NAMES].sort())
+    const rows = await db.pendingMerge.where("userId").equals("user-a").toArray()
+    expect(rows.map((r) => r.key).sort()).toEqual(["user-a:items:i-ng", "user-a:tags:t-ref"])
+  })
+
+  it("このアカウントの pendingMerge から送って取り込めたものは消し、ほかのアカウントの pendingMerge は残す", async () => {
+    await db.pendingMerge.bulkAdd([
+      pending("user-a", "items", item("i-a")),
+      pending("user-b", "items", item("i-b")),
+    ])
+    const guest = await loadGuestDataForMerge("user-a")
+
+    await applyMergeOutcome("user-a", {
+      sent: { ...noIds, items: ["i-a"] },
+      keep: noIds,
+      records: guest,
+    })
+
+    const keys = (await db.pendingMerge.toArray()).map((r) => r.key)
+    expect(keys).toEqual(["user-b:items:i-b"])
+  })
+
+  it("送っていないレコード（merge の途中で足されたもの）は消さない", async () => {
+    await db.items.add(item("i-sent"))
+    const guest = await loadGuestDataForMerge("user-a")
+    await db.items.add(item("i-added-later"))
+
+    await applyMergeOutcome("user-a", { sent: { ...noIds, items: ["i-sent"] }, keep: noIds, records: guest })
+
+    expect((await db.items.toArray()).map((i) => i.id)).toEqual(["i-added-later"])
+  })
+})
+
+describe("discardPendingMerge（本物の Dexie）", () => {
+  it("このアカウントの pendingMerge だけを消す", async () => {
+    await db.pendingMerge.bulkAdd([
+      pending("user-a", "items", item("i-a")),
+      pending("user-b", "items", item("i-b")),
+    ])
+
+    await discardPendingMerge("user-a")
+
+    expect((await db.pendingMerge.toArray()).map((r) => r.userId)).toEqual(["user-b"])
+  })
+})
+
+describe("ゲストのデータを消す範囲（#144。offline-support.md「4b」）", () => {
+  beforeEach(async () => {
+    await db.items.add(item("i-guest"))
+    await db.pendingMerge.add(pending("user-a", "items", item("i-a")))
+  })
+
+  it("以前の仕組みからの移行（clearGuestData）: pendingMerge を含めて全部消す", async () => {
+    await clearGuestData()
+    expect(await db.pendingMerge.count()).toBe(0)
+    expect(await db.items.count()).toBe(0)
+  })
+
+  it("ログアウト・ゲストに戻ったとき（clearLoginScopedState）: ゲストのデータには触れず、pendingMerge は残る", async () => {
+    clearLoginScopedState(memoryStorage())
+    expect(await db.pendingMerge.count()).toBe(1)
+    expect(await db.items.count()).toBe(1)
+  })
+
+  it("merge の後（applyMergeOutcome）: ほかのアカウントの pendingMerge は残る", async () => {
+    const guest = await loadGuestDataForMerge("user-b")
+    await applyMergeOutcome("user-b", { sent: { ...noIds, items: ["i-guest"] }, keep: noIds, records: guest })
+    expect((await db.pendingMerge.toArray()).map((r) => r.key)).toEqual(["user-a:items:i-a"])
   })
 })
