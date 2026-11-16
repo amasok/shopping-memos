@@ -1,7 +1,8 @@
 import { type Page } from "@playwright/test"
 import { randomUUID } from "crypto"
+import { E2E_ORIGIN } from "../../ports"
 
-const SEED_API_URL = "http://localhost:3000/api/e2e/seed"
+const SEED_API_URL = `${E2E_ORIGIN}/api/e2e/seed`
 
 /**
  * E2Eテスト用DB操作ヘルパー

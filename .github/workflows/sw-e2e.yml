@@ -1,7 +1,8 @@
 name: SW Lifecycle E2E
 
 # SW の更新・kill switch の E2E（ビルドを 4 回切り替えるため 5〜7 分かかる）。
-# PR のたびには実行せず、SW 関連のファイルが変わったときと手動実行のときだけ動かす
+# PR のたびには実行せず、SW 関連のファイルが変わったときと手動実行のときだけ動かす。
+# package.json・package-lock.json は依存の更新のたびに動いてしまうため対象にしない（Serwist などを更新したら手動で実行する）
 on:
   pull_request:
     branches: [main, develop]
@@ -11,8 +12,6 @@ on:
       - "src/components/pwa/**"
       - "src/app/serwist/**"
       - "next.config.ts"
-      - "package.json"
-      - "package-lock.json"
       - "playwright.config.ts"
       - "src/hooks/useServiceWorkerUpdate.ts"
       - "src/app/api/version/**"
