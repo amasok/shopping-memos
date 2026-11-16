@@ -148,13 +148,17 @@ test.describe(`SW ライフサイクル (${STAGE})`, () => {
           )
           .toBe(0)
 
-        // 解除された旧 SW が、解除の直後に書いたキャッシュ（sm-v1-rsc など）が残ることがある。次の表示までには消える。
-        // 段階 2 のビルドでは、表示のたびに自己消去 SW が登録され、すぐ自分で解除される（残り続けない）
-        await page.reload()
+        // 解除された旧 SW が、解除の直後に書いたキャッシュ（sm-v1-rsc など）が残ることがある。表示し直すうちに消える。
+        // 段階 1 は再登録されないので、消えるまでリロードして確認する。
+        // 段階 2 のビルドでは、表示のたびに自己消去 SW が登録され、すぐ自分で解除される（残り続けない）ため、
+        // リロードを重ねず落ち着くのを待つ
+        const reloadEachTime = stage === "kill-disabled"
+        if (!reloadEachTime) await page.reload()
         await expect
           .poll(
             async () => {
               try {
+                if (reloadEachTime) await page.reload()
                 return { regs: await registrations(page), caches: await appCaches(page) }
               } catch {
                 return null
