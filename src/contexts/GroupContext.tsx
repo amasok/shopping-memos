@@ -68,6 +68,13 @@ export function GroupProvider({ children }: { children: ReactNode }) {
     groupsQuery.data &&
     !groupsQuery.data.some((g) => g.id === selectedGroupId)
 
+  // ゲスト（未ログイン）はグループを使わない。ログイン中に選んでいたグループが残っていると、
+  // ゲストのデータがそのグループで絞り込まれて見えなくなるので、個人に戻す
+  const shouldResetForGuest = !user && !isAuthLoading && selectedGroupId !== undefined
+  if (shouldResetForGuest) {
+    setSelectedGroupId(undefined)
+  }
+
   if (shouldResetGroupId) {
     console.log(
       "[GroupContext] Selected group is no longer accessible, resetting to personal mode:",

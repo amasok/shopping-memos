@@ -39,6 +39,7 @@ describe("sync.merge の入力検証 (#86)", () => {
         failedCount: 0,
         alreadyMergedCount: 0,
         fatal: false,
+        idMappings: [],
         errors: [],
       })
     state.findByUserId.mockReset().mockResolvedValue([])
@@ -132,5 +133,20 @@ describe("sync.merge の入力検証 (#86)", () => {
     })
     await expect(call(empty)).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" })
     expect(state.getChangedEntities).not.toHaveBeenCalled()
+  })
+
+  it("付け替えたタグの ID（idMappings）を、そのままクライアントに返す", async () => {
+    const mappings = [{ entity: "tag", localId: crypto.randomUUID(), serverId: crypto.randomUUID() }]
+    state.merge.mockResolvedValue({
+      success: true,
+      mergedCounts: {},
+      failedCount: 0,
+      alreadyMergedCount: 0,
+      fatal: false,
+      idMappings: mappings,
+      errors: [],
+    })
+    const result = await call(empty)
+    expect(result.idMappings).toEqual(mappings)
   })
 })

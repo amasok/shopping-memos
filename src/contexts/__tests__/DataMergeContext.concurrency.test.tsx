@@ -21,6 +21,15 @@ vi.mock("@/infrastructure/trpc/client", () => ({
   trpc: { sync: { merge: { useMutation: () => ({ mutateAsync: state.mutateAsync }) } } },
 }))
 
+// merge の後にゲストのデータを消す処理は、この疑似 DB では呼び出しだけを記録する
+const guestData = vi.hoisted(() => ({ clearGuestData: vi.fn(async () => {}) }))
+vi.mock("@/lib/db/guestData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
+  clearGuestData: guestData.clearGuestData,
+  // 以前の仕組みからの移行は guestData.test.ts で確かめる
+  ensureGuestDataMigrated: async () => true,
+}))
+
 import { DataMergeProvider, useDataMerge } from "../DataMergeContext"
 import { MERGE_LIMITS } from "@/shared/schemas/sync"
 

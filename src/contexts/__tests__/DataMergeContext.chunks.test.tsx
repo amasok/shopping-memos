@@ -24,6 +24,15 @@ vi.mock("@/infrastructure/trpc/client", () => ({
   trpc: { sync: { merge: { useMutation: () => ({ mutateAsync: state.mutateAsync }) } } },
 }))
 
+// merge の後にゲストのデータを消す処理は、この疑似 DB では呼び出しだけを記録する
+const guestData = vi.hoisted(() => ({ clearGuestData: vi.fn(async () => {}) }))
+vi.mock("@/lib/db/guestData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
+  clearGuestData: guestData.clearGuestData,
+  // 以前の仕組みからの移行は guestData.test.ts で確かめる
+  ensureGuestDataMigrated: async () => true,
+}))
+
 import { DataMergeProvider, useDataMerge } from "../DataMergeContext"
 import { MERGE_LIMITS, syncMergeStrictInputSchema } from "@/shared/schemas/sync"
 import { REQUEST_LIMITS } from "@/shared/schemas/limits"
@@ -154,5 +163,27 @@ describe("DataMergeContext の分割送信 (#116)", () => {
     expect(localStorage.getItem(MERGE_KEY)).toBe("true")
     // 失敗した 1 回目の分（1 件）は足し込まれない
     expect(localStorage.getItem(SKIPPED_KEY)).toBe("1")
+  })
+
+  it("前のリクエストで付け替えられたタグの ID を、後から送るアイテムの tagIds に反映する", async () => {
+    const guestTag = tag(0)
+    state.tags = [guestTag]
+    // 1 つ目のリクエストにタグと 1000 件のアイテム、2 つ目に残りのアイテムが入る
+    state.items = Array.from({ length: MERGE_LIMITS.items + 1 }, (_, i) => ({ ...item(i), tagIds: [guestTag.id] }))
+    state.mutateAsync
+      .mockResolvedValueOnce({
+        ...ok(),
+        idMappings: [{ entity: "tag", localId: guestTag.id, serverId: "server-tag" }],
+      })
+      .mockResolvedValue({ ...ok(), idMappings: [] })
+
+    renderProvider()
+    await waitFor(() => expect(reload).toHaveBeenCalled())
+
+    const [first, second] = sentPayloads() as unknown as Array<{ data: { items: Array<{ tagIds: string[] }> } }>
+    // 1 つ目は元の ID のまま（同じリクエストの中は、サーバーが付け替える）
+    expect(first.data.items[0].tagIds).toEqual([guestTag.id])
+    // 2 つ目は付け替え後の ID
+    expect(second.data.items.every((i) => i.tagIds[0] === "server-tag")).toBe(true)
   })
 })

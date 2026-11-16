@@ -77,7 +77,8 @@ describe("DataMergeService.merge のタグ関連付け (#68)", () => {
     )
 
     expect(itemTagInserts()).toEqual(["tag-new"])
-    expect(state.fake.selects).toHaveLength(0)
+    // 検索するのは、タグを作る前の「同じ名前の自分のタグ」の 1 回だけ。アイテムへの関連付けでは DB を検索しない
+    expect(state.fake.selects).toEqual(["tags"])
     expect(res.success).toBe(true)
   })
 

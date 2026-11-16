@@ -174,7 +174,8 @@ export const syncRouter = router({
       )
 
       return {
-        idMappings: [] as Array<{ entity: string; localId: string; serverId: string }>,
+        // ID を付け替えたタグ。クライアントは、後から送る分の tagIds をこれで付け替える
+        idMappings: serviceResult.idMappings,
         serverData: {
           items: serverChanges.items,
           tags: serverChanges.tags,

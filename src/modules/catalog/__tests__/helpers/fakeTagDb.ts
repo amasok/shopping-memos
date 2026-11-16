@@ -25,12 +25,18 @@ export function createFakeTagDb(tagMap: Record<string, TagRow> = {}) {
   const db = {
     select: () => ({
       from: (table: unknown) => ({
-        where: async (where: SQL) => {
+        where: (where: SQL) => {
           const name = getTableName(table as Parameters<typeof getTableName>[0])
           selects.push(name)
-          if (name !== "tags") return []
-          const { params } = dialect.sqlToQuery(where)
-          return params.map((p) => tagMap[String(p)]).filter(Boolean)
+          const run = async () => {
+            if (name !== "tags") return []
+            const { params } = dialect.sqlToQuery(where)
+            return params.map((p) => tagMap[String(p)]).filter(Boolean)
+          }
+          // await してもよいし、.limit(n) を付けてもよい（タグの名前での検索は limit を付ける）
+          const result = run() as Promise<unknown[]> & { limit: (n: number) => Promise<unknown[]> }
+          result.limit = async (n: number) => (await run()).slice(0, n)
+          return result
         },
       }),
     }),
