@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext } from "react"
 import { SessionProvider, useSession, signIn, signOut } from "next-auth/react"
-import { clearLoginScopedState } from "@/lib/db/guestData"
+import { clearLoginScopedState, ensureGuestDataMigrated } from "@/lib/db/guestData"
 
 export interface User {
   id: string
@@ -41,6 +41,8 @@ function AuthContextProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     // ログイン中だけの状態（merge 済みの印・選んでいたグループ）を消してからログアウトする。
     // ゲストのデータは merge が全部成功したときに空になっているので、ログアウト後は空のゲストになる
+    // 以前の印は移行の判定に使うので、移行が終わってから消す
+    await ensureGuestDataMigrated()
     clearLoginScopedState()
     await signOut({ callbackUrl: "/" })
   }, [])

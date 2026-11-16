@@ -1,5 +1,5 @@
 import { db } from "./index"
-import { DEFAULT_TAG_NAMES } from "./tags"
+import { DEFAULT_TAG_NAMES, initializeDefaultTags } from "./tags"
 
 /**
  * ゲストのデータ（IndexedDB）とログインの関係（offline-support.md「ゲストのデータとログイン・ログアウト」）
@@ -13,6 +13,12 @@ import { DEFAULT_TAG_NAMES } from "./tags"
 export const MERGE_COMPLETED_KEY = "data-merge-completed"
 /** 選んでいたグループ（GroupContext） */
 export const SELECTED_GROUP_KEY = "selectedGroupId"
+/**
+ * この端末のゲストのデータの扱いのバージョン。
+ * "2" より前（キーがない）は、merge 済みの印が「このユーザーは一度 merge した（以後は送らない）」という以前の意味だった
+ */
+export const GUEST_DATA_VERSION_KEY = "guest-data-version"
+export const GUEST_DATA_VERSION = "2"
 
 export interface GuestSnapshot {
   tags: Array<{ name: string }>
@@ -53,4 +59,45 @@ export function clearLoginScopedState(storage: Storage = localStorage): void {
   }
   for (const key of keys) storage.removeItem(key)
   storage.removeItem(SELECTED_GROUP_KEY)
+}
+
+/**
+ * 以前の仕組みからの移行（一度だけ。offline-support.md「4b」）
+ *
+ * 以前は merge の後もゲストのデータを消さず、merge 済みの印があると二度と送らなかった。
+ * 印が残っている端末のゲストのデータを、新しい仕組みのまま次のログインで送ると、
+ * サーバーで消したアイテムやリストがまとめて戻ってしまう。そこで、以前の印がある端末では、
+ * 一度だけゲストのデータを送らずに空にする（初期タグだけの状態に戻す）。
+ * 移行したら（以前の印がなくても）バージョンのキーを付け、新しい意味の印と取り違えないようにする
+ */
+export async function migrateLegacyGuestData(storage: Storage = localStorage): Promise<"cleared" | "none"> {
+  if (storage.getItem(GUEST_DATA_VERSION_KEY) === GUEST_DATA_VERSION) return "none"
+  let hasLegacyMark = false
+  for (let i = 0; i < storage.length; i++) {
+    if (storage.key(i)?.startsWith(`${MERGE_COMPLETED_KEY}-`)) {
+      hasLegacyMark = true
+      break
+    }
+  }
+  if (hasLegacyMark) {
+    await clearGuestData()
+    await initializeDefaultTags()
+  }
+  storage.setItem(GUEST_DATA_VERSION_KEY, GUEST_DATA_VERSION)
+  return hasLegacyMark ? "cleared" : "none"
+}
+
+let migration: Promise<unknown> | null = null
+
+/**
+ * 移行が終わるのを待つ（1 回のページの読み込みで 1 回だけ実行する）。
+ * merge の判定・ゲストに戻ったときの印の削除・ログアウトの前に呼ぶ（以前の印を消す前に、移行の判定に使うため）
+ */
+export function ensureGuestDataMigrated(): Promise<unknown> {
+  migration ??= migrateLegacyGuestData().catch((error) => {
+    // 失敗したら次の読み込みでやり直す（バージョンのキーは付けない）
+    console.error("[guestData] 移行に失敗:", error)
+    migration = null
+  })
+  return migration
 }

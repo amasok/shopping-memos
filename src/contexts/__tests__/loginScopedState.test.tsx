@@ -21,6 +21,11 @@ vi.mock("@/infrastructure/trpc/client", () => ({
   trpc: { identity: { getGroups: { useQuery: () => ({ data: [], isLoading: false }) } } },
 }))
 
+vi.mock("@/lib/db/guestData", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
+  ensureGuestDataMigrated: async () => {},
+}))
+
 import { AuthProvider, useAuth } from "../AuthContext"
 
 beforeEach(() => {

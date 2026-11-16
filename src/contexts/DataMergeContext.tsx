@@ -16,6 +16,7 @@ import {
   SELECTED_GROUP_KEY,
   clearGuestData,
   clearLoginScopedState,
+  ensureGuestDataMigrated,
   hasGuestDataToMerge,
 } from "@/lib/db/guestData"
 import { trpc } from "@/infrastructure/trpc/client"
@@ -85,8 +86,9 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- ユーザーログアウト時にリセットが必要
       setIsMergeCompleted(false)
       // ゲストに戻った（ログアウト・セッション切れ）ら、ログイン中だけの状態を消す。
-      // 次にログインしたときに、ゲストのデータがあればもう一度 merge する
-      if (!isAuthLoading) clearLoginScopedState()
+      // 次にログインしたときに、ゲストのデータがあればもう一度 merge する。
+      // 以前の印は移行の判定に使うので、移行が終わってから消す
+      if (!isAuthLoading) void ensureGuestDataMigrated().then(() => clearLoginScopedState())
       return
     }
 
@@ -107,6 +109,9 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
 
   const executeMerge = useCallback(async () => {
     if (!user) return
+
+    // 以前の仕組みの印がある端末では、ゲストのデータを送らずに空にする（一度だけ）
+    await ensureGuestDataMigrated()
 
     const mergeKey = `${MERGE_COMPLETED_KEY}-${user.id}`
     const alreadyMerged = localStorage.getItem(mergeKey) === "true"

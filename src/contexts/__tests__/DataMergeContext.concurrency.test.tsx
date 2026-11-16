@@ -26,6 +26,8 @@ const guestData = vi.hoisted(() => ({ clearGuestData: vi.fn(async () => {}) }))
 vi.mock("@/lib/db/guestData", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
   clearGuestData: guestData.clearGuestData,
+  // 以前の仕組みからの移行は guestData.test.ts で確かめる
+  ensureGuestDataMigrated: async () => {},
 }))
 
 import { DataMergeProvider, useDataMerge } from "../DataMergeContext"
