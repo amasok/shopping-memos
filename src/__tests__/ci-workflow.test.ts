@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from "fs"
 import { spawnSync } from "child_process"
-import { mkdtempSync, writeFileSync, chmodSync } from "fs"
+import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import path from "path"
 import { parse } from "yaml"
@@ -166,6 +166,7 @@ describe("CI ワークフローの E2E ジョブ", () => {
         env: { ...process.env, ...runStep().env, PATH: `${bin}:${process.env.PATH}`, GITHUB_REF: ref },
         encoding: "utf-8",
       })
+      rmSync(bin, { recursive: true, force: true })
       expect(result.status, result.stderr).toBe(0)
       return result.stdout
         .split("\n")

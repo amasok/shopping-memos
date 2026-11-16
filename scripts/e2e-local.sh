@@ -79,27 +79,44 @@ drop_db() {
 }
 
 # 同じ worktree での同時実行を止める（.next・e2e/.auth・test-results を共有するため）。
-# ロックは worktree の外（TMPDIR）に置き、持ち主の PID が終わっていれば取り直す
-LOCK_DIR=""
+# ロックは worktree の外（TMPDIR）のシンボリックリンクで、リンク先が持ち主の PID。ln -s は作成と PID の記録が
+# 1 回で済む（mkdir してから PID を書く方式の「PID がまだ無い」すき間がない）。持ち主が終わっていれば取り直す
+LOCK_PATH=""
 acquire_lock() {
-  local dir="${TMPDIR:-/tmp}/shopping-memos-e2e-local-$(worktree_hash).lock"
-  if ! mkdir "${dir}" 2>/dev/null; then
-    local owner
-    owner="$(cat "${dir}/pid" 2>/dev/null || true)"
-    if [[ -n "${owner}" ]] && kill -0 "${owner}" 2>/dev/null; then
+  local lock owner stale _
+  lock="${TMPDIR:-/tmp}/shopping-memos-e2e-local-$(worktree_hash).lock"
+  for _ in 1 2 3 4 5; do
+    if ln -s "$$" "${lock}" 2>/dev/null; then
+      LOCK_PATH="${lock}"
+      return 0
+    fi
+    owner="$(readlink "${lock}" 2>/dev/null || true)"
+    # 読む前に消えた（持ち主が終わった直後）。もう一度取りに行く
+    [[ -z "${owner}" ]] && continue
+    if kill -0 "${owner}" 2>/dev/null; then
       fail "この worktree（${ROOT}）では、ほかの test:e2e:local（PID ${owner}）が実行中です。終わってから実行してください。"
     fi
-    rm -rf "${dir}"
-    mkdir "${dir}" || fail "ロック（${dir}）を作れません。"
-  fi
-  echo "$$" >"${dir}/pid"
-  LOCK_DIR="${dir}"
+    # 終わったプロセスのロック。rename は 1 本だけが成功するので、退かしてから中身を確かめる
+    stale="${lock}.stale.$$"
+    if mv "${lock}" "${stale}" 2>/dev/null; then
+      if [[ "$(readlink "${stale}" 2>/dev/null || true)" != "${owner}" ]]; then
+        # 先に取り直したほかの実行のロックを退かしてしまった。元に戻す（その間に作られていれば向こうが優先）
+        ln -s "$(readlink "${stale}")" "${lock}" 2>/dev/null || true
+      fi
+      rm -f "${stale}"
+    fi
+  done
+  fail "ロック（${lock}）を取れません。しばらくしてから、もう一度実行してください。"
 }
 
 DB_NAME=""
 cleanup() {
   [[ -n "${DB_NAME}" ]] && drop_db "${DB_NAME}"
-  [[ -n "${LOCK_DIR}" ]] && rm -rf "${LOCK_DIR}"
+  # 自分のロックだけを消す
+  if [[ -n "${LOCK_PATH}" && "$(readlink "${LOCK_PATH}" 2>/dev/null || true)" == "$$" ]]; then
+    rm -f "${LOCK_PATH}"
+  fi
+  return 0
 }
 
 # --- ポート -----------------------------------------------------------------
