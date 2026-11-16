@@ -6,7 +6,7 @@ tools: ["Read", "Bash", "Grep"]
 
 # PostgreSQLパターン
 
-PostgreSQL + Prisma でのデータベース設計・最適化パターン集。
+PostgreSQL + Drizzle ORM でのデータベース設計・最適化パターン集。スキーマは `src/infrastructure/db/drizzle/schema.ts`。
 
 ## 適用タイミング
 
@@ -18,14 +18,15 @@ PostgreSQL + Prisma でのデータベース設計・最適化パターン集。
 
 ## データ型の推奨
 
-| 用途 | 推奨型 | 理由 |
+| 用途 | 推奨型（Drizzle） | 理由 |
 |------|--------|------|
-| ID | `String @id @default(cuid())` | 分散ID、URLセーフ |
-| 文字列 | `String` (text) | 可変長、制限不要 |
-| 日時 | `DateTime` (timestamptz) | タイムゾーン対応 |
-| 金額 | `Decimal @db.Decimal(10,2)` | 精度保証 |
-| フラグ | `Boolean @default(false)` | 明示的 |
-| JSON | `Json` (jsonb) | 検索・インデックス可能 |
+| ID | `text("id").primaryKey()`（アプリで UUID を生成） | ローカル（Dexie）で作った ID をそのまま同期できる |
+| 文字列 | `text()` | 可変長、制限不要 |
+| 日時 | `timestamp()`（タイムゾーンが必要なら `{ withTimezone: true }`） | `defaultNow()` で作成日時 |
+| 金額 | `numeric({ precision: 10, scale: 2 })` | 精度保証 |
+| フラグ | `boolean().notNull().default(false)` | 明示的 |
+| JSON | `jsonb()` | 検索・インデックス可能 |
+| 配列 | `text().array()` | スナップショット用途（例: `listItems.tagIds`） |
 
 ## インデックス設計
 
@@ -33,33 +34,41 @@ PostgreSQL + Prisma でのデータベース設計・最適化パターン集。
 
 | クエリパターン | インデックス | 例 |
 |---------------|-------------|-----|
-| 等価検索 (=) | B-tree (デフォルト) | `@@index([userId])` |
-| 範囲検索 (<, >, BETWEEN) | B-tree | `@@index([createdAt])` |
-| JSON検索 | GIN | `@@index([metadata], type: Gin)` |
+| 等価検索 (=) | B-tree (デフォルト) | `index("items_user_idx").on(t.userId)` |
+| 範囲検索 (<, >, BETWEEN) | B-tree | `index("items_purchased_idx").on(t.purchasedAt)` |
+| JSON / 配列検索 | GIN | `index("x_idx").using("gin", t.metadata)` |
 | 全文検索 | GIN | Full-text search |
 | 時系列データ | BRIN | 大量の時系列 |
 
-### Prismaでのインデックス定義
+### Drizzle でのインデックス定義
 
-```prisma
-model ShoppingItem {
-  id        String   @id @default(cuid())
-  name      String
-  listId    String
-  createdBy String
-  createdAt DateTime @default(now())
+```typescript
+export const listItems = pgTable(
+  "list_items",
+  {
+    id: text("id").primaryKey(),
+    listId: text("list_id")
+      .notNull()
+      .references(() => shoppingLists.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    // 単一インデックス
+    index("list_items_list_idx").on(table.listId),
+    index("list_items_user_idx").on(table.userId),
 
-  // 単一インデックス
-  @@index([listId])
-  @@index([createdBy])
+    // 複合インデックス（順序が重要！）
+    index("list_items_list_created_idx").on(table.listId, table.createdAt.desc()),
 
-  // 複合インデックス（順序が重要！）
-  @@index([listId, createdAt(sort: Desc)])
-
-  // ユニーク制約
-  @@unique([listId, name])
-}
+    // ユニーク制約
+    uniqueIndex("list_items_list_name_idx").on(table.listId, table.name),
+  ]
+)
 ```
+
+変更後は `npm run db:generate` でマイグレーション SQL を生成し、内容を確認してから `npm run db:migrate` で適用する。
 
 ### 複合インデックスの順序
 
@@ -77,109 +86,79 @@ model ShoppingItem {
 
 ## クエリ最適化
 
+`schema.ts` には `relations()` を定義していないため、関連データは JOIN か `inArray` で取得する。
+
 ### N+1問題の回避
 
 ```typescript
 // ❌ N+1問題
-const lists = await prisma.shoppingList.findMany()
+const lists = await db.select().from(shoppingLists).where(eq(shoppingLists.userId, userId))
 for (const list of lists) {
-  const items = await prisma.shoppingItem.findMany({
-    where: { listId: list.id }
-  })
+  const rows = await db.select().from(listItems).where(eq(listItems.listId, list.id))
 }
 
-// ✅ includeで解決
-const lists = await prisma.shoppingList.findMany({
-  include: {
-    items: true,
-    family: {
-      select: { name: true }
-    }
-  }
-})
+// ✅ inArray で一括取得
+const rows = await db
+  .select()
+  .from(listItems)
+  .where(inArray(listItems.listId, lists.map((l) => l.id)))
 ```
 
 ### 必要なカラムのみ取得
 
 ```typescript
 // ❌ 全カラム取得
-const users = await prisma.user.findMany()
+const rows = await db.select().from(users)
 
 // ✅ 必要なカラムのみ
-const users = await prisma.user.findMany({
-  select: {
-    id: true,
-    name: true,
-    email: true,
-  }
-})
+const rows = await db.select({ id: users.id, name: users.name }).from(users)
 ```
 
 ### カーソルベースのページネーション
 
 ```typescript
-// ✅ 推奨: カーソルベース（大量データでも高速）
-const items = await prisma.shoppingItem.findMany({
-  take: 20,
-  skip: 1, // カーソルの次から
-  cursor: { id: lastItemId },
-  orderBy: { createdAt: 'desc' },
-})
+// ✅ 推奨: カーソル（直前ページ最後の createdAt）より古いものを取得
+const rows = await db
+  .select()
+  .from(items)
+  .where(lt(items.createdAt, cursor))
+  .orderBy(desc(items.createdAt))
+  .limit(20)
 
-// ⚠️ 非推奨: オフセットベース（大量データで遅い）
-const items = await prisma.shoppingItem.findMany({
-  take: 20,
-  skip: page * 20, // 大きいページで遅くなる
-})
+// ⚠️ オフセット（大量データで遅い）
+const rows = await db.select().from(items).orderBy(desc(items.createdAt)).limit(20).offset(page * 20)
 ```
 
 ### UPSERT（挿入または更新）
 
 ```typescript
-const item = await prisma.shoppingItem.upsert({
-  where: {
-    listId_name: { listId, name: itemName }
-  },
-  update: {
-    quantity: { increment: 1 }
-  },
-  create: {
-    listId,
-    name: itemName,
-    quantity: 1,
-    createdBy: userId,
-  }
-})
+const [item] = await db
+  .insert(items)
+  .values({ id, name, quantity, userId })
+  .onConflictDoUpdate({
+    target: items.id,
+    set: { name, quantity, updatedAt: new Date() },
+  })
+  .returning()
 ```
 
 ## トランザクション
 
 ```typescript
-// 複数の操作を原子的に実行
-const [list, membership] = await prisma.$transaction([
-  prisma.shoppingList.create({
-    data: { name: '新しいリスト', familyId }
-  }),
-  prisma.familyMember.update({
-    where: { userId_familyId: { userId, familyId } },
-    data: { lastActiveAt: new Date() }
-  })
-])
+const result = await db.transaction(async (tx) => {
+  const [list] = await tx.select().from(shoppingLists).where(eq(shoppingLists.id, listId))
+  if (!list) throw new Error("リストが見つかりません")
 
-// インタラクティブトランザクション
-const result = await prisma.$transaction(async (tx) => {
-  const item = await tx.shoppingItem.findUnique({
-    where: { id: itemId }
-  })
+  await tx
+    .update(shoppingLists)
+    .set({ status: "completed", completedAt: new Date() })
+    .where(eq(shoppingLists.id, listId))
 
-  if (!item) throw new Error('Item not found')
-
-  return tx.shoppingItem.update({
-    where: { id: itemId },
-    data: { quantity: item.quantity + 1 }
-  })
+  return tx.select().from(listItems).where(eq(listItems.listId, listId))
 })
 ```
+
+> 本番の Neon pooler（PgBouncer）はプリペアドステートメント非対応のため、`client.ts` で `prepare: false` を指定している。
 
 ## パフォーマンス診断
 
@@ -229,43 +208,39 @@ ORDER BY n_dead_tup DESC;
 
 ## Row Level Security (RLS)
 
-### Supabase/PostgreSQL直接使用時
+### PostgreSQL直接使用時（参考）
 
 ```sql
--- ユーザーは自分の家族のデータのみアクセス可能
-CREATE POLICY "Users can view own family lists"
+-- ユーザーは所属グループのデータのみアクセス可能
+CREATE POLICY "Users can view own group lists"
 ON shopping_lists
 FOR SELECT
 USING (
-  family_id IN (
-    SELECT family_id FROM family_members
-    WHERE user_id = auth.uid()
+  group_id IN (
+    SELECT group_id FROM group_members
+    WHERE user_id = current_setting('app.user_id')
   )
 );
 ```
 
-### Prisma経由での実装
+### このプロジェクトでの実装（アプリケーションレベル）
 
-Prismaはアプリケーションレベルで認可を実装:
+RLS は使わず、tRPC のプロシージャで認可する。グループのデータは
+`src/infrastructure/trpc/middleware/groupAuth.ts` の `verifyGroupMembership` / `verifyGroupOwnership` で検証する。
 
 ```typescript
-// middleware または wrapper で実装
-async function getListsForUser(userId: string) {
-  // ユーザーの家族IDを取得
-  const memberships = await prisma.familyMember.findMany({
-    where: { userId },
-    select: { familyId: true }
-  })
+// 所属グループのリストのみ取得
+const memberships = await db
+  .select({ groupId: groupMembers.groupId })
+  .from(groupMembers)
+  .where(eq(groupMembers.userId, userId))
 
-  const familyIds = memberships.map(m => m.familyId)
+const groupIds = memberships.map((m) => m.groupId)
 
-  // 家族に紐づくリストのみ取得
-  return prisma.shoppingList.findMany({
-    where: {
-      familyId: { in: familyIds }
-    }
-  })
-}
+const lists = await db
+  .select()
+  .from(shoppingLists)
+  .where(inArray(shoppingLists.groupId, groupIds))
 ```
 
 ## アンチパターン
@@ -274,39 +249,37 @@ async function getListsForUser(userId: string) {
 
 ```typescript
 // 無制限クエリ
-await prisma.item.findMany() // LIMIT なし
+await db.select().from(items) // LIMIT なし
 
 // ループ内クエリ（N+1）
 for (const list of lists) {
-  await prisma.item.findMany({ where: { listId: list.id } })
+  await db.select().from(listItems).where(eq(listItems.listId, list.id))
 }
 
-// SELECT *
-await prisma.user.findMany() // 全カラム
+// 文字列連結で SQL を組み立てる（SQLインジェクション）
+await db.execute(sql.raw(`SELECT * FROM items WHERE name = '${name}'`))
 
 // インデックスなしの外部キー
-model Item {
-  listId String // @@index([listId]) なし
-}
+listId: text("list_id").references(() => shoppingLists.id) // index() なし
 ```
 
 ### ✅ 推奨
 
 ```typescript
 // 制限付きクエリ
-await prisma.item.findMany({ take: 100 })
+await db.select().from(items).limit(100)
 
-// include/select で一括取得
-await prisma.list.findMany({ include: { items: true } })
+// inArray / JOIN で一括取得
+await db.select().from(listItems).where(inArray(listItems.listId, listIds))
 
 // 必要なカラムのみ
-await prisma.user.findMany({ select: { id: true, name: true } })
+await db.select({ id: users.id, name: users.name }).from(users)
+
+// sql テンプレートは値をパラメータとして埋め込む
+await db.execute(sql`SELECT * FROM items WHERE name = ${name}`)
 
 // インデックス付き
-model Item {
-  listId String
-  @@index([listId])
-}
+(table) => [index("list_items_list_idx").on(table.listId)]
 ```
 
 ## 関連エージェント

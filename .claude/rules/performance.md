@@ -115,36 +115,38 @@ import Image from 'next/image'
 
 ```typescript
 // ❌ N+1問題
-const lists = await prisma.shoppingList.findMany()
+const lists = await db.select().from(shoppingLists)
 for (const list of lists) {
-  const items = await prisma.shoppingItem.findMany({
-    where: { listId: list.id }
-  })
+  const rows = await db.select().from(listItems).where(eq(listItems.listId, list.id))
 }
 
-// ✅ include で一括取得
-const lists = await prisma.shoppingList.findMany({
-  include: { items: true }
-})
+// ✅ inArray で一括取得
+const rows = await db
+  .select()
+  .from(listItems)
+  .where(inArray(listItems.listId, lists.map((l) => l.id)))
 
-// ✅ 必要なフィールドのみ取得
-const users = await prisma.user.findMany({
-  select: { id: true, name: true }
-})
+// ✅ 必要なカラムのみ取得
+const rows = await db.select({ id: users.id, name: users.name }).from(users)
 ```
 
 ### インデックス
 
-```prisma
-model ShoppingItem {
-  id        String   @id @default(cuid())
-  listId    String
-  createdAt DateTime @default(now())
-
+```typescript
+// src/infrastructure/db/drizzle/schema.ts
+export const listItems = pgTable(
+  "list_items",
+  {
+    id: text("id").primaryKey(),
+    listId: text("list_id").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
   // クエリパターンに基づくインデックス
-  @@index([listId])
-  @@index([listId, createdAt(sort: Desc)])
-}
+  (table) => [
+    index("list_items_list_idx").on(table.listId),
+    index("list_items_list_created_idx").on(table.listId, table.createdAt.desc()),
+  ]
+)
 ```
 
 ### キャッシュ戦略
@@ -160,9 +162,7 @@ import { unstable_cache } from 'next/cache'
 
 const getCachedItems = unstable_cache(
   async (listId: string) => {
-    return prisma.shoppingItem.findMany({
-      where: { listId }
-    })
+    return db.select().from(listItems).where(eq(listItems.listId, listId))
   },
   ['items'],
   { revalidate: 60 }
@@ -247,7 +247,7 @@ setItems([...items])  // 同じ内容なのに再レンダリング
 import _ from 'lodash'  // 全部インポート
 
 // 無制限クエリ
-prisma.item.findMany()  // LIMIT なし
+db.select().from(items)  // LIMIT なし
 ```
 
 ### ✅ 推奨
@@ -264,5 +264,5 @@ if (hasChanges) setItems(newItems)
 import { debounce } from 'lodash/debounce'
 
 // 制限付きクエリ
-prisma.item.findMany({ take: 100 })
+db.select().from(items).limit(100)
 ```

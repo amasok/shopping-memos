@@ -106,21 +106,29 @@ model: opus
 
 ### 技術スタック
 - Next.js 16 (App Router)
-- Prisma 7 + PostgreSQL
+- tRPC v11 + TanStack Query
+- Drizzle ORM + PostgreSQL（サーバー）/ Dexie（IndexedDB、ゲスト）
 - NextAuth.js v5
-- Tailwind CSS
+- Zod v4
+- Tailwind CSS v4
 
 ### 重要なパターン
-- Server Components優先
-- API Routes は `src/app/api/` 配下
-- 認証は NextAuth.js の middleware で保護
-- DB操作は Prisma Client 経由
+- ページはクライアントコンポーネント中心。データは `src/hooks/data` のフック経由で取得する
+- `useDataSource` でゲスト=Dexie / ログイン=tRPC を切り替える（両方の経路を計画に含める）
+- サーバー API は tRPC（`src/infrastructure/trpc/routers`）。認証が必要なものは `protectedProcedure`
+- DB操作は Drizzle 経由（`src/modules/*/infrastructure/repositories` または routers）
+- 入力スキーマは `src/shared/schemas`（Zod）に置き、クライアントとサーバーで共有
+- サーバーのスキーマ変更は `schema.ts` → `npm run db:generate`、Dexie は `version(n)` を追加
 
 ### ディレクトリ構造
 ```
 src/
-├── app/           # ページ・APIルート
-├── components/    # UIコンポーネント
-├── lib/           # ユーティリティ
-└── generated/     # Prisma生成ファイル
+├── app/             # ページ・Route Handlers（api/trpc, api/auth, api/ogp）
+├── modules/         # catalog / identity / shopping / sync（DDD の層構成）
+├── infrastructure/  # auth, db/drizzle, trpc, sync
+├── lib/db/          # Dexie（IndexedDB）
+├── hooks/data/      # データ取得・更新フック
+├── contexts/        # Auth / Group / DataMerge / Sync / Theme
+├── components/      # ui, layouts, features, pwa
+└── shared/schemas/  # Zod スキーマ
 ```

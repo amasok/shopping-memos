@@ -61,7 +61,7 @@ tools: ["Read", "Write", "Glob"]
 ---
 name: パターン名
 description: 簡潔な説明
-tags: [error, nextjs, prisma]
+tags: [error, nextjs, drizzle]
 learned_at: 2024-01-27
 ---
 
@@ -111,45 +111,45 @@ learned_at: 2024-01-27
 
 ## 保存例
 
-### Prisma N+1問題の解決
+### Drizzle N+1問題の解決
 
 ```markdown
 ---
-name: prisma-n-plus-one
-description: PrismaでN+1問題を解決するincludeパターン
-tags: [prisma, performance, database]
+name: drizzle-n-plus-one
+description: DrizzleでN+1問題を解決するinArrayパターン
+tags: [drizzle, performance, database]
 learned_at: 2024-01-27
 ---
 
-# Prisma N+1問題の解決
+# Drizzle N+1問題の解決
 
 ## 問題
 買い物リストを取得する際、各リストのアイテムを
 個別にクエリしてしまいN+1問題が発生。
 
 ## 原因
-findManyでリストを取得後、ループ内でアイテムを取得していた。
+リストを取得後、ループ内でアイテムを取得していた。
 
 ## 解決策
-includeを使用して1回のクエリで関連データを取得。
+リストIDを集めて `inArray` で1回のクエリで関連データを取得。
 
 ## 例
 
 ### Before
 \`\`\`typescript
-const lists = await prisma.shoppingList.findMany()
+const lists = await db.select().from(shoppingLists)
 for (const list of lists) {
-  list.items = await prisma.shoppingItem.findMany({
-    where: { listId: list.id }
-  })
+  const rows = await db.select().from(listItems).where(eq(listItems.listId, list.id))
 }
 \`\`\`
 
 ### After
 \`\`\`typescript
-const lists = await prisma.shoppingList.findMany({
-  include: { items: true }
-})
+const lists = await db.select().from(shoppingLists)
+const rows = await db
+  .select()
+  .from(listItems)
+  .where(inArray(listItems.listId, lists.map((l) => l.id)))
 \`\`\`
 
 ## 適用条件
@@ -157,14 +157,14 @@ const lists = await prisma.shoppingList.findMany({
 - ループ内でクエリを実行している時
 
 ## 関連
-- https://www.prisma.io/docs/guides/performance-and-optimization/query-optimization-performance
+- https://orm.drizzle.team/docs/operators#inarray
 ```
 
 ## 保存先
 
 ```
 .claude/skills/learned/
-├── prisma-n-plus-one.md
+├── drizzle-n-plus-one.md
 ├── nextjs-server-client-boundary.md
 └── auth-session-handling.md
 ```

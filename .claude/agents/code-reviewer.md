@@ -102,10 +102,16 @@ npm test
 - [ ] metadata の適切な設定
 - [ ] loading.tsx / error.tsx の実装
 
-### Prisma
-- [ ] トランザクションの適切な使用
-- [ ] select/include の最適化（必要なフィールドのみ）
-- [ ] 適切なエラーハンドリング
+### Drizzle ORM / tRPC
+- [ ] トランザクション（`db.transaction`）の適切な使用
+- [ ] 必要なカラムのみ select しているか、N+1 になっていないか
+- [ ] tRPC の入力が `src/shared/schemas` の Zod スキーマで検証されているか
+- [ ] グループデータへのアクセスで `verifyGroupMembership` を通しているか
+- [ ] 適切なエラーハンドリング（`TRPCError`）
+
+### ゲスト / ログインのデータ切り替え
+- [ ] データアクセスが `src/hooks/data` のフック経由になっているか（`useDataSource` で Dexie / tRPC を切り替え）
+- [ ] Dexie のスキーマ変更は新しい `version(n)` を追加しているか
 
 ### NextAuth.js
 - [ ] セッションの適切な使用
