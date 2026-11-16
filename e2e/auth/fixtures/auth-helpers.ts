@@ -1,4 +1,5 @@
 import { type Page } from "@playwright/test"
+import { e2eHeaders, getUser } from "./db-helpers"
 
 /** E2Eテスト用のユーザーメールアドレス */
 export const USER_A_EMAIL = "user-a@e2e-test.local"
@@ -15,14 +16,13 @@ export const USER_B_STORAGE = "e2e/.auth/user-b.json"
  * NextAuth REST API を直接叩いてCredentials認証を行う。
  * 1. GET /api/auth/csrf → CSRFトークン取得
  * 2. POST /api/auth/callback/credentials → 認証実行（Set-Cookie でセッション取得）
+ *    E2E 用のログインは x-e2e-token ヘッダが必要（#70）
  */
 export async function loginAndSaveState(
   page: Page,
   email: string,
   storagePath: string
 ): Promise<string> {
-  const baseURL = "http://localhost:3000"
-
   // 1. CSRFトークン取得（ブラウザ経由でcookieもセットさせる）
   await page.goto("/api/auth/csrf")
   const csrfResponse = await page.evaluate(() =>
@@ -33,10 +33,10 @@ export async function loginAndSaveState(
   // 2. Credentials プロバイダで認証（POST）
   // page.goto で POST はできないので、page.evaluate 内で fetch を使う
   await page.evaluate(
-    async ({ csrfToken, email }) => {
+    async ({ csrfToken, email, headers }) => {
       const res = await fetch("/api/auth/callback/credentials", {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: { "Content-Type": "application/x-www-form-urlencoded", ...headers },
         body: new URLSearchParams({
           csrfToken,
           email,
@@ -48,7 +48,7 @@ export async function loginAndSaveState(
         throw new Error(`Auth failed: ${res.status}`)
       }
     },
-    { csrfToken, email }
+    { csrfToken, email, headers: e2eHeaders() }
   )
 
   // 3. ホームに遷移してセッション確認
@@ -56,13 +56,7 @@ export async function loginAndSaveState(
   await page.waitForLoadState("networkidle")
 
   // 4. ユーザーIDを取得（seed APIを使用）
-  const userRes = await fetch(`${baseURL}/api/e2e/seed`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "get-user", data: { email } }),
-  })
-  const userData = await userRes.json()
-  const userId = userData.user.id
+  const { id: userId } = await getUser(email)
 
   // 5. DataMerge をスキップするための localStorage 設定
   await page.evaluate((uid) => {

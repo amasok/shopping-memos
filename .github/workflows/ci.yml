@@ -163,9 +163,16 @@ jobs:
       - name: Run migrations (E2E DB)
         run: npm run db:migrate
 
-      # playwright.config.ts の webServer は CI では next start で起動するため、事前にビルドする
+      # playwright.config.ts の webServer は CI では next start で起動するため、事前にビルドする。
+      # E2E 専用ルート（seed API・テスト用ログイン）は E2E_BUILD=true のビルドにだけ含まれる（#70）
       - name: Build
         run: npm run build
+        env:
+          E2E_BUILD: "true"
+
+      # E2E 専用ルートの共有シークレット（x-e2e-token）。実行ごとにランダムに生成する（#70）
+      - name: Generate E2E seed token
+        run: echo "E2E_SEED_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
