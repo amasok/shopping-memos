@@ -92,6 +92,8 @@ describe("CI ワークフロー全体の設定", () => {
 
   it("古い実行を止めるが、main では止めない", () => {
     expect(workflow.concurrency?.group).toContain("github.ref")
+    // main は commit ごとに別 group にし、待機中の実行が置き換えで取り消されないようにする
+    expect(workflow.concurrency?.group).toContain("github.sha")
     expect(String(workflow.concurrency?.["cancel-in-progress"])).toContain(
       "refs/heads/main"
     )
