@@ -1,7 +1,6 @@
 ---
 name: frontend-patterns
 description: React/Next.jsのフロントエンドパターン集。コンポーネント設計、状態管理、パフォーマンス最適化のベストプラクティス。
-tools: ["Read", "Write", "Edit", "Glob"]
 ---
 
 # フロントエンドパターン

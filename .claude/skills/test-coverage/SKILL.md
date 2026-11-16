@@ -1,7 +1,6 @@
 ---
 name: test-coverage
 description: テストカバレッジを分析し、不足している箇所のテストを生成。80%以上を目標。/test-coverage で実行。
-tools: ["Bash", "Read", "Write", "Edit", "Grep", "Glob"]
 ---
 
 # /test-coverage - テストカバレッジ改善

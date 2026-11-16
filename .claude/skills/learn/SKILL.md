@@ -1,7 +1,6 @@
 ---
 name: learn
 description: 問題解決のパターンを抽出し、再利用可能なスキルとして保存。/learn で実行。
-tools: ["Read", "Write", "Glob"]
 ---
 
 # /learn - パターン学習
@@ -53,14 +52,14 @@ tools: ["Read", "Write", "Glob"]
    - 保存前に内容を確認
 
 5. **スキルファイル保存**
-   - `.claude/skills/learned/` に保存
+   - `.claude/skills/<name>/SKILL.md` に保存（frontmatter に name と description 必須）
 
 ## スキルファイルテンプレート
 
 ```markdown
 ---
-name: パターン名
-description: 簡潔な説明
+name: pattern-name   # 英小文字とハイフン（ディレクトリ名と同じ）
+description: いつ使うかが分かる簡潔な説明
 tags: [error, nextjs, drizzle]
 learned_at: 2024-01-27
 ---
@@ -163,8 +162,8 @@ const rows = await db
 ## 保存先
 
 ```
-.claude/skills/learned/
-├── drizzle-n-plus-one.md
-├── nextjs-server-client-boundary.md
-└── auth-session-handling.md
+.claude/skills/
+├── drizzle-n-plus-one/SKILL.md
+├── nextjs-server-client-boundary/SKILL.md
+└── auth-session-handling/SKILL.md
 ```

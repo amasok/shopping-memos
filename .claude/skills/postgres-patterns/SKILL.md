@@ -1,7 +1,6 @@
 ---
 name: postgres-patterns
 description: PostgreSQLのベストプラクティス。クエリ最適化、スキーマ設計、インデックス、RLS（Row Level Security）のパターン集。
-tools: ["Read", "Bash", "Grep"]
 ---
 
 # PostgreSQLパターン
