@@ -5,6 +5,8 @@ tools: ["Read", "Edit", "Bash", "Grep", "Glob"]
 model: sonnet
 ---
 
+> 原因が分からないエラーや、設計に関わる修正が必要な場合は Opus に切り替える（`.claude/rules/performance.md`）。
+
 # ビルドエラー解決スペシャリスト
 
 TypeScript、コンパイル、ビルドエラーを迅速かつ効率的に修正する専門エージェント。

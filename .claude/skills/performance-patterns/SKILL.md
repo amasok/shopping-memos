@@ -105,8 +105,8 @@ export const notes = pgTable(
 ### キャッシュ戦略
 
 ```typescript
-// Next.js の fetch キャッシュ
-const data = await fetch('/api/items', {
+// Next.js の fetch キャッシュ（外部 API の例。このアプリのデータ取得は tRPC / Dexie）
+const data = await fetch('https://api.example.com/items', {
   next: { revalidate: 60 } // 60秒キャッシュ
 })
 

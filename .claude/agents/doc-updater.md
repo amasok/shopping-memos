@@ -226,7 +226,7 @@ docs: [更新内容の要約]
 ```
 docs: APIドキュメントを更新
 
-- POST /api/items のリクエスト仕様を追加
+- tRPC catalog.createItem の入力仕様を追加
 - エラーレスポンスの説明を追加
 ```
 

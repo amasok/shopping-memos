@@ -5,6 +5,8 @@ tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
 model: sonnet
 ---
 
+> 不安定なテスト（flaky）の原因調査など、原因が分からない場合は Opus に切り替える（`.claude/rules/performance.md`）。
+
 # E2Eテストランナー
 
 Playwrightを使用したエンドツーエンドテストの作成・実行を担当する専門エージェント。

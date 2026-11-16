@@ -61,7 +61,7 @@ description: 問題解決のパターンを抽出し、再利用可能なスキ�
 name: pattern-name   # 英小文字とハイフン（ディレクトリ名と同じ）
 description: いつ使うかが分かる簡潔な説明
 tags: [error, nextjs, drizzle]
-learned_at: 2024-01-27
+learned_at: 2026-11-16  # 任意の独自項目（tags と同じく標準外）
 ---
 
 # パターン名
@@ -117,7 +117,7 @@ learned_at: 2024-01-27
 name: drizzle-n-plus-one
 description: DrizzleでN+1問題を解決するinArrayパターン
 tags: [drizzle, performance, database]
-learned_at: 2024-01-27
+learned_at: 2026-11-16
 ---
 
 # Drizzle N+1問題の解決
