@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { LIMITS, boundedRecordSchema } from "../limits"
+import { MERGE_LIMITS, REQUEST_LIMITS, TEXT_LIMITS, boundedRecordSchema } from "../limits"
 import { createItemSchema, getItemsQuerySchema, updateItemSchema } from "../item"
 import { addNewItemToListSchema, createListSchema } from "../list"
 import { acceptInviteSchema } from "../group"
@@ -27,8 +27,12 @@ const emptyMerge = { items: [], tags: [], lists: [], listItems: [], history: [] 
 
 describe("入力の上限（#72）", () => {
   describe("tagIds", () => {
+    it("API のタグ数の上限は merge と同じ値", () => {
+      expect(REQUEST_LIMITS.tagIds).toBe(MERGE_LIMITS.tagIdsPerEntity)
+    })
+
     it("上限ちょうどの件数は受け付ける", () => {
-      expect(createItemSchema.safeParse({ name: "牛乳", tagIds: uuids(LIMITS.tagIds) }).success).toBe(true)
+      expect(createItemSchema.safeParse({ name: "牛乳", tagIds: uuids(REQUEST_LIMITS.tagIds) }).success).toBe(true)
     })
 
     it.each([
@@ -39,19 +43,20 @@ describe("入力の上限（#72）", () => {
       ["addNewItemToList", (tagIds: string[]) =>
         addNewItemToListSchema.safeParse({ listId: uuids(1)[0], name: "牛乳", tagIds })],
     ])("%s は上限を超えるタグを拒否する", (_, parse) => {
-      expect(parse(uuids(LIMITS.tagIds + 1)).success).toBe(false)
+      expect(parse(uuids(REQUEST_LIMITS.tagIds + 1)).success).toBe(false)
     })
   })
 
   describe("itemIds", () => {
     it("createList は上限までのアイテムを受け付け、超えたら拒否する", () => {
-      expect(createListSchema.safeParse({ name: "L", itemIds: uuids(LIMITS.itemIds) }).success).toBe(true)
-      expect(createListSchema.safeParse({ name: "L", itemIds: uuids(LIMITS.itemIds + 1) }).success).toBe(false)
+      expect(createListSchema.safeParse({ name: "L", itemIds: uuids(REQUEST_LIMITS.itemIds) }).success).toBe(true)
+      expect(createListSchema.safeParse({ name: "L", itemIds: uuids(REQUEST_LIMITS.itemIds + 1) }).success).toBe(false)
     })
   })
 
   describe("quantity", () => {
-    it("9999 までは受け付ける", () => {
+    it("上限（9999）までは受け付ける", () => {
+      expect(TEXT_LIMITS.quantityMax).toBe(9999)
       expect(createItemSchema.safeParse({ name: "牛乳", quantity: 9999 }).success).toBe(true)
     })
 
@@ -72,8 +77,8 @@ describe("入力の上限（#72）", () => {
 
   describe("招待トークン", () => {
     it("長すぎるトークンを拒否する", () => {
-      expect(acceptInviteSchema.safeParse({ token: "a".repeat(LIMITS.inviteToken) }).success).toBe(true)
-      expect(acceptInviteSchema.safeParse({ token: "a".repeat(LIMITS.inviteToken + 1) }).success).toBe(false)
+      expect(acceptInviteSchema.safeParse({ token: "a".repeat(REQUEST_LIMITS.inviteToken) }).success).toBe(true)
+      expect(acceptInviteSchema.safeParse({ token: "a".repeat(REQUEST_LIMITS.inviteToken + 1) }).success).toBe(false)
     })
   })
 
@@ -83,7 +88,7 @@ describe("入力の上限（#72）", () => {
     })
 
     it("JSON で 8KB を超えるレコードを拒否する", () => {
-      expect(boundedRecordSchema.safeParse({ memo: "a".repeat(LIMITS.recordBytes) }).success).toBe(false)
+      expect(boundedRecordSchema.safeParse({ memo: "a".repeat(REQUEST_LIMITS.recordBytes) }).success).toBe(false)
     })
 
     it("マルチバイト文字は UTF-8 のバイト数で数える", () => {
@@ -94,44 +99,41 @@ describe("入力の上限（#72）", () => {
 
   describe("sync.push", () => {
     it("100 件までの操作は受け付ける", () => {
-      const operations = Array.from({ length: LIMITS.pushOperations }, () => operation())
+      const operations = Array.from({ length: REQUEST_LIMITS.pushOperations }, () => operation())
       expect(syncPushInputSchema.safeParse({ operations }).success).toBe(true)
     })
 
     it("100 件を超える操作を拒否する", () => {
-      const operations = Array.from({ length: LIMITS.pushOperations + 1 }, () => operation())
+      const operations = Array.from({ length: REQUEST_LIMITS.pushOperations + 1 }, () => operation())
       expect(syncPushInputSchema.safeParse({ operations }).success).toBe(false)
     })
 
     it("8KB を超えるパッチを拒否する", () => {
-      const operations = [operation({ memo: "a".repeat(LIMITS.recordBytes) })]
+      const operations = [operation({ memo: "a".repeat(REQUEST_LIMITS.recordBytes) })]
       expect(syncPushInputSchema.safeParse({ operations }).success).toBe(false)
     })
 
     it("同期キューのパッチも 8KB までに制限する", () => {
-      const item = { ...operation({ memo: "a".repeat(LIMITS.recordBytes) }), retryCount: 0 }
+      const item = { ...operation({ memo: "a".repeat(REQUEST_LIMITS.recordBytes) }), retryCount: 0 }
       expect(syncQueueItemSchema.safeParse(item).success).toBe(false)
     })
   })
 
   describe("sync.pull", () => {
     it("上限を超えるグループ数を拒否する", () => {
-      expect(syncPullInputSchema.safeParse({ groupIds: uuids(LIMITS.groupIds) }).success).toBe(true)
-      expect(syncPullInputSchema.safeParse({ groupIds: uuids(LIMITS.groupIds + 1) }).success).toBe(false)
+      expect(syncPullInputSchema.safeParse({ groupIds: uuids(REQUEST_LIMITS.groupIds) }).success).toBe(true)
+      expect(syncPullInputSchema.safeParse({ groupIds: uuids(REQUEST_LIMITS.groupIds + 1) }).success).toBe(false)
     })
   })
 
   describe("sync.merge", () => {
-    it.each(Object.entries(LIMITS.merge))("%s は %i 件までに制限する", (key, max) => {
+    const counts = Object.entries(MERGE_LIMITS).filter(([key]) => key !== "tagIdsPerEntity")
+
+    it.each(counts)("%s は %i 件までに制限する", (key, max) => {
       const ok = { data: { ...emptyMerge, [key]: Array.from({ length: max }, () => ({})) } }
       const ng = { data: { ...emptyMerge, [key]: Array.from({ length: max + 1 }, () => ({})) } }
       expect(syncMergeInputSchema.safeParse(ok).success).toBe(true)
       expect(syncMergeInputSchema.safeParse(ng).success).toBe(false)
-    })
-
-    it("8KB を超えるレコードを拒否する", () => {
-      const data = { ...emptyMerge, items: [{ memo: "a".repeat(LIMITS.recordBytes) }] }
-      expect(syncMergeInputSchema.safeParse({ data }).success).toBe(false)
     })
   })
 })

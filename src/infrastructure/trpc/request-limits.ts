@@ -1,4 +1,4 @@
-import { LIMITS } from "@/shared/schemas/limits"
+import { REQUEST_LIMITS } from "@/shared/schemas/limits"
 
 /**
  * tRPC のリクエストの大きさの上限（#72）
@@ -11,8 +11,8 @@ import { LIMITS } from "@/shared/schemas/limits"
 type Limits = { batchSize: number; bodyBytes: number }
 
 const DEFAULT_LIMITS: Limits = {
-  batchSize: LIMITS.batchSize,
-  bodyBytes: LIMITS.bodyBytes,
+  batchSize: REQUEST_LIMITS.batchSize,
+  bodyBytes: REQUEST_LIMITS.bodyBytes,
 }
 
 function errorResponse(status: number, message: string): Response {

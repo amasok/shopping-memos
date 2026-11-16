@@ -1,59 +1,91 @@
 import { z } from "zod"
 
 /**
- * 入力の上限（#72）
+ * 入力の上限をここに集める。値を変えるときはここだけを直す
  *
- * レート制限の主な防御は WAF（#104）に任せ、アプリ側では 1 リクエストで発生させられる
- * DB の処理量とデータの大きさに上限を付ける。値は通常の使い方より十分大きくしてある。
- * push / パッチの値は offline-support.md「#72」（1 リクエスト 100 件、パッチは JSON で 8KB）に合わせる
+ * - TEXT_LIMITS: 文字数・数量。サーバーのスキーマ（item / tag / list / sync）と UI（maxLength・数量ボタン）、
+ *   ゲストデータの送信前の整形で共有する（#86）
+ * - MERGE_LIMITS: sync.merge の件数。DataMergeContext の送信前の整形と共有する（#86）
+ * - REQUEST_LIMITS: 1 リクエストで発生させられる DB の処理量とデータの大きさ（#72）。
+ *   レート制限の主な防御は WAF（#104）に任せる。push とパッチの値は offline-support.md「#72」に合わせる
  */
-export const LIMITS = {
-  /** アイテム・リストに付けるタグ、絞り込みに使うタグの数 */
-  tagIds: 100,
+
+export const TEXT_LIMITS = {
+  itemName: 100,
+  listName: 100,
+  listItemName: 100,
+  tagName: 50,
+  location: 100,
+  memo: 2000,
+  quantityMax: 9999,
+} as const
+
+/** マージ入力の上限（巨大なペイロードで DB の容量や処理時間を消費されないようにする） */
+export const MERGE_LIMITS = {
+  items: 1000,
+  tags: 500,
+  lists: 500,
+  listItems: 1000,
+  history: 500,
+  tagIdsPerEntity: 50,
+} as const
+
+export const REQUEST_LIMITS = {
+  /** アイテム・リストに付けるタグ、絞り込みに使うタグの数（merge と同じ値） */
+  tagIds: MERGE_LIMITS.tagIdsPerEntity,
   /** リスト作成時に直接指定するアイテムの数 */
   itemIds: 500,
-  /** 数量（DB の integer を超えないように） */
-  quantity: 9999,
   /** sync.push の 1 リクエストあたりの操作数 */
   pushOperations: 100,
   /** sync.pull で指定するグループの数 */
   groupIds: 50,
-  /** sync のパッチ・merge の 1 レコードの JSON の大きさ（バイト） */
+  /** sync のパッチの JSON の大きさ（バイト） */
   recordBytes: 8 * 1024,
-  /** sync.merge の各配列の件数 */
-  merge: {
-    items: 1000,
-    tags: 200,
-    lists: 500,
-    listItems: 5000,
-    history: 500,
-  },
   /** 招待トークンの長さ */
   inviteToken: 200,
-  /** tRPC の HTTP バッチ 1 回の呼び出し数 */
+  /** tRPC の HTTP バッチ 1 回の呼び出し数（クライアントの httpBatchLink の maxItems と同じ） */
   batchSize: 10,
   /** tRPC のリクエストボディの大きさ（バイト） */
   bodyBytes: 2 * 1024 * 1024,
+  /** /api/ogp が受け付ける URL の長さ */
+  ogpUrl: 2048,
 } as const
+
+/**
+ * 文字数の上限に収める。数え方は Zod の `.max()` と同じ UTF-16 の単位。
+ * 切る位置がサロゲートペア（絵文字など）の途中なら、1 文字手前で切る
+ */
+export function clipText(value: string, max: number): string {
+  if (value.length <= max) return value
+  const lastKept = value.charCodeAt(max - 1)
+  const isHighSurrogate = lastKept >= 0xd800 && lastKept <= 0xdbff
+  return value.slice(0, isHighSurrogate ? max - 1 : max)
+}
+
+/** 数量を、1〜上限の整数に収める */
+export function clampQuantity(value: number): number {
+  if (!Number.isFinite(value)) return 1
+  return Math.min(TEXT_LIMITS.quantityMax, Math.max(1, Math.trunc(value)))
+}
 
 /** UTF-8 でのバイト数 */
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).length
 }
 
-/** JSON にしたときの大きさが上限以内のレコード（sync のパッチ・merge 用） */
+/** JSON にしたときの大きさが上限以内のレコード（sync のパッチ用） */
 export const boundedRecordSchema = z
   .record(z.string(), z.unknown())
-  .refine((record) => byteLength(JSON.stringify(record)) <= LIMITS.recordBytes, {
-    message: `1 件のデータは ${LIMITS.recordBytes} バイト以内です`,
+  .refine((record) => byteLength(JSON.stringify(record)) <= REQUEST_LIMITS.recordBytes, {
+    message: `1 件のデータは ${REQUEST_LIMITS.recordBytes} バイト以内です`,
   })
 
 export const tagIdsSchema = z
   .array(z.string().uuid())
-  .max(LIMITS.tagIds, `タグは${LIMITS.tagIds}件までです`)
+  .max(REQUEST_LIMITS.tagIds, `タグは${REQUEST_LIMITS.tagIds}件までです`)
 
 export const quantitySchema = z
   .number()
   .int()
   .min(1, "数量は1以上です")
-  .max(LIMITS.quantity, `数量は${LIMITS.quantity}以下です`)
+  .max(TEXT_LIMITS.quantityMax, `数量は${TEXT_LIMITS.quantityMax}以下です`)

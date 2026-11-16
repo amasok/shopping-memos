@@ -1,3 +1,4 @@
+import { REQUEST_LIMITS } from "@/shared/schemas/limits"
 import type { IncomingMessage } from "http"
 import { NextRequest, NextResponse } from "next/server"
 import { requestPinned } from "./http-client"
@@ -14,7 +15,7 @@ import {
 const MAX_REDIRECTS = 5
 const TIMEOUT_MS = 8000
 /** 受け付ける URL の長さ（#72） */
-const MAX_URL_LENGTH = 2048
+const MAX_URL_LENGTH = REQUEST_LIMITS.ogpUrl
 // OGP は <head> にあるので先頭だけ読む（DoS・正規表現の計算量対策）
 const MAX_BYTES = 512 * 1024
 

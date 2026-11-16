@@ -6,7 +6,8 @@
 let counter = 0
 function nextId(): string {
   counter++
-  return `test-${counter}-${Date.now()}`
+  // サーバーの sync.merge は id に UUID を要求する（ゲストの実データと同じ形にする）
+  return crypto.randomUUID()
 }
 
 /** テスト間でカウンタをリセット */

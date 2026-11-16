@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { httpBatchLink } from "@trpc/client"
-import { LIMITS } from "@/shared/schemas/limits"
+import { REQUEST_LIMITS } from "@/shared/schemas/limits"
 import superjson from "superjson"
 import { trpc } from "./client"
 
@@ -48,7 +48,7 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
         httpBatchLink({
           url: `${getBaseUrl()}/api/trpc`,
           // サーバーのバッチ件数の上限（#72）に合わせて分割する
-          maxItems: LIMITS.batchSize,
+          maxItems: REQUEST_LIMITS.batchSize,
           transformer: superjson,
         }),
       ],

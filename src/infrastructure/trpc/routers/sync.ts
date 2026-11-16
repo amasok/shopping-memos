@@ -3,6 +3,7 @@ import {
   syncPushInputSchema,
   syncPullInputSchema,
   syncMergeInputSchema,
+  parseMergeData,
 } from "@/shared/schemas/sync"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
@@ -140,53 +141,15 @@ export const syncRouter = router({
     .mutation(async ({ input, ctx }) => {
       const { data } = input
 
-      // 型アサーション用のヘルパー
-      type RawItem = { id?: string; name?: string; quantity?: number; memo?: string | null; tagIds?: string[]; purchasedAt?: string | null; createdAt?: string }
-      type RawTag = { id?: string; name?: string; createdAt?: string }
-      type RawList = { id?: string; name?: string; status?: string; createdAt?: string; completedAt?: string | null }
-      type RawListItem = { id?: string; listId?: string; name?: string; quantity?: number; memo?: string | null; tagIds?: string[]; checked?: boolean; createdAt?: string }
-      type RawHistory = { id?: string; listId?: string; location?: string | null; purchasedAt?: string }
-
-      // DataMergeServiceを使用してデータをマージ
-      const mergeResult = await dataMergeService.merge(ctx.userId, {
-        items: (data.items as RawItem[]).map((item) => ({
-          id: item.id ?? "",
-          name: item.name ?? "",
-          quantity: item.quantity ?? 1,
-          memo: item.memo,
-          tagIds: item.tagIds ?? [],
-          purchasedAt: item.purchasedAt ? new Date(item.purchasedAt) : null,
-          createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
-        })),
-        tags: (data.tags as RawTag[]).map((tag) => ({
-          id: tag.id ?? "",
-          name: tag.name ?? "",
-          createdAt: tag.createdAt ? new Date(tag.createdAt) : new Date(),
-        })),
-        lists: (data.lists as RawList[]).map((list) => ({
-          id: list.id ?? "",
-          name: list.name ?? "",
-          status: (list.status ?? "in_progress") as "in_progress" | "completed",
-          createdAt: list.createdAt ? new Date(list.createdAt) : new Date(),
-          completedAt: list.completedAt ? new Date(list.completedAt) : null,
-        })),
-        listItems: (data.listItems as RawListItem[]).map((listItem) => ({
-          id: listItem.id ?? "",
-          listId: listItem.listId ?? "",
-          name: listItem.name ?? "",
-          quantity: listItem.quantity ?? 1,
-          memo: listItem.memo,
-          tagIds: listItem.tagIds ?? [],
-          checked: listItem.checked ?? false,
-          createdAt: listItem.createdAt ? new Date(listItem.createdAt) : new Date(),
-        })),
-        history: (data.history as RawHistory[]).map((history) => ({
-          id: history.id ?? "",
-          listId: history.listId ?? "",
-          location: history.location,
-          purchasedAt: history.purchasedAt ? new Date(history.purchasedAt) : new Date(),
-        })),
-      })
+      // 入力は Zod で検証・変換する（型キャストや ?? による補完はしない）
+      // 形式が不正な要素は 1 件ずつスキップし、ほかのデータは取り込む
+      const { data: validData, errors: validationErrors } = parseMergeData(data)
+      const serviceResult = await dataMergeService.merge(ctx.userId, validData)
+      const mergeResult = {
+        ...serviceResult,
+        success: serviceResult.success && validationErrors.length === 0,
+        errors: [...validationErrors, ...serviceResult.errors],
+      }
 
       if (!mergeResult.success && mergeResult.errors.length > 0) {
         console.error("Merge errors:", mergeResult.errors)

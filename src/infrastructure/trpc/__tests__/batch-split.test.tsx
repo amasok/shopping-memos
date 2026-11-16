@@ -6,7 +6,7 @@ import { useEffect } from "react"
 import { TRPCProvider } from "../provider"
 import { trpc } from "../client"
 import { enforceRequestLimits } from "../request-limits"
-import { LIMITS } from "@/shared/schemas/limits"
+import { REQUEST_LIMITS } from "@/shared/schemas/limits"
 
 /**
  * #72: サーバーはバッチの呼び出し数を 10 件までに制限する。
@@ -64,7 +64,7 @@ describe("tRPC クライアントのバッチ分割 (#72)", () => {
 
     await waitFor(() => expect(done).toHaveBeenCalledWith(25))
     expect(requested.reduce((sum, r) => sum + r.calls, 0)).toBe(25)
-    expect(Math.max(...requested.map((r) => r.calls))).toBeLessThanOrEqual(LIMITS.batchSize)
+    expect(Math.max(...requested.map((r) => r.calls))).toBeLessThanOrEqual(REQUEST_LIMITS.batchSize)
     expect(requested.length).toBeGreaterThanOrEqual(3)
   })
 

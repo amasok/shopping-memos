@@ -1,4 +1,10 @@
+import { randomBytes } from "crypto"
 import { defineConfig, devices } from "@playwright/test"
+
+// E2E 専用ルート（seed API・テスト用ログイン）の共有シークレット（#70）。
+// 未設定ならここで生成する。webServer とテストの worker は環境変数を引き継ぐので同じ値になる。
+// 自分で起動したサーバーを再利用する場合は、サーバーとテストの両方に同じ E2E_SEED_TOKEN を設定する
+process.env.E2E_SEED_TOKEN ||= randomBytes(32).toString("hex")
 
 export default defineConfig({
   testDir: "./e2e",
@@ -42,7 +48,7 @@ export default defineConfig({
       testDir: "./e2e/auth",
       testIgnore: /auth\.setup\.ts/,
     },
-    // SW・オフライン（本番ビルドが必要。E2E_OFFLINE=true のときだけ有効: npm run build 後に実行）
+    // SW・オフライン（本番ビルドが必要。E2E_OFFLINE=true のときだけ有効: E2E_BUILD=true npm run build 後に実行）
     ...(process.env.E2E_OFFLINE
       ? [
         {
@@ -69,10 +75,11 @@ export default defineConfig({
         ]
       : []),
     {
-    // CI は事前に npm run build 済みの本番ビルドで起動する（dev の初回コンパイル待ちによるタイムアウトを避ける）
+    // CI は事前に E2E_BUILD=true npm run build 済みの本番ビルドで起動する（dev の初回コンパイル待ちによるタイムアウトを避ける）
+    // E2E 専用ルートは E2E_BUILD=true のビルド（dev ではサーバー起動時）にだけ含まれる（#70）
     command: process.env.CI
       ? "E2E_TEST=true npm run start"
-      : "E2E_TEST=true npm run dev",
+      : "E2E_BUILD=true E2E_TEST=true npm run dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,

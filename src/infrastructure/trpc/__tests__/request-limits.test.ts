@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest"
 import { countBatchCalls, enforceRequestLimits } from "../request-limits"
-import { LIMITS } from "@/shared/schemas/limits"
+import { REQUEST_LIMITS } from "@/shared/schemas/limits"
 
 const ENDPOINT = "/api/trpc"
 const limits = { batchSize: 3, bodyBytes: 100 }
@@ -42,7 +42,7 @@ describe("countBatchCalls", () => {
 
 describe("enforceRequestLimits", () => {
   it("既定の上限はクライアントの maxItems と同じ値を使う", async () => {
-    const path = Array.from({ length: LIMITS.batchSize + 1 }, (_, i) => `p${i}`).join(",")
+    const path = Array.from({ length: REQUEST_LIMITS.batchSize + 1 }, (_, i) => `p${i}`).join(",")
     const result = await enforceRequestLimits(new Request(url(`${path}?batch=1`)), ENDPOINT)
     expect("response" in result && result.response.status).toBe(400)
   })

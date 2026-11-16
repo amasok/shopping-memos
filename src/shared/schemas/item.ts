@@ -1,11 +1,11 @@
 import { z } from "zod"
-import { quantitySchema, tagIdsSchema } from "./limits"
+import { TEXT_LIMITS, quantitySchema, tagIdsSchema } from "./limits"
 
 // アイテム作成
 export const createItemSchema = z.object({
-  name: z.string().min(1, "名前は必須です").max(100, "名前は100文字以内です"),
+  name: z.string().min(1, "名前は必須です").max(TEXT_LIMITS.itemName, `名前は${TEXT_LIMITS.itemName}文字以内です`),
   quantity: quantitySchema.default(1),
-  memo: z.string().max(500, "メモは500文字以内です").optional(),
+  memo: z.string().max(TEXT_LIMITS.memo, `メモは${TEXT_LIMITS.memo}文字以内です`).optional(),
   tagIds: tagIdsSchema.default([]),
   groupId: z.string().uuid().optional(),
 })
@@ -15,9 +15,9 @@ export type CreateItemInput = z.infer<typeof createItemSchema>
 // アイテム更新
 export const updateItemSchema = z.object({
   id: z.string().uuid(),
-  name: z.string().min(1, "名前は必須です").max(100, "名前は100文字以内です").optional(),
+  name: z.string().min(1, "名前は必須です").max(TEXT_LIMITS.itemName, `名前は${TEXT_LIMITS.itemName}文字以内です`).optional(),
   quantity: quantitySchema.optional(),
-  memo: z.string().max(500, "メモは500文字以内です").nullish(),
+  memo: z.string().max(TEXT_LIMITS.memo, `メモは${TEXT_LIMITS.memo}文字以内です`).nullish(),
   tagIds: tagIdsSchema.optional(),
 })
 
