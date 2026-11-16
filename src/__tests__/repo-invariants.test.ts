@@ -41,14 +41,32 @@ describe("migration の _journal.json (#122)", () => {
 })
 
 /**
- * #122: Next.js の codemod などが AGENTS.md に索引ブロックを入れると、エージェントのトークン消費が増える
+ * #122: Next.js が AGENTS.md に書き足すブロックが入ると、エージェントのトークン消費が増える
+ * - 現行: next dev が書き足すルールのブロック（BEGIN:nextjs-agent-rules）と、feedback のブロック
+ * - 旧版: codemod（npx @next/codemod agents-md）が入れる索引ブロック（NEXT-AGENTS-MD-START）
  */
+const NEXT_AGENT_BLOCK = /NEXT-AGENTS-MD-(START|END)|(BEGIN|END):nextjs-agent-(rules|feedback)/
+
 describe("AGENTS.md (#122)", () => {
-  it("Next.js の索引ブロック（NEXT-AGENTS-MD）が入っていない", () => {
+  it("Next.js が書き足すブロック（現行のルール・feedback、旧版の索引）が入っていない", () => {
     for (const file of ["AGENTS.md", "CLAUDE.md"]) {
       const full = path.join(root, file)
       if (!existsSync(full)) continue
-      expect(readFileSync(full, "utf-8"), `${file} に索引ブロックがある`).not.toMatch(/NEXT-AGENTS-MD-(START|END)/)
+      expect(readFileSync(full, "utf-8"), `${file} に Next.js のブロックがある`).not.toMatch(NEXT_AGENT_BLOCK)
     }
+  })
+
+  it.each([
+    ["<!-- BEGIN:nextjs-agent-rules -->"],
+    ["<!-- END:nextjs-agent-rules -->"],
+    ["<!-- BEGIN:nextjs-agent-feedback -->"],
+    ["<!-- NEXT-AGENTS-MD-START -->"],
+  ])("検出するマーカー: %s", (marker) => {
+    expect(marker).toMatch(NEXT_AGENT_BLOCK)
+  })
+
+  it("next.config.ts で、next dev が AGENTS.md に書き足す動作（agentRules）を止めている", () => {
+    const config = readFileSync(path.join(root, "next.config.ts"), "utf-8")
+    expect(config).toMatch(/^\s*agentRules: false,/m)
   })
 })
