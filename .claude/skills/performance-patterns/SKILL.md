@@ -86,9 +86,9 @@ const rows = await db.select({ id: users.id, name: users.name }).from(users)
 ### インデックス
 
 ```typescript
-// src/infrastructure/db/drizzle/schema.ts
-export const listItems = pgTable(
-  "list_items",
+// 例（架空のテーブル。実際のスキーマは src/infrastructure/db/drizzle/schema.ts）
+export const notes = pgTable(
+  "notes",
   {
     id: text("id").primaryKey(),
     listId: text("list_id").notNull(),
@@ -96,8 +96,8 @@ export const listItems = pgTable(
   },
   // クエリパターンに基づくインデックス
   (table) => [
-    index("list_items_list_idx").on(table.listId),
-    index("list_items_list_created_idx").on(table.listId, table.createdAt.desc()),
+    index("notes_list_idx").on(table.listId),
+    index("notes_list_created_idx").on(table.listId, table.createdAt.desc()),
   ]
 )
 ```

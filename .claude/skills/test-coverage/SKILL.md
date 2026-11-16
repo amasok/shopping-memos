@@ -54,7 +54,7 @@ npm test -- --coverage --coverageReporters=json-summary
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 src/lib/utils.ts           45%   30%  ⚠️
 src/components/Modal.tsx   62%   55%  ⚠️
-src/app/api/items/route.ts 70%   65%
+src/app/api/ogp/route.ts   70%   65%
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 全体                       75%   68%  ⚠️ 目標: 80%
 ```
@@ -111,65 +111,33 @@ describe('formatPrice', () => {
 })
 ```
 
-### APIルート
+### API（Route Handler / tRPC）
+
+API の大半は tRPC（`src/infrastructure/trpc/routers`）。入力検証は `src/shared/schemas` の Zod スキーマ単体で、
+DB アクセスは Drizzle をモックしてリポジトリ単位でテストする（例は `testing-patterns` スキル）。
 
 ```typescript
-// src/app/api/items/__tests__/route.test.ts
-import { GET, POST } from '../route'
+// src/app/api/ogp/__tests__/route.test.ts
+import { NextRequest } from 'next/server'
+import { GET } from '../route'
 
-describe('GET /api/items', () => {
-  it('アイテム一覧を返す', async () => {
-    const response = await GET()
-    const data = await response.json()
-
-    expect(response.status).toBe(200)
-    expect(Array.isArray(data)).toBe(true)
-  })
-
-  it('認証エラーで401を返す', async () => {
-    // 認証なしでリクエスト
-    const response = await GET()
-    expect(response.status).toBe(401)
-  })
-})
-
-describe('POST /api/items', () => {
-  it('新しいアイテムを作成する', async () => {
-    const request = new Request('http://localhost/api/items', {
-      method: 'POST',
-      body: JSON.stringify({ name: 'テスト', quantity: 1 }),
-    })
-
-    const response = await POST(request)
-    expect(response.status).toBe(201)
-  })
-
-  it('バリデーションエラーで400を返す', async () => {
-    const request = new Request('http://localhost/api/items', {
-      method: 'POST',
-      body: JSON.stringify({ name: '' }), // 空の名前
-    })
-
-    const response = await POST(request)
-    expect(response.status).toBe(400)
-  })
+it('url パラメータがない場合は 400 を返す', async () => {
+  const res = await GET(new NextRequest('http://localhost/api/ogp'))
+  expect(res.status).toBe(400)
 })
 ```
 
 ## カバレッジ目標
 
-```javascript
-// jest.config.js
-module.exports = {
-  coverageThreshold: {
-    global: {
-      branches: 80,
-      functions: 80,
-      lines: 80,
-      statements: 80,
+```typescript
+// vitest.config.ts
+export default defineConfig({
+  test: {
+    coverage: {
+      thresholds: { branches: 80, functions: 80, lines: 80, statements: 80 },
     },
   },
-}
+})
 ```
 
 ## 改善レポート
@@ -184,11 +152,11 @@ module.exports = {
 
 追加したテスト:
   ✅ src/lib/__tests__/utils.test.ts (12 cases)
-  ✅ src/app/api/items/__tests__/route.test.ts (8 cases)
+  ✅ src/app/api/ogp/__tests__/route.test.ts (8 cases)
 
 カバレッジ変化:
   src/lib/utils.ts:           45% → 92% (+47%)
-  src/app/api/items/route.ts: 70% → 88% (+18%)
+  src/app/api/ogp/route.ts:   70% → 88% (+18%)
 
 目標達成: ✅ 80%以上
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
