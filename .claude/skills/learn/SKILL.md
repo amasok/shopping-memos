@@ -1,7 +1,6 @@
 ---
 name: learn
 description: 問題解決のパターンを抽出し、再利用可能なスキルとして保存。/learn で実行。
-tools: ["Read", "Write", "Glob"]
 ---
 
 # /learn - パターン学習
@@ -53,16 +52,16 @@ tools: ["Read", "Write", "Glob"]
    - 保存前に内容を確認
 
 5. **スキルファイル保存**
-   - `.claude/skills/learned/` に保存
+   - `.claude/skills/<name>/SKILL.md` に保存（frontmatter に name と description 必須）
 
 ## スキルファイルテンプレート
 
 ```markdown
 ---
-name: パターン名
-description: 簡潔な説明
-tags: [error, nextjs, prisma]
-learned_at: 2024-01-27
+name: pattern-name   # 英小文字とハイフン（ディレクトリ名と同じ）
+description: いつ使うかが分かる簡潔な説明
+tags: [error, nextjs, drizzle]
+learned_at: 2026-11-16  # 任意の独自項目（tags と同じく標準外）
 ---
 
 # パターン名
@@ -111,45 +110,45 @@ learned_at: 2024-01-27
 
 ## 保存例
 
-### Prisma N+1問題の解決
+### Drizzle N+1問題の解決
 
 ```markdown
 ---
-name: prisma-n-plus-one
-description: PrismaでN+1問題を解決するincludeパターン
-tags: [prisma, performance, database]
-learned_at: 2024-01-27
+name: drizzle-n-plus-one
+description: DrizzleでN+1問題を解決するinArrayパターン
+tags: [drizzle, performance, database]
+learned_at: 2026-11-16
 ---
 
-# Prisma N+1問題の解決
+# Drizzle N+1問題の解決
 
 ## 問題
 買い物リストを取得する際、各リストのアイテムを
 個別にクエリしてしまいN+1問題が発生。
 
 ## 原因
-findManyでリストを取得後、ループ内でアイテムを取得していた。
+リストを取得後、ループ内でアイテムを取得していた。
 
 ## 解決策
-includeを使用して1回のクエリで関連データを取得。
+リストIDを集めて `inArray` で1回のクエリで関連データを取得。
 
 ## 例
 
 ### Before
 \`\`\`typescript
-const lists = await prisma.shoppingList.findMany()
+const lists = await db.select().from(shoppingLists)
 for (const list of lists) {
-  list.items = await prisma.shoppingItem.findMany({
-    where: { listId: list.id }
-  })
+  const rows = await db.select().from(listItems).where(eq(listItems.listId, list.id))
 }
 \`\`\`
 
 ### After
 \`\`\`typescript
-const lists = await prisma.shoppingList.findMany({
-  include: { items: true }
-})
+const lists = await db.select().from(shoppingLists)
+const rows = await db
+  .select()
+  .from(listItems)
+  .where(inArray(listItems.listId, lists.map((l) => l.id)))
 \`\`\`
 
 ## 適用条件
@@ -157,14 +156,14 @@ const lists = await prisma.shoppingList.findMany({
 - ループ内でクエリを実行している時
 
 ## 関連
-- https://www.prisma.io/docs/guides/performance-and-optimization/query-optimization-performance
+- https://orm.drizzle.team/docs/operators#inarray
 ```
 
 ## 保存先
 
 ```
-.claude/skills/learned/
-├── prisma-n-plus-one.md
-├── nextjs-server-client-boundary.md
-└── auth-session-handling.md
+.claude/skills/
+├── drizzle-n-plus-one/SKILL.md
+├── nextjs-server-client-boundary/SKILL.md
+└── auth-session-handling/SKILL.md
 ```

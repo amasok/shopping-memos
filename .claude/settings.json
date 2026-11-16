@@ -16,9 +16,6 @@
       "Bash(gh api:*)",
       "Bash(mkdir *)"
     ],
-    "ask": [
-      "Bash(git push:*)"
-    ],
     "deny": [
       "Read(./.env)"
     ]
