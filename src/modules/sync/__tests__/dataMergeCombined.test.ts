@@ -48,7 +48,10 @@ function setup(opts: {
       set: () => ({ where: () => ({ returning: async () => [{ id: "x" }] }) }),
     }),
   }
-  state.db = { transaction: async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx) }
+  const txWithSavepoint = Object.assign(tx, {
+    transaction: async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx),
+  })
+  state.db = { transaction: async (cb: (t: typeof tx) => Promise<unknown>) => cb(txWithSavepoint) }
 }
 
 const inserted = (table: string) => state.inserts.filter((i) => i.table === table)

@@ -74,6 +74,10 @@ export function createFakeTx(options: FakeTxOptions = {}) {
     }),
   }
 
-  const db = { transaction: async <T>(cb: (t: typeof tx) => Promise<T>) => cb(tx) }
+  // SAVEPOINT（tx.transaction）はそのまま実行するだけのモック
+  const txWithSavepoint = Object.assign(tx, {
+    transaction: async <T>(cb: (t: typeof tx) => Promise<T>) => cb(tx),
+  })
+  const db = { transaction: async <T>(cb: (t: typeof txWithSavepoint) => Promise<T>) => cb(txWithSavepoint) }
   return { db, writes }
 }
