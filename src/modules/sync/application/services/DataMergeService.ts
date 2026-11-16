@@ -87,13 +87,20 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
  * "current transaction is aborted" で失敗する。SAVEPOINT 単位で囲めば、失敗した分だけが
  * ロールバックされ、ほかのデータのマージを続けられる。成功したら true を返す。
  */
-async function inSavepoint(tx: Tx, fn: (sp: Tx) => Promise<void>): Promise<boolean> {
+async function inSavepoint(
+  tx: Tx,
+  label: string,
+  fn: (sp: Tx) => Promise<void>
+): Promise<boolean> {
   try {
     await tx.transaction(async (sp) => {
       await fn(sp as unknown as Tx)
     })
     return true
-  } catch {
+  } catch (error) {
+    // 原因の調査用。データの中身は出さず、対象（エンティティと ID）とエラーコードだけを記録する
+    const code = (error as { code?: string } | null)?.code ?? "unknown"
+    console.error(`[DataMerge] ${label} のマージに失敗 (code: ${code})`)
     return false
   }
 }
@@ -149,7 +156,7 @@ export class DataMergeService {
       await db.transaction(async (tx) => {
         // 1. タグをマージ（アイテムより先に）
         for (const tag of data.tags) {
-          const ok = await inSavepoint(tx, async (sp) => {
+          const ok = await inSavepoint(tx, `tag:${tag.id}`, async (sp) => {
             await sp.insert(tags).values({
               id: tag.id,
               name: tag.name,
@@ -182,7 +189,7 @@ export class DataMergeService {
 
         // 2. アイテムをマージ
         for (const item of data.items) {
-          const ok = await inSavepoint(tx, async (sp) => {
+          const ok = await inSavepoint(tx, `item:${item.id}`, async (sp) => {
             await sp.insert(items).values({
               id: item.id,
               name: item.name,
@@ -211,7 +218,7 @@ export class DataMergeService {
             }
             for (const tagId of allowedTagIds) {
               // タグが存在しない場合などはその関連だけスキップ（失敗しても SAVEPOINT 内を汚さない）
-              await inSavepoint(sp, async (inner) => {
+              await inSavepoint(sp, `itemTag:${item.id}:${tagId}`, async (inner) => {
                 await inner.insert(itemTags).values({
                   itemId: item.id,
                   tagId,
@@ -238,7 +245,7 @@ export class DataMergeService {
 
         // 3. リストをマージ
         for (const list of data.lists) {
-          const ok = await inSavepoint(tx, async (sp) => {
+          const ok = await inSavepoint(tx, `list:${list.id}`, async (sp) => {
             await sp.insert(shoppingLists).values({
               id: list.id,
               name: list.name,
@@ -275,7 +282,7 @@ export class DataMergeService {
             errors.push(`リストアイテム "${listItem.name}" のマージに失敗（リストにアクセスできません）`)
             continue
           }
-          const ok = await inSavepoint(tx, async (sp) => {
+          const ok = await inSavepoint(tx, `listItem:${listItem.id}`, async (sp) => {
             await sp.insert(listItems).values({
               id: listItem.id,
               listId: listItem.listId,
@@ -313,7 +320,7 @@ export class DataMergeService {
             continue
           }
           let notFound = false
-          const ok = await inSavepoint(tx, async (sp) => {
+          const ok = await inSavepoint(tx, `history:${history.id}`, async (sp) => {
             // 履歴データをリストのpurchasedAt/locationとして反映
             // 他人のリストを上書きしないよう、今回作成したリスト以外は作成者本人のリストに限定する
             const updated = await sp

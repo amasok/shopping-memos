@@ -9,7 +9,29 @@ import { Cloud, AlertCircle, CheckCircle, RefreshCw } from "lucide-react"
  * ログイン時にローカルデータをサーバーに同期中の状態を表示
  */
 export function DataMergeStatus() {
-  const { isMerging, isMergeCompleted, error, mergedCounts, retryMerge } = useDataMerge()
+  const { isMerging, isMergeCompleted, error, mergedCounts, retryMerge, skippedCount, dismissSkipped } =
+    useDataMerge()
+
+  // マージ後、取り込めなかったデータがあれば件数を通知する（閉じるまで表示）
+  if (!isMerging && !error && skippedCount > 0) {
+    return (
+      <div
+        role="status"
+        data-testid="merge-skipped-notice"
+        className="fixed inset-x-4 bottom-20 z-50 flex items-center justify-between gap-3 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-lg ring-1 ring-amber-200"
+      >
+        <span>{skippedCount}件のデータは取り込めませんでした</span>
+        <button
+          type="button"
+          onClick={dismissSkipped}
+          data-testid="merge-skipped-dismiss"
+          className="rounded px-2 py-1 font-medium hover:bg-amber-100"
+        >
+          閉じる
+        </button>
+      </div>
+    )
+  }
 
   // マージ中でなく、エラーもなく、完了済みなら何も表示しない
   if (!isMerging && !error && isMergeCompleted) {
