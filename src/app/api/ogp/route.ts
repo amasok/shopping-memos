@@ -95,15 +95,20 @@ class UnsupportedEncodingError extends Error {}
 
 /**
  * Content-Encoding に応じて展開するストリームを返す。圧縮なしは応答をそのまま返す。
- * 送っていない圧縮方式（zstd・deflate など）は扱わない
+ * 送っていない圧縮方式（zstd・deflate・重ねがけなど）は扱わない
  */
 function decodeBody(res: IncomingMessage): Readable {
   const encoding = String(res.headers["content-encoding"] ?? "").trim().toLowerCase()
   let decoder: Transform
   if (encoding === "" || encoding === "identity") return res
-  if (encoding === "gzip" || encoding === "x-gzip") decoder = zlib.createGunzip()
-  else if (encoding === "br") decoder = zlib.createBrotliDecompress()
-  else throw new UnsupportedEncodingError(encoding)
+  // finishFlush に SYNC_FLUSH を指定し、末尾が欠けたデータでも展開できたところまでを返す（途中で切れた応答）
+  if (encoding === "gzip" || encoding === "x-gzip") {
+    decoder = zlib.createGunzip({ finishFlush: zlib.constants.Z_SYNC_FLUSH })
+  } else if (encoding === "br") {
+    decoder = zlib.createBrotliDecompress({ finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH })
+  } else {
+    throw new UnsupportedEncodingError(encoding)
+  }
 
   // 応答側のエラー（切断・中断）も decoder に伝える
   pipeline(res, decoder, () => {})

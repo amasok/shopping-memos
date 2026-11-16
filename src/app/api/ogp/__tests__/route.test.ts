@@ -19,6 +19,7 @@ vi.mock("../http-client", () => ({
 
 import { Readable } from "stream"
 import zlib from "zlib"
+import { randomBytes } from "crypto"
 import { GET } from "../route"
 import { ogpRateLimiter } from "../rate-limit"
 
@@ -293,6 +294,56 @@ describe("GET /api/ogp: 圧縮された応答", () => {
     expect(total).toBeGreaterThanOrEqual(2 * 1024 * 1024)
     expect(total).toBeLessThan(4 * 1024 * 1024)
   })
+
+  it.each([["GZIP"], [" gzip "], ["Br"], ["X-GZIP"]])(
+    "Content-Encoding の大文字小文字と前後の空白は区別しない（%j）",
+    async (encoding) => {
+      const body = encoding.trim().toLowerCase() === "br" ? zlib.brotliCompressSync(HTML) : zlib.gzipSync(HTML)
+      mockFetch.mockResolvedValueOnce(encodedResponse(body, encoding))
+
+      const res = await GET(makeRequest("https://example.com/"))
+
+      expect(res.status).toBe(200)
+      expect((await res.json()).title).toBe("圧縮されたページ")
+    }
+  )
+
+  it.each([
+    ["gzip", (b: Buffer) => zlib.gzipSync(b)],
+    ["br", (b: Buffer) => zlib.brotliCompressSync(b)],
+  ])("途中で切れた %s のデータは、展開できたところまでで解析する", async (encoding, compress) => {
+    // og タグの後ろに長い本文（縮みにくい乱数）を付けてから圧縮し、末尾を落とす
+    const filler = randomBytes(200 * 1024).toString("base64")
+    const full = compress(Buffer.from(`${HTML.replace("</head>", "")}<p>${filler}</p>`))
+    const truncated = full.subarray(0, Math.floor(full.length / 2))
+    mockFetch.mockResolvedValueOnce(encodedResponse(truncated, encoding))
+
+    const res = await GET(makeRequest("https://example.com/"))
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).title).toBe("圧縮されたページ")
+  })
+
+  it("空の gzip メンバーが続く応答も、続けて展開する", async () => {
+    const body = Buffer.concat([zlib.gzipSync(""), zlib.gzipSync(HTML), zlib.gzipSync("")])
+    mockFetch.mockResolvedValueOnce(encodedResponse(body, "gzip"))
+
+    const res = await GET(makeRequest("https://example.com/"))
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).title).toBe("圧縮されたページ")
+  })
+
+  it.each([["deflate"], ["gzip, br"], ["gzip,gzip"]])(
+    "送っていない圧縮方式や重ねがけ（%j）は 422 を返す",
+    async (encoding) => {
+      mockFetch.mockResolvedValueOnce(encodedResponse(zlib.gzipSync(HTML), encoding))
+
+      const res = await GET(makeRequest("https://example.com/"))
+
+      expect(res.status).toBe(422)
+    }
+  )
 
   it("壊れた圧縮データは 422 を返す", async () => {
     mockFetch.mockResolvedValueOnce(encodedResponse(Buffer.from("not gzip data"), "gzip"))

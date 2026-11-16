@@ -154,4 +154,34 @@ test.describe("OGPプレビュー", () => {
     await page.waitForTimeout(500)
     expect([...requestedUrls]).toEqual(["https://first.com"])
   })
+
+  test("L-8: ItemFormでOGP取得に失敗したときはドメインとURLだけのカードが表示される（#140）", async ({ page }) => {
+    await mockOGPFailure(page)
+
+    await page.locator("[data-testid='fab-add-item']").click()
+    await waitForBottomSheet(page)
+
+    await page.locator("[data-testid='item-memo-input']").fill("https://example.com/item/1")
+
+    const fallback = page.locator("[data-testid='ogp-link-fallback']")
+    await expect(fallback).toBeVisible()
+    await expect(fallback).toContainText("example.com")
+    await expect(fallback).toHaveAttribute("href", "https://example.com/item/1")
+    await expect(page.locator("[data-testid='ogp-preview']")).not.toBeVisible()
+  })
+
+  test("L-9: ホームでOGP取得に失敗したときはリンクだけのカードも表示されない（#140）", async ({ page }) => {
+    await mockOGPFailure(page)
+
+    const item = createItem({ name: "商品", memo: "https://example.com" })
+    await seedTable(page, "items", [item])
+    const ogpResponse = page.waitForResponse("**/api/ogp**")
+    await page.reload()
+    await ogpResponse
+
+    await expect(page.locator(`a[href='https://example.com']`).first()).toBeVisible()
+    // 失敗の応答を受けてスケルトンが消えたあとも、リンクだけのカードは出ない
+    await expect(page.locator(".animate-pulse")).toHaveCount(0)
+    await expect(page.locator("[data-testid='ogp-link-fallback']")).toHaveCount(0)
+  })
 })
