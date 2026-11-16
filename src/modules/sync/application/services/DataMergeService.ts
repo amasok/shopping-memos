@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
+import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
 import {
   items,
   tags,
@@ -104,6 +105,9 @@ export class DataMergeService {
 
     const now = new Date()
 
+    // 今回のマージで作成したタグID（アイテムへのタグ付けで常に許可）
+    const mergedTagIds = new Set<string>()
+
     // トランザクションでまとめて実行
     try {
       await db.transaction(async (tx) => {
@@ -118,6 +122,7 @@ export class DataMergeService {
               createdAt: tag.createdAt,
               updatedAt: now,
             })
+            mergedTagIds.add(tag.id)
             mergedCounts.tags++
 
             // 同期ログを記録
@@ -152,7 +157,20 @@ export class DataMergeService {
             })
 
             // タグの関連を中間テーブルに挿入
+            // 今回作成したタグ、またはアイテムと同じスコープの既存タグのみ関連付ける
+            const allowedTagIds: string[] = []
             for (const tagId of item.tagIds) {
+              const ok = await areTagsInScope([tagId], { userId, groupId }, {
+                executor: tx,
+                allowedTagIds: mergedTagIds,
+              })
+              if (ok) {
+                allowedTagIds.push(tagId)
+              } else {
+                errors.push(`アイテム "${item.name}" のタグの関連付けをスキップ（タグにアクセスできません）`)
+              }
+            }
+            for (const tagId of allowedTagIds) {
               try {
                 await tx.insert(itemTags).values({
                   itemId: item.id,

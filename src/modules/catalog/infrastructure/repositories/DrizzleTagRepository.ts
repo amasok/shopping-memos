@@ -51,6 +51,9 @@ export class DrizzleTagRepository implements TagRepository {
       // 個人タグ: groupId = null かつ userId が一致
       conditions.push(isNull(tags.groupId))
       conditions.push(eq(tags.userId, query.userId))
+    } else {
+      // スコープ条件なしの検索は全ユーザーのタグを返してしまうため禁止
+      throw new Error("findMany には groupId または userId の指定が必要です")
     }
 
     // タグを取得

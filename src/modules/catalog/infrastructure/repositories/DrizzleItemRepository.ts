@@ -87,6 +87,9 @@ export class DrizzleItemRepository implements ItemRepository {
       // 個人アイテム: groupId = null かつ userId が一致
       conditions.push(isNull(items.groupId))
       conditions.push(eq(items.userId, query.userId))
+    } else {
+      // スコープ条件なしの検索は全ユーザーのアイテムを返してしまうため禁止
+      throw new Error("findMany には groupId または userId の指定が必要です")
     }
 
     // 購入済み/未購入フィルタ
