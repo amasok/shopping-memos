@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { NextRequest } from "next/server"
 
 // vi.hoisted でモック関数を先に定義（vi.mockのホイストに対応）
-const { mockLookup } = vi.hoisted(() => ({
+const { mockLookup, mockRequestPinned } = vi.hoisted(() => ({
   mockLookup: vi.fn(),
+  mockRequestPinned: vi.fn(),
 }))
 
 vi.mock("dns/promises", () => ({
@@ -11,38 +12,42 @@ vi.mock("dns/promises", () => ({
   lookup: mockLookup,
 }))
 
-// fetchをモック
-const mockFetch = vi.fn()
-vi.stubGlobal("fetch", mockFetch)
+// 検証済み IP に固定した HTTP リクエストをモック
+vi.mock("../http-client", () => ({
+  requestPinned: mockRequestPinned,
+}))
 
+import { Readable } from "stream"
 import { GET } from "../route"
+import { ogpRateLimiter } from "../rate-limit"
+
+const mockFetch = mockRequestPinned
 
 beforeEach(() => {
   vi.clearAllMocks()
+  ogpRateLimiter.reset()
 })
+
+/** dns.lookup(host, { all: true }) の戻り値を組み立てるヘルパー */
+function resolvedTo(address: string, family = 4) {
+  return [{ address, family }]
+}
 
 function makeRequest(url: string): NextRequest {
   return new NextRequest(`http://localhost/api/ogp?url=${encodeURIComponent(url)}`)
 }
 
-/** Uint8Array から ReadableStream を生成するヘルパー */
-function makeBodyStream(data: Uint8Array): ReadableStream {
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(data)
-      controller.close()
-    },
-  })
+/** requestPinned モックのレスポンス（IncomingMessage 相当）を組み立てるヘルパー */
+function mockResponse(
+  statusCode: number,
+  headers: Record<string, string> = {},
+  body = ""
+) {
+  return Object.assign(Readable.from([Buffer.from(body)]), { statusCode, headers })
 }
 
-/** fetch モックのレスポンスを組み立てるヘルパー */
 function mockHtmlResponse(html: string, contentType = "text/html") {
-  const data = new TextEncoder().encode(html)
-  return {
-    ok: true,
-    headers: { get: () => contentType },
-    body: makeBodyStream(data),
-  }
+  return mockResponse(200, { "content-type": contentType }, html)
 }
 
 describe("GET /api/ogp", () => {
@@ -68,7 +73,7 @@ describe("GET /api/ogp", () => {
 
   describe("SSRF対策", () => {
     it("ループバックIP（127.0.0.1）は400を返す", async () => {
-      mockLookup.mockResolvedValue({ address: "127.0.0.1", family: 4 })
+      mockLookup.mockResolvedValue(resolvedTo("127.0.0.1"))
       const req = makeRequest("http://localhost/secret")
       const res = await GET(req)
       expect(res.status).toBe(400)
@@ -77,14 +82,14 @@ describe("GET /api/ogp", () => {
     })
 
     it("プライベートIP（192.168.x.x）は400を返す", async () => {
-      mockLookup.mockResolvedValue({ address: "192.168.1.1", family: 4 })
+      mockLookup.mockResolvedValue(resolvedTo("192.168.1.1"))
       const req = makeRequest("http://internal.local/")
       const res = await GET(req)
       expect(res.status).toBe(400)
     })
 
     it("プライベートIP（10.x.x.x）は400を返す", async () => {
-      mockLookup.mockResolvedValue({ address: "10.0.0.1", family: 4 })
+      mockLookup.mockResolvedValue(resolvedTo("10.0.0.1"))
       const req = makeRequest("http://internal.example.com/")
       const res = await GET(req)
       expect(res.status).toBe(400)
@@ -93,7 +98,7 @@ describe("GET /api/ogp", () => {
 
   describe("OGP取得成功", () => {
     it("OGPタグが含まれるHTMLからデータを返す", async () => {
-      mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
+      mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
       const html = `
         <html>
           <head>
@@ -118,7 +123,7 @@ describe("GET /api/ogp", () => {
     })
 
     it("contentとpropertyの順番が逆でも正しくパースする", async () => {
-      mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
+      mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
       const html = `
         <html>
           <head>
@@ -139,7 +144,7 @@ describe("GET /api/ogp", () => {
 
   describe("エラーケース", () => {
     it("AmazonのURLは422を返す（OGP取得非対応）", async () => {
-      mockLookup.mockResolvedValue({ address: "52.119.168.1", family: 4 })
+      mockLookup.mockResolvedValue(resolvedTo("52.119.168.1"))
 
       const req = makeRequest("https://www.amazon.co.jp/dp/B0DYNVL7B4")
       const res = await GET(req)
@@ -147,7 +152,7 @@ describe("GET /api/ogp", () => {
     })
 
     it("amzn.asiaのURLも422を返す", async () => {
-      mockLookup.mockResolvedValue({ address: "52.119.168.1", family: 4 })
+      mockLookup.mockResolvedValue(resolvedTo("52.119.168.1"))
 
       const req = makeRequest("https://amzn.asia/d/xxxxxxx")
       const res = await GET(req)
@@ -155,7 +160,7 @@ describe("GET /api/ogp", () => {
     })
 
     it("メタ情報が何もないHTMLは422を返す", async () => {
-      mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
+      mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
       const html = "<html><body>本文のみ</body></html>"
       mockFetch.mockResolvedValue(mockHtmlResponse(html))
 
@@ -165,11 +170,8 @@ describe("GET /api/ogp", () => {
     })
 
     it("HTML以外のContent-Typeは422を返す", async () => {
-      mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
-      mockFetch.mockResolvedValue({
-        ok: true,
-        headers: { get: () => "application/json" },
-      })
+      mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
+      mockFetch.mockResolvedValue(mockResponse(200, { "content-type": "application/json" }))
 
       const req = makeRequest("https://example.com/data.json")
       const res = await GET(req)
@@ -177,8 +179,8 @@ describe("GET /api/ogp", () => {
     })
 
     it("フェッチが失敗した場合は422を返す", async () => {
-      mockLookup.mockResolvedValue({ address: "93.184.216.34", family: 4 })
-      mockFetch.mockResolvedValue({ ok: false })
+      mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
+      mockFetch.mockResolvedValue(mockResponse(404))
 
       const req = makeRequest("https://example.com")
       const res = await GET(req)

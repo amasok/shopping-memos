@@ -1,92 +1,115 @@
-import { lookup } from "dns/promises"
+import type { IncomingMessage } from "http"
 import { NextRequest, NextResponse } from "next/server"
+import { requestPinned } from "./http-client"
+import { parseOGP } from "./parse-ogp"
+import { getClientIp, ogpRateLimiter } from "./rate-limit"
+import {
+  HostResolutionError,
+  PrivateAddressError,
+  resolvePublicAddress,
+  validateTargetUrl,
+  type UrlValidationError,
+} from "./ssrf"
 
-const PRIVATE_IP_PATTERNS = [
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^::1$/,
-  /^fc00:/i,
-  /^fe80:/i,
-]
+const MAX_REDIRECTS = 5
+const TIMEOUT_MS = 8000
+// OGP は <head> にあるので先頭だけ読む（DoS・正規表現の計算量対策）
+const MAX_BYTES = 512 * 1024
 
-function isPrivateIp(ip: string): boolean {
-  return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(ip))
+const FETCH_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+  "Accept-Encoding": "identity",
 }
 
-interface OGPData {
-  url: string
-  title?: string
-  description?: string
-  image?: string
-  siteName?: string
+const URL_ERROR_MESSAGES: Record<UrlValidationError, string> = {
+  invalid_protocol: "Only http/https URLs are allowed",
+  invalid_port: "Only ports 80 and 443 are allowed",
+  credentials_not_allowed: "URLs with credentials are not allowed",
 }
 
-function parseMetaContent(html: string, property: string): string | undefined {
-  // property="og:xxx" content="..." と content="..." property="og:xxx" の両パターンに対応
-  const patterns = [
-    new RegExp(
-      `<meta[^>]+property=["']${property}["'][^>]+content=["']([^"']+)["']`,
-      "i"
-    ),
-    new RegExp(
-      `<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${property}["']`,
-      "i"
-    ),
-  ]
-  for (const pattern of patterns) {
-    const match = html.match(pattern)
-    if (match) return match[1]
+class BlockedUrlError extends Error {}
+class UpstreamError extends Error {}
+
+function isAmazonUrl(url: URL): boolean {
+  return /amazon\.|amzn\./.test(url.hostname)
+}
+
+function discard(res: IncomingMessage) {
+  res.resume()
+  res.destroy()
+}
+
+/**
+ * リダイレクトを 1 ホップずつ自前で追従する。
+ * 各ホップでスキーム・ポート・解決した全 IP を検証し、検証した IP に直接接続する。
+ */
+async function fetchWithValidation(
+  initialUrl: URL,
+  signal: AbortSignal
+): Promise<IncomingMessage> {
+  let current = initialUrl
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const urlError = validateTargetUrl(current)
+    if (urlError) throw new BlockedUrlError(URL_ERROR_MESSAGES[urlError])
+
+    const pinned = await resolvePublicAddress(current.hostname)
+    const options = { headers: FETCH_HEADERS, signal }
+
+    let res = await requestPinned(current, pinned, options)
+    // 500/503 は一時的なエラーの可能性があるため1回リトライ（同じ検証済み IP に接続）
+    if (res.statusCode === 500 || res.statusCode === 503) {
+      discard(res)
+      res = await requestPinned(current, pinned, options)
+    }
+
+    const status = res.statusCode ?? 0
+    if (status >= 300 && status < 400) {
+      const location = res.headers.location
+      discard(res)
+      if (!location) throw new UpstreamError("Redirect without location")
+      try {
+        current = new URL(location, current)
+      } catch {
+        throw new UpstreamError("Invalid redirect location")
+      }
+      continue
+    }
+    return res
   }
-  return undefined
+
+  throw new UpstreamError("Too many redirects")
 }
 
-function parseMetaName(html: string, name: string): string | undefined {
-  const patterns = [
-    new RegExp(`<meta[^>]+name=["']${name}["'][^>]+content=["']([^"']+)["']`, "i"),
-    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${name}["']`, "i"),
-  ]
-  for (const pattern of patterns) {
-    const match = html.match(pattern)
-    if (match) return match[1]
-  }
-  return undefined
-}
-
-function parseTitle(html: string): string | undefined {
-  const match = html.match(/<title[^>]*>([^<]+)<\/title>/i)
-  return match ? match[1].trim() : undefined
-}
-
-function isAmazonUrl(url: string): boolean {
+async function readHead(res: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = []
+  let total = 0
   try {
-    const { hostname } = new URL(url)
-    return /amazon\.|amzn\./.test(hostname)
-  } catch {
-    return false
+    for await (const chunk of res as AsyncIterable<Buffer>) {
+      const remaining = MAX_BYTES - total
+      const piece = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk
+      chunks.push(piece)
+      total += piece.byteLength
+      if (total >= MAX_BYTES) break
+      if (piece.includes("</head") || piece.includes("</HEAD")) break
+    }
+  } finally {
+    res.destroy()
   }
-}
-
-function parseOGP(html: string, url: string): OGPData | null {
-  // OGPタグを優先、なければ一般的なメタタグにフォールバック
-  const title =
-    parseMetaContent(html, "og:title") ??
-    parseTitle(html) ??
-    parseMetaName(html, "title")
-  const description =
-    parseMetaContent(html, "og:description") ??
-    parseMetaName(html, "description")
-  const image = parseMetaContent(html, "og:image")
-  const siteName = parseMetaContent(html, "og:site_name")
-
-  if (!title && !description && !image && !siteName) return null
-
-  return { url, title, description, image, siteName }
+  return new TextDecoder().decode(Buffer.concat(chunks))
 }
 
 export async function GET(request: NextRequest) {
+  if (!ogpRateLimiter.consume(getClientIp(request.headers))) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      { status: 429, headers: { "Retry-After": "60" } }
+    )
+  }
+
   const { searchParams } = new URL(request.url)
   const url = searchParams.get("url")
 
@@ -101,85 +124,35 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid URL" }, { status: 400 })
   }
 
-  if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-    return NextResponse.json(
-      { error: "Only http/https URLs are allowed" },
-      { status: 400 }
-    )
-  }
-
-  // SSRF対策: DNSルックアップしてIPアドレスを確認
-  try {
-    const resolved = await lookup(parsedUrl.hostname)
-    if (isPrivateIp(resolved.address)) {
-      return NextResponse.json(
-        { error: "Private IP addresses are not allowed" },
-        { status: 400 }
-      )
-    }
-  } catch {
-    return NextResponse.json({ error: "Failed to resolve hostname" }, { status: 400 })
+  const urlError = validateTargetUrl(parsedUrl)
+  if (urlError) {
+    return NextResponse.json({ error: URL_ERROR_MESSAGES[urlError] }, { status: 400 })
   }
 
   // AmazonはVercelのIPをボットとして検出するためOGP取得不可（URLリンクのみ表示）
-  if (isAmazonUrl(url)) {
+  if (isAmazonUrl(parsedUrl)) {
     return NextResponse.json({ error: "Amazon URLs are not supported" }, { status: 422 })
   }
 
-  const fetchHeaders = {
-    "User-Agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-    "Accept-Encoding": "identity",
-  }
+  const signal = AbortSignal.timeout(TIMEOUT_MS)
 
   try {
-    let response = await fetch(url, {
-      headers: fetchHeaders,
-      signal: AbortSignal.timeout(5000),
-    })
+    const response = await fetchWithValidation(parsedUrl, signal)
 
-    // 500/503 は一時的なエラーの可能性があるため1回リトライ
-    if (!response.ok && (response.status === 500 || response.status === 503)) {
-      response = await fetch(url, {
-        headers: fetchHeaders,
-        signal: AbortSignal.timeout(5000),
-      })
-    }
-
-    if (!response.ok) {
+    const status = response.statusCode ?? 0
+    if (status < 200 || status >= 300) {
+      discard(response)
       return NextResponse.json({ error: "Failed to fetch URL" }, { status: 422 })
     }
 
-    const contentType = response.headers.get("content-type") ?? ""
+    const contentType = response.headers["content-type"] ?? ""
     // Content-Typeが明示的に非HTMLの場合のみ拒否（空の場合はHTMLとして試みる）
     if (contentType !== "" && !contentType.includes("text/html")) {
+      discard(response)
       return NextResponse.json({ error: "URL is not an HTML page" }, { status: 422 })
     }
 
-    // ストリームを読みながらサイズを確認し、超えたら即打ち切る（DoS対策）
-    const MAX_BYTES = 5 * 1024 * 1024 // 5MB
-    const reader = response.body?.getReader()
-    if (!reader) {
-      return NextResponse.json({ error: "Failed to read response" }, { status: 422 })
-    }
-    const chunks: Uint8Array[] = []
-    let totalBytes = 0
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      chunks.push(value)
-      totalBytes += value.byteLength
-      if (totalBytes > MAX_BYTES) {
-        await reader.cancel()
-        return NextResponse.json({ error: "Response too large" }, { status: 422 })
-      }
-    }
-    const html = new TextDecoder().decode(
-      chunks.length === 1 ? chunks[0] : Buffer.concat(chunks)
-    )
-
+    const html = await readHead(response)
     const ogpData = parseOGP(html, url)
 
     if (!ogpData) {
@@ -190,7 +163,16 @@ export async function GET(request: NextRequest) {
       headers: { "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=60" },
     })
   } catch (error) {
-    if (error instanceof Error && error.name === "TimeoutError") {
+    if (error instanceof PrivateAddressError || error instanceof HostResolutionError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+    if (error instanceof BlockedUrlError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+    if (error instanceof UpstreamError) {
+      return NextResponse.json({ error: "Failed to fetch URL" }, { status: 422 })
+    }
+    if (signal.aborted) {
       return NextResponse.json({ error: "Request timed out" }, { status: 500 })
     }
     return NextResponse.json({ error: "Failed to fetch OGP data" }, { status: 500 })
