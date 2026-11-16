@@ -242,3 +242,27 @@ describe("parseMergeData（1 件ずつの検証 #86）", () => {
     ).toBe(false)
   })
 })
+
+describe("parseMergeData: 取り込めなかったレコードの位置 (#144)", () => {
+  it("検証でスキップしたものを skipped に、通ったものの元の位置を requestIndexOf に返す", () => {
+    const good = (id: string) => ({ id, name: "x", quantity: 1, tagIds: [], createdAt: "2026-01-01T00:00:00Z" })
+    const a = crypto.randomUUID()
+    const b = crypto.randomUUID()
+    const result = parseMergeData({
+      items: [good(a), { ...good(""), id: "" }, good(b)],
+      tags: [{ id: "bad" }],
+      lists: [],
+      listItems: [],
+      history: [],
+    })
+
+    expect(result.data.items.map((i) => i.id)).toEqual([a, b])
+    expect(result.skipped).toEqual([
+      { entity: "items", requestIndex: 1 },
+      { entity: "tags", requestIndex: 0 },
+    ])
+    expect(result.requestIndexOf.items).toEqual([0, 2])
+    expect(result.requestIndexOf.tags).toEqual([])
+    expect(result.errors).toHaveLength(result.skipped.length)
+  })
+})

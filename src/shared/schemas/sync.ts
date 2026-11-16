@@ -205,6 +205,19 @@ const MERGE_ENTITY_LABELS = {
   history: "履歴",
 } as const
 
+/** merge で送るエンティティの種類（`data` のキー） */
+export type MergeEntityName = keyof typeof MERGE_ENTITY_LABELS
+
+/**
+ * 取り込めなかったレコードの位置（#144）。
+ * `requestIndex` は、**そのリクエスト（分割送信の 1 チャンク）の `data[entity]` の配列での位置**（0 始まり）。
+ * 全体での位置ではない。ID ではなく位置にするのは、形式が不正で ID が読めないレコードも特定するため
+ */
+export interface NotImportedRecordRef {
+  entity: MergeEntityName
+  requestIndex: number
+}
+
 /**
  * `syncMergeInputSchema` を通った入力を、要素ごとに検証する。
  * 合わない要素はエラー文にして取り除き、残りを返す（データの中身はエラー文に含めない）
@@ -212,22 +225,35 @@ const MERGE_ENTITY_LABELS = {
 export function parseMergeData(input: z.infer<typeof syncMergeInputSchema>["data"]): {
   data: MergeData
   errors: string[]
+  /** 検証でスキップしたレコード（リクエストの中での位置） */
+  skipped: NotImportedRecordRef[]
+  /** data の各配列の位置 → リクエストの中での位置（サービスでの失敗を、リクエストの位置に戻すため） */
+  requestIndexOf: Record<MergeEntityName, number[]>
 } {
   const errors: string[] = []
-  const pick = <T>(key: keyof typeof MERGE_ENTITY_LABELS, schema: z.ZodType<T>): T[] => {
+  const skipped: NotImportedRecordRef[] = []
+  const requestIndexOf = { items: [], tags: [], lists: [], listItems: [], history: [] } as Record<
+    MergeEntityName,
+    number[]
+  >
+  const pick = <T>(key: MergeEntityName, schema: z.ZodType<T>): T[] => {
     const valid: T[] = []
     input[key].forEach((raw, index) => {
       const result = schema.safeParse(raw)
       if (result.success) {
         valid.push(result.data)
+        requestIndexOf[key].push(index)
       } else {
         const field = result.error.issues[0]?.path.join(".") || "(全体)"
         errors.push(`${MERGE_ENTITY_LABELS[key]} ${index + 1} 件目の形式が不正なためスキップ（${field}）`)
+        skipped.push({ entity: key, requestIndex: index })
       }
     })
     return valid
   }
   return {
+    skipped,
+    requestIndexOf,
     data: {
       items: pick("items", mergeItemSchema),
       tags: pick("tags", mergeTagSchema),
