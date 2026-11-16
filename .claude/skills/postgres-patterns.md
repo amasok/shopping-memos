@@ -36,34 +36,35 @@ PostgreSQL + Drizzle ORM でのデータベース設計・最適化パターン�
 |---------------|-------------|-----|
 | 等価検索 (=) | B-tree (デフォルト) | `index("items_user_idx").on(t.userId)` |
 | 範囲検索 (<, >, BETWEEN) | B-tree | `index("items_purchased_idx").on(t.purchasedAt)` |
-| JSON / 配列検索 | GIN | `index("x_idx").using("gin", t.metadata)` |
+| JSON / 配列検索 | GIN | `index("x_idx").using("gin", t.metadata)`（汎用例。このプロジェクトに jsonb 列はない） |
 | 全文検索 | GIN | Full-text search |
 | 時系列データ | BRIN | 大量の時系列 |
 
 ### Drizzle でのインデックス定義
 
 ```typescript
-export const listItems = pgTable(
-  "list_items",
+// 例（架空のテーブル。実際のスキーマは src/infrastructure/db/drizzle/schema.ts）
+export const notes = pgTable(
+  "notes",
   {
     id: text("id").primaryKey(),
     listId: text("list_id")
       .notNull()
       .references(() => shoppingLists.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
+    title: text("title").notNull(),
     userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
     // 単一インデックス
-    index("list_items_list_idx").on(table.listId),
-    index("list_items_user_idx").on(table.userId),
+    index("notes_list_idx").on(table.listId),
+    index("notes_user_idx").on(table.userId),
 
     // 複合インデックス（順序が重要！）
-    index("list_items_list_created_idx").on(table.listId, table.createdAt.desc()),
+    index("notes_list_created_idx").on(table.listId, table.createdAt.desc()),
 
     // ユニーク制約
-    uniqueIndex("list_items_list_name_idx").on(table.listId, table.name),
+    uniqueIndex("notes_list_title_idx").on(table.listId, table.title),
   ]
 )
 ```

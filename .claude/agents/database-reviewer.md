@@ -39,7 +39,7 @@ PostgreSQL + Drizzle ORM 環境でのデータベース設計とクエリ最適�
 
 スキーマは `src/infrastructure/db/drizzle/schema.ts`、マイグレーションは `src/infrastructure/db/drizzle/migrations/`。
 
-### 良い例
+### 良い例（実際の `listItems` の抜粋。`memo`・`tagIds`・`groupId` は省略）
 ```typescript
 export const listItems = pgTable(
   "list_items",
@@ -127,9 +127,17 @@ const rows = await db.select().from(items).limit(20).offset(page * 20)
 ### トランザクション
 
 ```typescript
+// 購入完了（ShoppingService の簡略版）: listItems は残し、購入日時と場所を記録する
 await db.transaction(async (tx) => {
-  await tx.update(shoppingLists).set({ status: "completed" }).where(eq(shoppingLists.id, listId))
-  await tx.delete(listItems).where(eq(listItems.listId, listId))
+  const now = new Date()
+  await tx
+    .update(shoppingLists)
+    .set({ status: "completed", completedAt: now, purchasedAt: now, location: location ?? null })
+    .where(eq(shoppingLists.id, listId))
+  await tx
+    .update(items)
+    .set({ purchasedAt: now, updatedAt: now })
+    .where(inArray(items.id, purchasedItemIds))
 })
 ```
 
