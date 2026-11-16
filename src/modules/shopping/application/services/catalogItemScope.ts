@@ -2,8 +2,8 @@ import { and, eq, isNotNull, type SQL } from "drizzle-orm"
 import { items, shoppingLists } from "@/infrastructure/db/drizzle/schema"
 import { scopeCondition, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
 
-// 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）
-export type { DbExecutor } from "@/infrastructure/db/ownership"
+// 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
+// ここからは再エクスポートしない（#151）
 
 /** リストの所有スコープ（共通の OwnerScope と同じ） */
 export type ListScope = OwnerScope
