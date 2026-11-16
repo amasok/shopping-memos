@@ -37,10 +37,26 @@ export const syncRouter = router({
 
       for (const op of input.operations) {
         try {
+          // アクセス権確認
+          // 他人・他グループのエンティティへの操作は記録せず破棄する（競合データも返さない）
+          const access = await syncRepository.checkEntityAccess(
+            op.entity,
+            op.entityId,
+            ctx.userId
+          )
+          if (access === "denied") {
+            console.warn(`Sync operation rejected (forbidden): ${op.id}`)
+            processedIds.push(op.id)
+            continue
+          }
+
           // サーバー側の最新状態を確認
+          // サーバーに存在しない（削除済み等）エンティティは所有者を判定できないため、
+          // 自分自身の操作ログのみを競合判定に使う
           const serverState = await syncRepository.findLatestEntityState(
             op.entity,
-            op.entityId
+            op.entityId,
+            access === "not_found" ? { userId: ctx.userId } : undefined
           )
 
           if (serverState) {

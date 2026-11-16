@@ -1,7 +1,6 @@
 ---
 name: coding-standards
 description: TypeScript/React/Next.jsのコーディング規約とベストプラクティス。命名規則、エラーハンドリング、型安全性、ファイル構成。
-tools: ["Read", "Grep", "Glob"]
 ---
 
 # コーディング規約

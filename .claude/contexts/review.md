@@ -99,7 +99,7 @@ description: レビューモード。品質・セキュリティ・保守性を�
 #### 🔴 Critical
 
 **[C1] SQLインジェクションの可能性**
-- ファイル: `src/app/api/items/route.ts:45`
+- ファイル: `src/infrastructure/trpc/routers/catalog.ts:45`（架空の例）
 - 問題: ユーザー入力を直接クエリに使用
 - 修正案:
   ```typescript

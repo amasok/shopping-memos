@@ -2,7 +2,7 @@
 name: doc-updater
 description: ドキュメント管理スペシャリスト。README、CLAUDE.md、APIドキュメントの更新を担当。コードからドキュメントを生成・同期。
 tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
-model: opus
+model: sonnet
 ---
 
 # ドキュメント更新スペシャリスト
@@ -226,7 +226,7 @@ docs: [更新内容の要約]
 ```
 docs: APIドキュメントを更新
 
-- POST /api/items のリクエスト仕様を追加
+- tRPC catalog.createItem の入力仕様を追加
 - エラーレスポンスの説明を追加
 ```
 

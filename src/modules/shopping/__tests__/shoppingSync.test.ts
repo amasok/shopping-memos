@@ -11,7 +11,7 @@ describe("ShoppingSyncService テスト", () => {
       entity: string
       entityId: string
       operation: string
-      payload: Record<string, unknown>
+      payload: object
     }
 
     let syncOperations: MockSyncOperation[]
@@ -32,6 +32,8 @@ describe("ShoppingSyncService テスト", () => {
         groupId: "group-1",
         createdAt: new Date(),
         completedAt: null,
+        purchasedAt: null,
+        location: null,
       }
       const userId = "user-1"
 
@@ -57,6 +59,8 @@ describe("ShoppingSyncService テスト", () => {
         groupId: "group-1",
         createdAt: new Date(),
         completedAt: null,
+        purchasedAt: null,
+        location: null,
       }
       const userId = "user-1"
 
@@ -98,7 +102,7 @@ describe("ShoppingSyncService テスト", () => {
       entity: string
       entityId: string
       operation: string
-      payload: Record<string, unknown>
+      payload: object
     }
 
     let syncOperations: MockSyncOperation[]
@@ -193,7 +197,7 @@ describe("ShoppingSyncService テスト", () => {
       entity: string
       entityId: string
       operation: string
-      payload: Record<string, unknown>
+      payload: object
     }
 
     let syncOperations: MockSyncOperation[]

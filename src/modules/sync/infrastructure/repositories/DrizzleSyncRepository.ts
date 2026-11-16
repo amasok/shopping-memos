@@ -1,4 +1,4 @@
-import { eq, and, gte, inArray, isNull, isNotNull } from "drizzle-orm"
+import { eq, and, desc, gte, inArray, isNull, isNotNull } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   syncOperations,
@@ -13,7 +13,9 @@ import type {
   SyncOperation,
   CreateSyncOperationInput,
   SyncEntity,
+  EntityAccess,
 } from "../../domain/entities/SyncOperation"
+import { checkEntityAccess } from "../entityAccess"
 
 /**
  * Drizzleを使用した同期リポジトリ実装
@@ -104,18 +106,22 @@ export class DrizzleSyncRepository implements SyncRepository {
 
   async findLatestEntityState(
     entity: SyncEntity,
-    entityId: string
+    entityId: string,
+    options?: { userId?: string }
   ): Promise<SyncOperation | null> {
+    const conditions = [
+      eq(syncOperations.entity, entity),
+      eq(syncOperations.entityId, entityId),
+    ]
+    if (options?.userId) {
+      conditions.push(eq(syncOperations.userId, options.userId))
+    }
+
     const result = await db
       .select()
       .from(syncOperations)
-      .where(
-        and(
-          eq(syncOperations.entity, entity),
-          eq(syncOperations.entityId, entityId)
-        )
-      )
-      .orderBy(syncOperations.createdAt)
+      .where(and(...conditions))
+      .orderBy(desc(syncOperations.createdAt))
       .limit(1)
 
     if (result.length === 0) {
@@ -123,6 +129,14 @@ export class DrizzleSyncRepository implements SyncRepository {
     }
 
     return this.mapToEntity(result[0])
+  }
+
+  async checkEntityAccess(
+    entity: SyncEntity,
+    entityId: string,
+    userId: string
+  ): Promise<EntityAccess> {
+    return checkEntityAccess(db, entity, entityId, userId)
   }
 
   async markAsSynced(operationIds: string[]): Promise<void> {
