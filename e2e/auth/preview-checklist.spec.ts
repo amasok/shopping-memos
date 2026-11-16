@@ -125,6 +125,8 @@ test.describe("Preview 確認項目（ログイン中）", () => {
     await seedItems({ userId: userA.id, items: names.map((n) => ({ id: testUUID(), name: n })) })
     await openPersonal(page, userA.id)
     await createListFrom(page, names)
+    // 他のテストが作ったリストと区別するため、このリストの ID を控える
+    const listId = new URL(page.url()).searchParams.get("id")!
     await checkAllAndComplete(page)
 
     const first = page.getByTestId("history-list").locator("li").first()
@@ -132,9 +134,9 @@ test.describe("Preview 確認項目（ログイン中）", () => {
     await first.locator("button", { hasText: "リストに戻す" }).click()
 
     await expect(page).toHaveURL(/\/lists/, { timeout: 15000 })
-    // 戻したリストを開くと、アイテムが入っている
-    await page.getByTestId("lists-list").locator("li a").first().click()
-    await expect(page).toHaveURL(/\/lists\/detail\?id=/)
+    // 戻したリストが一覧にあり、開くとアイテムが入っている
+    await page.getByTestId(`list-item-${listId}`).click()
+    await expect(page).toHaveURL(new RegExp(`/lists/detail\\?id=${listId}`))
     await expect(page.getByText(names[0])).toBeVisible()
   })
 
