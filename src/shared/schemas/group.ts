@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { LIMITS } from "./limits"
 
 // グループ役割
 export const groupRoleSchema = z.enum(["owner", "member"])
@@ -43,7 +44,7 @@ export type InviteMemberInput = z.infer<typeof inviteMemberSchema>
 
 // 招待承認（トークン方式）
 export const acceptInviteSchema = z.object({
-  token: z.string().min(1, "トークンは必須です"),
+  token: z.string().min(1, "トークンは必須です").max(LIMITS.inviteToken, "トークンが不正です"),
 })
 
 export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>

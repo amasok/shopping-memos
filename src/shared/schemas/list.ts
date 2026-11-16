@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { LIMITS, quantitySchema, tagIdsSchema } from "./limits"
 
 // リストステータス
 export const listStatusSchema = z.enum(["in_progress", "completed"])
@@ -8,8 +9,11 @@ export type ListStatus = z.infer<typeof listStatusSchema>
 // リスト作成
 export const createListSchema = z.object({
   name: z.string().min(1, "名前は必須です").max(100, "名前は100文字以内です"),
-  tagIds: z.array(z.string().uuid()).optional(), // タグでフィルタしてアイテムを追加
-  itemIds: z.array(z.string().uuid()).optional(), // 直接アイテムを指定
+  tagIds: tagIdsSchema.optional(), // タグでフィルタしてアイテムを追加
+  itemIds: z
+    .array(z.string().uuid())
+    .max(LIMITS.itemIds, `アイテムは${LIMITS.itemIds}件までです`)
+    .optional(), // 直接アイテムを指定
   groupId: z.string().uuid().optional(),
 })
 
@@ -27,9 +31,9 @@ export type AddItemToListInput = z.infer<typeof addItemToListSchema>
 export const addNewItemToListSchema = z.object({
   listId: z.string().uuid(),
   name: z.string().min(1, "名前は必須です").max(100, "名前は100文字以内です"),
-  quantity: z.number().int().min(1).default(1),
+  quantity: quantitySchema.default(1),
   memo: z.string().max(500, "メモは500文字以内です").optional(),
-  tagIds: z.array(z.string().uuid()).optional(),
+  tagIds: tagIdsSchema.optional(),
 })
 
 export type AddNewItemToListInput = z.infer<typeof addNewItemToListSchema>

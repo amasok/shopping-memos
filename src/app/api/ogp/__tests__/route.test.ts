@@ -64,6 +64,13 @@ describe("GET /api/ogp", () => {
       expect(res.status).toBe(400)
     })
 
+    it("2048文字を超えるURLは取得せずに400を返す", async () => {
+      const res = await GET(makeRequest(`https://example.com/${"a".repeat(2048)}`))
+      expect(res.status).toBe(400)
+      expect(mockLookup).not.toHaveBeenCalled()
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
     it("http/https以外のスキームは400を返す", async () => {
       const req = makeRequest("ftp://example.com")
       const res = await GET(req)
