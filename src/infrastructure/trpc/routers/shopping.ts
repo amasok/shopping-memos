@@ -1,5 +1,4 @@
 import { TRPCError } from "@trpc/server"
-import { eq } from "drizzle-orm"
 import { router, protectedProcedure } from "../server"
 import {
   createListSchema,
@@ -17,7 +16,6 @@ import {
   removeListItemSchema,
 } from "@/shared/schemas"
 import { db } from "@/infrastructure/db/drizzle/client"
-import { items } from "@/infrastructure/db/drizzle/schema"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
@@ -29,6 +27,11 @@ import { ShoppingService } from "@/modules/shopping/application/services/Shoppin
 import { ShoppingSyncService } from "@/modules/shopping/application/services/ShoppingSyncService"
 import type { ItemWithTags } from "@/modules/catalog/domain/entities/Item"
 import { areTagsInScope, isSameScope } from "@/modules/catalog/application/services/ownership"
+import {
+  getListScope,
+  markScopedItemsUnpurchasedByName,
+  deleteScopedItemsByName,
+} from "@/modules/shopping/application/services/catalogItemScope"
 import { verifyGroupMembership } from "../middleware/groupAuth"
 
 // サービスインスタンス
@@ -535,28 +538,23 @@ export const shoppingRouter = router({
       }
 
       // リストに含まれるアイテムのカタログアイテムを未購入に戻す
+      // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
       const revertedItemIds: string[] = []
-      for (const listItem of history.items) {
-        // 同名のカタログアイテムを検索
-        const catalogItems = await db
-          .select({ id: items.id, purchasedAt: items.purchasedAt })
-          .from(items)
-          .where(eq(items.name, listItem.name))
-
-        // 購入済みのカタログアイテムを未購入に戻す
-        for (const catalogItem of catalogItems) {
-          if (catalogItem.purchasedAt) {
-            await itemRepository.markAsUnpurchased(catalogItem.id)
-            revertedItemIds.push(catalogItem.id)
+      const scope = await getListScope(db, input.historyId)
+      if (scope) {
+        for (const listItem of history.items) {
+          const ids = await markScopedItemsUnpurchasedByName(db, scope, listItem.name)
+          for (const catalogItemId of ids) {
+            revertedItemIds.push(catalogItemId)
 
             // 同期ログを記録
             await syncRepository.createOperation({
               id: crypto.randomUUID(),
               userId: ctx.userId,
               entity: "item",
-              entityId: catalogItem.id,
+              entityId: catalogItemId,
               operation: "update",
-              payload: { id: catalogItem.id, purchasedAt: null },
+              payload: { id: catalogItemId, purchasedAt: null },
             })
           }
         }
@@ -595,25 +593,22 @@ export const shoppingRouter = router({
       }
 
       // リストに含まれるアイテムに対応するカタログアイテムを削除
-      for (const listItem of history.items) {
-        // 同名のカタログアイテムを検索して削除
-        const catalogItems = await db
-          .select({ id: items.id })
-          .from(items)
-          .where(eq(items.name, listItem.name))
-
-        for (const catalogItem of catalogItems) {
-          await itemRepository.delete(catalogItem.id)
-
-          // 同期ログを記録
-          await syncRepository.createOperation({
-            id: crypto.randomUUID(),
-            userId: ctx.userId,
-            entity: "item",
-            entityId: catalogItem.id,
-            operation: "delete",
-            payload: { id: catalogItem.id },
-          })
+      // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
+      const scope = await getListScope(db, input.id)
+      if (scope) {
+        for (const listItem of history.items) {
+          const ids = await deleteScopedItemsByName(db, scope, listItem.name)
+          for (const catalogItemId of ids) {
+            // 同期ログを記録
+            await syncRepository.createOperation({
+              id: crypto.randomUUID(),
+              userId: ctx.userId,
+              entity: "item",
+              entityId: catalogItemId,
+              operation: "delete",
+              payload: { id: catalogItemId },
+            })
+          }
         }
       }
 

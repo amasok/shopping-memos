@@ -2,7 +2,7 @@
 name: refactor-cleaner
 description: リファクタリング・不要コード削除スペシャリスト。未使用コード、重複コード、未使用依存関係の検出と安全な削除を担当。
 tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
-model: opus
+model: sonnet
 ---
 
 # リファクタリング & クリーナー
@@ -158,7 +158,8 @@ components/Button.tsx (variantプロップで対応)
 ## このプロジェクトで削除してはいけないもの
 
 - NextAuth.js 認証コード
-- Prisma クライアント設定
+- Drizzle クライアント・スキーマ・マイグレーション（`src/infrastructure/db/drizzle/`）
+- Dexie の過去バージョン定義（`src/lib/db/index.ts` の `version(n)`、既存端末のアップグレードに必要）
 - 基本的なUIコンポーネント
 - API Routes のハンドラー
 - ミドルウェア

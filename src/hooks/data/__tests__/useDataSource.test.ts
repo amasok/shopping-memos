@@ -29,6 +29,7 @@ describe("useDataSource ロジック", () => {
       mockUseGroup.mockReturnValue({
         selectedGroupId: "group-1",
         setSelectedGroupId: vi.fn(),
+        isValidating: false,
       })
 
       const { user } = mockUseAuth()
@@ -55,6 +56,7 @@ describe("useDataSource ロジック", () => {
       mockUseGroup.mockReturnValue({
         selectedGroupId: undefined,
         setSelectedGroupId: vi.fn(),
+        isValidating: false,
       })
 
       const { user } = mockUseAuth()
@@ -81,6 +83,7 @@ describe("useDataSource ロジック", () => {
       mockUseGroup.mockReturnValue({
         selectedGroupId: "group-1", // グループが選択されていても
         setSelectedGroupId: vi.fn(),
+        isValidating: false,
       })
 
       const { user } = mockUseAuth()

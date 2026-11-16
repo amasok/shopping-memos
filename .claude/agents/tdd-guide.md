@@ -46,38 +46,32 @@ describe('formatPrice', () => {
 複数のコンポーネント・APIの連携をテスト。
 
 ```typescript
-// src/app/api/items/__tests__/route.test.ts
-import { POST } from '../route'
-import { prisma } from '@/lib/prisma'
+// src/app/api/ogp/__tests__/route.test.ts（Route Handler の例）
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { NextRequest } from 'next/server'
+import { GET } from '../route'
 
-describe('POST /api/items', () => {
-  beforeEach(async () => {
-    await prisma.shoppingItem.deleteMany()
+describe('GET /api/ogp', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
   })
 
-  it('新しいアイテムを作成する', async () => {
-    const req = new Request('http://localhost/api/items', {
-      method: 'POST',
-      body: JSON.stringify({ name: '牛乳', quantity: 2 }),
-    })
-
-    const res = await POST(req)
-    const data = await res.json()
-
-    expect(res.status).toBe(201)
-    expect(data.name).toBe('牛乳')
-    expect(data.quantity).toBe(2)
-  })
-
-  it('名前が空の場合はエラーを返す', async () => {
-    const req = new Request('http://localhost/api/items', {
-      method: 'POST',
-      body: JSON.stringify({ name: '', quantity: 1 }),
-    })
-
-    const res = await POST(req)
+  it('url パラメータがない場合は 400 を返す', async () => {
+    const res = await GET(new NextRequest('http://localhost/api/ogp'))
     expect(res.status).toBe(400)
   })
+})
+```
+
+tRPC の入力検証は `src/shared/schemas` の Zod スキーマ単体でテストする。
+
+```typescript
+// src/shared/schemas/__tests__/item.test.ts
+import { createItemSchema } from '../item'
+
+it('名前が空の場合はバリデーションエラーになる', () => {
+  const result = createItemSchema.safeParse({ name: '', quantity: 1 })
+  expect(result.success).toBe(false)
 })
 ```
 
@@ -111,23 +105,32 @@ test('買い物リストにアイテムを追加できる', async ({ page }) => 
 
 ## モックの使い方
 
-### Prismaのモック
+### Drizzle のモック
 ```typescript
-import { prismaMock } from '@/lib/__mocks__/prisma'
+import { vi } from 'vitest'
 
-jest.mock('@/lib/prisma')
+// vi.mock は巻き上げられるため、モックは vi.hoisted で定義する
+const dbMock = vi.hoisted(() => ({
+  select: vi.fn().mockReturnThis(),
+  from: vi.fn().mockReturnThis(),
+  where: vi.fn(),
+}))
 
-describe('getUserById', () => {
-  it('ユーザーを取得する', async () => {
-    const mockUser = { id: '1', name: 'テスト太郎', email: 'test@example.com' }
-    prismaMock.user.findUnique.mockResolvedValue(mockUser)
+vi.mock('@/infrastructure/db/drizzle/client', () => ({ db: dbMock }))
 
-    const user = await getUserById('1')
+describe('DrizzleItemRepository.findById', () => {
+  it('存在しない ID の場合は null を返す', async () => {
+    dbMock.where.mockResolvedValue([])
+    const { itemRepository } = await import(
+      '@/modules/catalog/infrastructure/repositories/DrizzleItemRepository'
+    )
 
-    expect(user).toEqual(mockUser)
+    expect(await itemRepository.findById('missing')).toBeNull()
   })
 })
 ```
+
+ドメインロジック（`src/modules/*/domain`）は DB に依存しないため、モックなしでテストできる。
 
 ### 外部APIのモック
 ```typescript
@@ -147,18 +150,15 @@ afterAll(() => server.close())
 
 ## カバレッジ目標
 
-```json
-// jest.config.js
-{
-  "coverageThreshold": {
-    "global": {
-      "branches": 80,
-      "functions": 80,
-      "lines": 80,
-      "statements": 80
-    }
-  }
-}
+```typescript
+// vitest.config.ts
+export default defineConfig({
+  test: {
+    coverage: {
+      thresholds: { branches: 80, functions: 80, lines: 80, statements: 80 },
+    },
+  },
+})
 ```
 
 ## テストコマンド
@@ -224,9 +224,9 @@ beforeEach(() => {
 - バリデーション関数
 
 ### 統合テスト対象
-- `src/app/api/` のAPI Routes
-- Server Actions
-- Prismaを使ったデータ操作
+- `src/app/api/` の Route Handlers
+- `src/infrastructure/trpc/routers` の tRPC プロシージャ
+- `src/modules/*/infrastructure/repositories` の Drizzle を使ったデータ操作
 
 ### E2Eテスト対象
 - ログインフロー

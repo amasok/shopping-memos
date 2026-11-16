@@ -1,6 +1,11 @@
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
+import {
+  canAccessScope,
+  findListScope,
+  type DbExecutor,
+} from "@/modules/sync/infrastructure/entityAccess"
 import {
   items,
   tags,
@@ -108,6 +113,18 @@ export class DataMergeService {
     // 今回のマージで作成したタグID（アイテムへのタグ付けで常に許可）
     const mergedTagIds = new Set<string>()
 
+    // 今回のマージで作成したリストID（履歴・リストアイテムの紐付け先として常に許可）
+    const mergedListIds = new Set<string>()
+
+    // リストへの書き込み可否（今回作成したリスト、または自分がアクセスできる既存リストのみ）
+    const canWriteList = async (executor: DbExecutor, listId: string): Promise<boolean> => {
+      if (mergedListIds.has(listId)) {
+        return true
+      }
+      const scope = await findListScope(executor, listId)
+      return scope !== null && (await canAccessScope(executor, scope, userId))
+    }
+
     // トランザクションでまとめて実行
     try {
       await db.transaction(async (tx) => {
@@ -211,6 +228,7 @@ export class DataMergeService {
               purchasedAt: list.purchasedAt ?? null,
               location: list.location ?? null,
             })
+            mergedListIds.add(list.id)
             mergedCounts.lists++
 
             await tx.insert(syncOperations).values({
@@ -229,6 +247,10 @@ export class DataMergeService {
 
         // 4. リストアイテムをマージ
         for (const listItem of data.listItems) {
+          if (!(await canWriteList(tx, listItem.listId))) {
+            errors.push(`リストアイテム "${listItem.name}" のマージに失敗（リストにアクセスできません）`)
+            continue
+          }
           try {
             await tx.insert(listItems).values({
               id: listItem.id,
@@ -260,15 +282,29 @@ export class DataMergeService {
 
         // 5. 履歴をマージ（リストのpurchasedAtを更新）
         for (const history of data.history) {
+          if (!(await canWriteList(tx, history.listId))) {
+            errors.push(`履歴のマージに失敗（リストにアクセスできません）`)
+            continue
+          }
           try {
             // 履歴データをリストのpurchasedAt/locationとして反映
-            await tx
+            // 他人のリストを上書きしないよう、今回作成したリスト以外は作成者本人のリストに限定する
+            const updated = await tx
               .update(shoppingLists)
               .set({
                 purchasedAt: history.purchasedAt,
                 location: history.location ?? null,
               })
-              .where(eq(shoppingLists.id, history.listId))
+              .where(
+                mergedListIds.has(history.listId)
+                  ? eq(shoppingLists.id, history.listId)
+                  : and(eq(shoppingLists.id, history.listId), eq(shoppingLists.userId, userId))
+              )
+              .returning({ id: shoppingLists.id })
+            if (updated.length === 0) {
+              errors.push(`履歴のマージに失敗（リストにアクセスできません）`)
+              continue
+            }
             mergedCounts.history++
 
             await tx.insert(syncOperations).values({
