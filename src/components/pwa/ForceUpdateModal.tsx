@@ -40,8 +40,13 @@ export function ForceUpdateModal({ serwist }: { serwist: Serwist | null }) {
         await serwist?.update()
         const reg = await navigator.serviceWorker?.getRegistration()
         if (reg?.waiting) {
-          // controlling で useServiceWorkerUpdate がリロードする
-          serwist?.messageSkipWaiting()
+          // serwist が無くても確実に切り替わるよう、waiting の SW へ直接送り、有効になったらリロードする
+          navigator.serviceWorker.addEventListener(
+            "controllerchange",
+            () => window.location.reload(),
+            { once: true },
+          )
+          reg.waiting.postMessage({ type: SKIP_WAITING_MESSAGE })
           return
         }
       } catch {
