@@ -21,7 +21,11 @@ type Job = {
   env?: Record<string, string>
   steps: Step[]
 }
-type Workflow = { jobs: Record<string, Job> }
+type Workflow = {
+  permissions?: Record<string, string>
+  concurrency?: { group?: string; "cancel-in-progress"?: string | boolean }
+  jobs: Record<string, Job>
+}
 
 const workflow = parse(
   readFileSync(
@@ -78,5 +82,18 @@ describe("CI ワークフローの E2E ジョブ", () => {
 
   it("ジョブにタイムアウトが設定されている", () => {
     expect(e2e["timeout-minutes"]).toBeGreaterThan(0)
+  })
+})
+
+describe("CI ワークフロー全体の設定", () => {
+  it("GITHUB_TOKEN の権限を contents: read に絞る", () => {
+    expect(workflow.permissions).toEqual({ contents: "read" })
+  })
+
+  it("古い実行を止めるが、main では止めない", () => {
+    expect(workflow.concurrency?.group).toContain("github.ref")
+    expect(String(workflow.concurrency?.["cancel-in-progress"])).toContain(
+      "refs/heads/main"
+    )
   })
 })

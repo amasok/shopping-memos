@@ -129,9 +129,10 @@ test.describe("OGPプレビュー", () => {
   })
 
   test("L-7: 複数URLがあるメモは最初の1件のみプレビュー表示される", async ({ page }) => {
-    let callCount = 0
+    // reload 前のページからのリクエストも捕捉されるため、回数ではなく対象URLで検証する
+    const requestedUrls = new Set<string>()
     await page.route("**/api/ogp**", (route) => {
-      callCount++
+      requestedUrls.add(new URL(route.request().url()).searchParams.get("url") ?? "")
       route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -151,6 +152,6 @@ test.describe("OGPプレビュー", () => {
 
     // 最初のURLに対してのみAPIが呼ばれる
     await page.waitForTimeout(500)
-    expect(callCount).toBe(1)
+    expect([...requestedUrls]).toEqual(["https://first.com"])
   })
 })
