@@ -1,6 +1,8 @@
 import { REQUEST_LIMITS } from "@/shared/schemas/limits"
 import type { IncomingMessage } from "http"
 import { NextRequest, NextResponse } from "next/server"
+import { pipeline, type Readable, type Transform } from "stream"
+import zlib from "zlib"
 import { requestPinned } from "./http-client"
 import { parseOGP } from "./parse-ogp"
 import { getClientIp, ogpRateLimiter } from "./rate-limit"
@@ -25,13 +27,35 @@ const FETCH_HEADERS = {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-  "Accept-Encoding": "identity",
+  // 圧縮を受け付ける（identity だけを求めると応答しないサイトがある）。展開は readHead で行う
+  "Accept-Encoding": "gzip, br",
 }
 
 const URL_ERROR_MESSAGES: Record<UrlValidationError, string> = {
   invalid_protocol: "Only http/https URLs are allowed",
   invalid_port: "Only ports 80 and 443 are allowed",
   credentials_not_allowed: "URLs with credentials are not allowed",
+}
+
+const CACHE_CONTROL = "public, max-age=60, s-maxage=300, stale-while-revalidate=60"
+
+/** カードにする画像の種類（#140）。SVG はスクリプトを含みうるので入れない */
+const DIRECT_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"])
+
+/** Content-Type の `;` より前を、空白を除いて小文字で返す */
+function mimeTypeOf(contentType: string): string {
+  return contentType.split(";")[0].trim().toLowerCase()
+}
+
+/** 画像の URL のファイル名（パーセントデコード）。ファイル名がなければドメイン */
+function imageTitleOf(imageUrl: URL): string {
+  const name = imageUrl.pathname.split("/").pop() ?? ""
+  if (name === "") return imageUrl.hostname
+  try {
+    return decodeURIComponent(name)
+  } catch {
+    return name
+  }
 }
 
 class BlockedUrlError extends Error {}
@@ -88,11 +112,41 @@ async function fetchWithValidation(
   throw new UpstreamError("Too many redirects")
 }
 
+class UnsupportedEncodingError extends Error {}
+
+/**
+ * Content-Encoding に応じて展開するストリームを返す。圧縮なしは応答をそのまま返す。
+ * 送っていない圧縮方式（zstd・deflate・重ねがけなど）は扱わない
+ */
+function decodeBody(res: IncomingMessage): Readable {
+  const encoding = String(res.headers["content-encoding"] ?? "").trim().toLowerCase()
+  let decoder: Transform
+  if (encoding === "" || encoding === "identity") return res
+  // finishFlush に SYNC_FLUSH を指定し、末尾が欠けたデータでも展開できたところまでを返す（途中で切れた応答）
+  if (encoding === "gzip" || encoding === "x-gzip") {
+    decoder = zlib.createGunzip({ finishFlush: zlib.constants.Z_SYNC_FLUSH })
+  } else if (encoding === "br") {
+    decoder = zlib.createBrotliDecompress({ finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH })
+  } else {
+    throw new UnsupportedEncodingError(encoding)
+  }
+
+  // 応答側のエラー（切断・中断）も decoder に伝える
+  pipeline(res, decoder, () => {})
+  return decoder
+}
+
+/**
+ * <head> までを読む。上限は展開後の大きさで数える（zip bomb 対策）。
+ * 上限に達したら読むのをやめ、展開も接続も止める
+ */
 async function readHead(res: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = []
   let total = 0
+  let body: Readable = res
   try {
-    for await (const chunk of res as AsyncIterable<Buffer>) {
+    body = decodeBody(res)
+    for await (const chunk of body as AsyncIterable<Buffer>) {
       const remaining = MAX_BYTES - total
       const piece = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk
       chunks.push(piece)
@@ -100,7 +154,14 @@ async function readHead(res: IncomingMessage): Promise<string> {
       if (total >= MAX_BYTES) break
       if (piece.includes("</head") || piece.includes("</HEAD")) break
     }
+  } catch (error) {
+    // 壊れた圧縮データは取得先の問題として扱う（中断はそのまま投げてタイムアウトとして返す）
+    if (body !== res && !(error instanceof Error && error.name === "AbortError")) {
+      throw new UpstreamError("Failed to decode response")
+    }
+    throw error
   } finally {
+    body.destroy()
     res.destroy()
   }
   return new TextDecoder().decode(Buffer.concat(chunks))
@@ -176,6 +237,20 @@ export async function GET(request: NextRequest) {
     }
 
     const contentType = response.headers["content-type"] ?? ""
+
+    // 画像ファイルを直接指す URL は、本文を読まずにその画像をカードにする（#140）
+    if (DIRECT_IMAGE_TYPES.has(mimeTypeOf(contentType))) {
+      discard(response)
+      // http の画像は表示しない（#73-4）
+      if (finalUrl.protocol !== "https:") {
+        return NextResponse.json({ error: "Image URL is not https" }, { status: 422 })
+      }
+      return NextResponse.json(
+        { url, image: finalUrl.href, title: imageTitleOf(finalUrl) },
+        { headers: { "Cache-Control": CACHE_CONTROL } }
+      )
+    }
+
     // Content-Typeが明示的に非HTMLの場合のみ拒否（空の場合はHTMLとして試みる）
     if (contentType !== "" && !contentType.includes("text/html")) {
       discard(response)
@@ -189,9 +264,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "No OGP tags found" }, { status: 422 })
     }
 
-    return NextResponse.json(ogpData, {
-      headers: { "Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=60" },
-    })
+    return NextResponse.json(ogpData, { headers: { "Cache-Control": CACHE_CONTROL } })
   } catch (error) {
     if (error instanceof PrivateAddressError || error instanceof HostResolutionError) {
       return NextResponse.json({ error: error.message }, { status: 400 })
@@ -199,7 +272,7 @@ export async function GET(request: NextRequest) {
     if (error instanceof BlockedUrlError) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
-    if (error instanceof UpstreamError) {
+    if (error instanceof UpstreamError || error instanceof UnsupportedEncodingError) {
       return NextResponse.json({ error: "Failed to fetch URL" }, { status: 422 })
     }
     if (signal.aborted) {

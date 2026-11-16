@@ -1,6 +1,7 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
+import { Link as LinkIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface OGPData {
@@ -14,6 +15,12 @@ interface OGPData {
 interface OGPPreviewProps {
   url: string
   checked?: boolean
+  /**
+   * 取得できなかったときの表示（#140）。理由（Amazon・タイムアウト・403 など）では分けない。
+   * - "none": 何も出さない（ホーム・買い物リスト。本文に URL リンクがある）
+   * - "link": ドメインと URL だけのカードを出す（ItemForm。メモが textarea でリンクにならない）
+   */
+  fallback?: "none" | "link"
 }
 
 /**
@@ -48,7 +55,40 @@ function OGPSkeleton() {
   )
 }
 
-export function OGPPreview({ url, checked = false }: OGPPreviewProps) {
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
+}
+
+function OGPLinkFallback({ url, checked }: { url: string; checked: boolean }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      data-testid="ogp-link-fallback"
+      className={cn(
+        "mt-2 flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2",
+        "transition-colors hover:bg-gray-100",
+        checked && "opacity-50"
+      )}
+    >
+      <LinkIcon className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className={cn("truncate text-sm font-semibold text-gray-900", checked && "line-through text-gray-500")}>
+          {hostnameOf(url)}
+        </p>
+        <p className={cn("truncate text-xs text-gray-400", checked && "line-through")}>{url}</p>
+      </div>
+    </a>
+  )
+}
+
+export function OGPPreview({ url, checked = false, fallback = "none" }: OGPPreviewProps) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["ogp", url],
     queryFn: () => fetchOGP(url),
@@ -57,15 +97,11 @@ export function OGPPreview({ url, checked = false }: OGPPreviewProps) {
   })
 
   if (isLoading) return <OGPSkeleton />
-  if (isError || !data) return null
+  if (isError || !data) {
+    return fallback === "link" ? <OGPLinkFallback url={url} checked={checked} /> : null
+  }
 
-  const hostname = (() => {
-    try {
-      return new URL(url).hostname
-    } catch {
-      return url
-    }
-  })()
+  const hostname = hostnameOf(url)
 
   return (
     <a

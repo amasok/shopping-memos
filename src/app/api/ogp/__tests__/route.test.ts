@@ -18,6 +18,8 @@ vi.mock("../http-client", () => ({
 }))
 
 import { Readable } from "stream"
+import zlib from "zlib"
+import { randomBytes } from "crypto"
 import { GET } from "../route"
 import { ogpRateLimiter } from "../rate-limit"
 
@@ -232,4 +234,243 @@ describe("GET /api/ogp: 読み込む大きさの上限", () => {
 
     expect(res.status).toBe(422)
   })
+})
+
+describe("GET /api/ogp: 圧縮された応答", () => {
+  const HTML = `<html><head><meta property="og:title" content="圧縮されたページ"></head><body></body></html>`
+
+  function encodedResponse(body: Buffer, encoding: string) {
+    return Object.assign(Readable.from([body]), {
+      statusCode: 200,
+      headers: { "content-type": "text/html", "content-encoding": encoding },
+    })
+  }
+
+  beforeEach(() => {
+    mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
+  })
+
+  it("圧縮を受け付ける Accept-Encoding を送る（identity だけだと応答しないサイトがある）", async () => {
+    mockFetch.mockResolvedValueOnce(mockHtmlResponse(HTML))
+
+    await GET(makeRequest("https://example.com/"))
+
+    const options = mockFetch.mock.calls[0][2] as { headers: Record<string, string> }
+    expect(options.headers["Accept-Encoding"]).toBe("gzip, br")
+  })
+
+  it.each([
+    ["gzip", zlib.gzipSync(HTML)],
+    ["x-gzip", zlib.gzipSync(HTML)],
+    ["br", zlib.brotliCompressSync(HTML)],
+  ])("Content-Encoding: %s の応答を展開して OGP を返す", async (encoding, body) => {
+    mockFetch.mockResolvedValueOnce(encodedResponse(body, encoding))
+
+    const res = await GET(makeRequest("https://example.com/"))
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).title).toBe("圧縮されたページ")
+  })
+
+  it("展開すると巨大になる応答（zip bomb）は展開後 2MiB で読むのをやめる", async () => {
+    // 64MiB の空白を圧縮すると数十 KB になる。og タグは上限より後ろにあるので読まれない
+    const bomb = zlib.gzipSync(
+      Buffer.concat([Buffer.from("<html><head>"), Buffer.alloc(64 * 1024 * 1024, " "), Buffer.from(HTML)])
+    )
+    mockFetch.mockResolvedValueOnce(encodedResponse(bomb, "gzip"))
+    const inflated: number[] = []
+    const createGunzip = zlib.createGunzip
+    const spy = vi.spyOn(zlib, "createGunzip").mockImplementation((...args) => {
+      const stream = createGunzip(...args)
+      stream.on("data", (chunk: Buffer) => inflated.push(chunk.byteLength))
+      return stream
+    })
+
+    const res = await GET(makeRequest("https://example.com/bomb"))
+    spy.mockRestore()
+
+    expect(res.status).toBe(422)
+    const total = inflated.reduce((a, b) => a + b, 0)
+    expect(total).toBeGreaterThanOrEqual(2 * 1024 * 1024)
+    expect(total).toBeLessThan(4 * 1024 * 1024)
+  })
+
+  it.each([["GZIP"], [" gzip "], ["Br"], ["X-GZIP"]])(
+    "Content-Encoding の大文字小文字と前後の空白は区別しない（%j）",
+    async (encoding) => {
+      const body = encoding.trim().toLowerCase() === "br" ? zlib.brotliCompressSync(HTML) : zlib.gzipSync(HTML)
+      mockFetch.mockResolvedValueOnce(encodedResponse(body, encoding))
+
+      const res = await GET(makeRequest("https://example.com/"))
+
+      expect(res.status).toBe(200)
+      expect((await res.json()).title).toBe("圧縮されたページ")
+    }
+  )
+
+  it.each([
+    ["gzip", (b: Buffer) => zlib.gzipSync(b)],
+    ["br", (b: Buffer) => zlib.brotliCompressSync(b)],
+  ])("途中で切れた %s のデータは、展開できたところまでで解析する", async (encoding, compress) => {
+    // og タグの後ろに長い本文（縮みにくい乱数）を付けてから圧縮し、末尾を落とす
+    const filler = randomBytes(200 * 1024).toString("base64")
+    const full = compress(Buffer.from(`${HTML.replace("</head>", "")}<p>${filler}</p>`))
+    const truncated = full.subarray(0, Math.floor(full.length / 2))
+    mockFetch.mockResolvedValueOnce(encodedResponse(truncated, encoding))
+
+    const res = await GET(makeRequest("https://example.com/"))
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).title).toBe("圧縮されたページ")
+  })
+
+  it("空の gzip メンバーが続く応答も、続けて展開する", async () => {
+    const body = Buffer.concat([zlib.gzipSync(""), zlib.gzipSync(HTML), zlib.gzipSync("")])
+    mockFetch.mockResolvedValueOnce(encodedResponse(body, "gzip"))
+
+    const res = await GET(makeRequest("https://example.com/"))
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).title).toBe("圧縮されたページ")
+  })
+
+  it.each([["deflate"], ["gzip, br"], ["gzip,gzip"]])(
+    "送っていない圧縮方式や重ねがけ（%j）は 422 を返す",
+    async (encoding) => {
+      mockFetch.mockResolvedValueOnce(encodedResponse(zlib.gzipSync(HTML), encoding))
+
+      const res = await GET(makeRequest("https://example.com/"))
+
+      expect(res.status).toBe(422)
+    }
+  )
+
+  it("壊れた圧縮データは 422 を返す", async () => {
+    mockFetch.mockResolvedValueOnce(encodedResponse(Buffer.from("not gzip data"), "gzip"))
+
+    const res = await GET(makeRequest("https://example.com/"))
+
+    expect(res.status).toBe(422)
+  })
+
+  it("送っていない圧縮方式（zstd）は 422 を返す", async () => {
+    mockFetch.mockResolvedValueOnce(encodedResponse(Buffer.from(HTML), "zstd"))
+
+    const res = await GET(makeRequest("https://example.com/"))
+
+    expect(res.status).toBe(422)
+  })
+})
+
+describe("GET /api/ogp: 画像ファイルを直接指す URL (#140)", () => {
+  const IMAGE_URL = "https://scienceportal.jst.go.jp/wp-content/uploads/20250828_n01_01.jpg"
+
+  /** 本文が読まれたかを記録する画像の応答 */
+  function imageResponse(contentType: string) {
+    const stream = Readable.from([Buffer.alloc(1024, 0xff)])
+    const read = vi.spyOn(stream, "read")
+    const destroy = vi.spyOn(stream, "destroy")
+    return {
+      response: Object.assign(stream, { statusCode: 200, headers: { "content-type": contentType } }),
+      read,
+      destroy,
+    }
+  }
+
+  beforeEach(() => {
+    mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
+  })
+
+  it.each([["image/jpeg"], ["image/png"], ["image/webp"], ["image/gif"]])(
+    "%s は本文を読まずに、最終 URL を image、ファイル名を title にして返す",
+    async (contentType) => {
+      const { response, read, destroy } = imageResponse(contentType)
+      mockFetch.mockResolvedValueOnce(response)
+
+      const res = await GET(makeRequest(IMAGE_URL))
+
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({
+        url: IMAGE_URL,
+        image: IMAGE_URL,
+        title: "20250828_n01_01.jpg",
+      })
+      expect(read).not.toHaveBeenCalled()
+      expect(destroy).toHaveBeenCalled()
+    }
+  )
+
+  it.each([["IMAGE/JPEG"], ["image/png; charset=binary"], [" image/webp "]])(
+    "Content-Type の大文字・引数・空白は区別しない（%j）",
+    async (contentType) => {
+      mockFetch.mockResolvedValueOnce(imageResponse(contentType).response)
+
+      const res = await GET(makeRequest(IMAGE_URL))
+
+      expect(res.status).toBe(200)
+      expect((await res.json()).image).toBe(IMAGE_URL)
+    }
+  )
+
+  it("リダイレクトした先の画像は、最終 URL を image にし、各ホップで名前解決して検証する", async () => {
+    mockFetch.mockResolvedValueOnce(mockResponse(302, { location: "https://cdn.example/img/a%20b.png" }))
+    mockFetch.mockResolvedValueOnce(imageResponse("image/png").response)
+
+    const res = await GET(makeRequest("https://short.example/x"))
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      url: "https://short.example/x",
+      image: "https://cdn.example/img/a%20b.png",
+      title: "a b.png",
+    })
+    expect(mockLookup).toHaveBeenCalledWith("cdn.example", expect.anything())
+  })
+
+  it("リダイレクト先が内部 IP なら、画像でも 400 で接続しない", async () => {
+    mockLookup.mockImplementation(async (host: string) =>
+      resolvedTo(host === "internal.example" ? "10.0.0.5" : "93.184.216.34")
+    )
+    mockFetch.mockResolvedValueOnce(mockResponse(302, { location: "https://internal.example/a.jpg" }))
+
+    const res = await GET(makeRequest("https://short.example/x"))
+
+    expect(res.status).toBe(400)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+
+  it("パスにファイル名がなければ、ドメインを title にする", async () => {
+    mockFetch.mockResolvedValueOnce(imageResponse("image/jpeg").response)
+
+    const res = await GET(makeRequest("https://img.example/"))
+
+    expect((await res.json()).title).toBe("img.example")
+  })
+
+  it("デコードできないファイル名は、そのまま title にする", async () => {
+    mockFetch.mockResolvedValueOnce(imageResponse("image/jpeg").response)
+
+    const res = await GET(makeRequest("https://img.example/%E0%A4%A.jpg"))
+
+    expect((await res.json()).title).toBe("%E0%A4%A.jpg")
+  })
+
+  it("最終 URL が http の画像は 422（http の画像は表示しない）", async () => {
+    mockFetch.mockResolvedValueOnce(imageResponse("image/jpeg").response)
+
+    const res = await GET(makeRequest("http://img.example/a.jpg"))
+
+    expect(res.status).toBe(422)
+  })
+
+  it.each([["image/svg+xml"], ["image/avif"], ["image/x-icon"]])(
+    "%s は対象外で 422 を返す",
+    async (contentType) => {
+      mockFetch.mockResolvedValueOnce(imageResponse(contentType).response)
+
+      const res = await GET(makeRequest("https://img.example/a.svg"))
+
+      expect(res.status).toBe(422)
+    }
+  )
 })

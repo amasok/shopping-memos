@@ -258,7 +258,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
           )}
         />
         {extractFirstUrl(memo) && (
-          <OGPPreview url={extractFirstUrl(memo)!} />
+          <OGPPreview url={extractFirstUrl(memo)!} fallback="link" />
         )}
       </div>
 
