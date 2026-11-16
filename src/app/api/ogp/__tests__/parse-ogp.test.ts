@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { parseOGP, extractMetaTags, extractTitle } from "../parse-ogp"
+import { parseOGP, extractMetaTags, extractTitle, resolveImageUrl } from "../parse-ogp"
 
 const URL_ = "https://example.com/"
 
@@ -149,5 +149,71 @@ describe("parseOGP: 計算量（ReDoS 対策）", () => {
     const html = `<meta name="x" content="y">`.repeat(20_000) + `<meta property="og:title" content="末尾">`
 
     expect(parseOGP(html, URL_)?.title).toBe("末尾")
+  })
+})
+
+describe("resolveImageUrl (#66)", () => {
+  const base = "https://example.com/dir/page"
+
+  it.each([
+    ["/img.png", "https://example.com/img.png"],
+    ["img.png", "https://example.com/dir/img.png"],
+    ["../up.png", "https://example.com/up.png"],
+    ["//cdn.example/x.png", "https://cdn.example/x.png"],
+    ["https://other.example/a.png?x=1", "https://other.example/a.png?x=1"],
+    ["http://other.example/a.png", "http://other.example/a.png"],
+  ])("%s を絶対URLにする", (raw, expected) => {
+    expect(resolveImageUrl(raw, base)).toBe(expected)
+  })
+
+  it.each([
+    ["javascript:alert(1)"],
+    ["JavaScript:alert(1)"],
+    ["data:image/png;base64,AAAA"],
+    ["file:///etc/passwd"],
+    ["ftp://example.com/a.png"],
+    ["blob:https://example.com/uuid"],
+  ])("%s は捨てる", (raw) => {
+    expect(resolveImageUrl(raw, base)).toBeUndefined()
+  })
+
+  it("空・未指定は undefined", () => {
+    expect(resolveImageUrl(undefined, base)).toBeUndefined()
+    expect(resolveImageUrl("", base)).toBeUndefined()
+  })
+
+  it("基準URLが不正で相対パスを解決できなければ undefined", () => {
+    expect(resolveImageUrl("/img.png", "not a url")).toBeUndefined()
+  })
+
+  it("基準URLが不正なら、絶対URLでも安全側に倒して返さない", () => {
+    expect(resolveImageUrl("https://example.com/a.png", "not a url")).toBeUndefined()
+  })
+})
+
+describe("parseOGP: og:image の解決 (#66)", () => {
+  it("相対パスの og:image は baseUrl（最終URL）基準で絶対URLにする", () => {
+    const html = `<meta property="og:title" content="t"><meta property="og:image" content="/a.png">`
+
+    const result = parseOGP(html, "https://start.example/x", "https://final.example/y")
+
+    expect(result?.image).toBe("https://final.example/a.png")
+    expect(result?.url).toBe("https://start.example/x")
+  })
+
+  it("baseUrl を省略すると url を基準にする", () => {
+    const html = `<meta property="og:title" content="t"><meta property="og:image" content="a.png">`
+
+    expect(parseOGP(html, "https://example.com/dir/p")?.image).toBe("https://example.com/dir/a.png")
+  })
+
+  it("javascript: / data: の og:image は返さず、他の情報は返す", () => {
+    const html = `<meta property="og:title" content="t"><meta property="og:image" content="javascript:alert(1)">`
+
+    expect(parseOGP(html, URL_)).toMatchObject({ title: "t", image: undefined })
+  })
+
+  it("og:image が不正で他の情報もなければ null", () => {
+    expect(parseOGP(`<meta property="og:image" content="data:image/png;base64,AAAA">`, URL_)).toBeNull()
   })
 })
