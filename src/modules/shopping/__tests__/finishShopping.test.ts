@@ -20,6 +20,8 @@ describe("買い物完了フロー", () => {
         groupId: null,
         createdAt: new Date(),
         completedAt: null,
+        purchasedAt: null,
+        location: null,
         items: [],
       }
 
@@ -35,6 +37,8 @@ describe("買い物完了フロー", () => {
         groupId: null,
         createdAt: new Date(),
         completedAt: new Date(),
+        purchasedAt: null,
+        location: null,
         items: [],
       }
 
@@ -173,10 +177,10 @@ describe("買い物完了フロー", () => {
         createdAt: new Date(),
         completedAt: new Date(),
         purchasedAt: new Date(),
-        location: undefined,
+        location: null,
       }
 
-      expect(list.location).toBeUndefined()
+      expect(list.location).toBeNull()
       expect(list.groupId).toBeNull()
     })
   })
@@ -218,6 +222,8 @@ describe("買い物完了フロー", () => {
         groupId: null,
         createdAt: new Date(),
         completedAt: null,
+        purchasedAt: null,
+        location: null,
         items: [
           {
             id: "item-1",
@@ -251,6 +257,8 @@ describe("買い物完了フロー", () => {
         groupId: null,
         createdAt: new Date(),
         completedAt: new Date(),
+        purchasedAt: null,
+        location: null,
         items: [],
       }
 
@@ -270,6 +278,8 @@ describe("買い物完了フロー", () => {
         groupId: null,
         createdAt: new Date(),
         completedAt: null,
+        purchasedAt: null,
+        location: null,
         items: [],
       }
 

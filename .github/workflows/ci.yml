@@ -37,6 +37,11 @@ jobs:
       - name: Run linter
         run: npm run lint
 
+      # next build はテストファイルの型エラーを検出しない（Next.js のバージョンで挙動が変わる）ため、
+      # tsconfig の全ファイルを明示的に型チェックする
+      - name: Type check
+        run: npm run typecheck
+
       - name: Run unit tests
         run: npm run test:run
 
