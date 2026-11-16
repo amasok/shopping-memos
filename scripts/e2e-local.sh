@@ -11,7 +11,7 @@
 # - ビルド: CI と同じく E2E_BUILD=true の本番ビルド（.next は worktree ごと）を next start で動かす
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT="$(pwd)"
 
 PG_CONTAINER="${E2E_PG_CONTAINER:-shopping-memos-db}"
@@ -53,21 +53,53 @@ ensure_postgres() {
   fail "postgres（${PG_CONTAINER}）が応答しません。docker compose logs postgres を確認してください。"
 }
 
-# ブランチ名から DB 名を作る（英小文字・数字・_ だけ、63 文字まで）
-e2e_db_name() {
-  local branch
-  branch="$(git -C "${ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo local)"
-  local safe
-  safe="$(printf '%s' "$branch" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '_' | sed -E 's/_+/_/g; s/^_//; s/_$//')"
-  printf 'shopping_memos_e2e_%s' "${safe:-local}" | cut -c1-63
+# worktree のパスの短いハッシュ（DB 名とロックに使う）
+worktree_hash() {
+  printf '%s' "${ROOT}" | shasum | cut -c1-8
 }
 
-recreate_db() {
-  local db="$1"
-  # 前回の実行のデータが残らないよう、毎回作り直す（CI と同じく空の DB から始める）
-  docker exec "${PG_CONTAINER}" psql -U postgres -v ON_ERROR_STOP=1 -q \
-    -c "DROP DATABASE IF EXISTS \"${db}\" WITH (FORCE)" \
-    -c "CREATE DATABASE \"${db}\"" >/dev/null
+# 実行ごとに別の DB 名を作る: sm_e2e_<ブランチ>_<worktree のハッシュ>_<時刻>_<PID>
+# （英小文字・数字・_ だけ、63 文字まで）。同じブランチでも、別の worktree や別の実行とはぶつからない
+e2e_db_name() {
+  local branch safe run_id
+  # detached（worktree をコミットで切ったとき）はコミットの短いハッシュ
+  branch="$(git -C "${ROOT}" symbolic-ref --short -q HEAD 2>/dev/null || git -C "${ROOT}" rev-parse --short HEAD 2>/dev/null || echo local)"
+  safe="$(printf '%s' "$branch" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '_' | sed -E 's/_+/_/g; s/^_//; s/_$//' | cut -c1-24)"
+  run_id="$(date +%s)_$$"
+  printf 'sm_e2e_%s_%s_%s' "${safe:-local}" "$(worktree_hash)" "${run_id}" | cut -c1-63
+}
+
+# 空の DB を作る（CI と同じく空の DB から始める）。名前は実行ごとに別なので、ほかの実行の DB は消さない
+create_db() {
+  docker exec "${PG_CONTAINER}" psql -U postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$1\"" >/dev/null
+}
+
+drop_db() {
+  docker exec "${PG_CONTAINER}" psql -U postgres -q -c "DROP DATABASE IF EXISTS \"$1\" WITH (FORCE)" >/dev/null 2>&1 || true
+}
+
+# 同じ worktree での同時実行を止める（.next・e2e/.auth・test-results を共有するため）。
+# ロックは worktree の外（TMPDIR）に置き、持ち主の PID が終わっていれば取り直す
+LOCK_DIR=""
+acquire_lock() {
+  local dir="${TMPDIR:-/tmp}/shopping-memos-e2e-local-$(worktree_hash).lock"
+  if ! mkdir "${dir}" 2>/dev/null; then
+    local owner
+    owner="$(cat "${dir}/pid" 2>/dev/null || true)"
+    if [[ -n "${owner}" ]] && kill -0 "${owner}" 2>/dev/null; then
+      fail "この worktree（${ROOT}）では、ほかの test:e2e:local（PID ${owner}）が実行中です。終わってから実行してください。"
+    fi
+    rm -rf "${dir}"
+    mkdir "${dir}" || fail "ロック（${dir}）を作れません。"
+  fi
+  echo "$$" >"${dir}/pid"
+  LOCK_DIR="${dir}"
+}
+
+DB_NAME=""
+cleanup() {
+  [[ -n "${DB_NAME}" ]] && drop_db "${DB_NAME}"
+  [[ -n "${LOCK_DIR}" ]] && rm -rf "${LOCK_DIR}"
 }
 
 # --- ポート -----------------------------------------------------------------
@@ -86,43 +118,60 @@ pick_ports() {
 }
 
 # --- 実行 -----------------------------------------------------------------
-ensure_docker
-ensure_postgres
+main() {
+  trap cleanup EXIT
+  trap 'exit 130' INT TERM
 
-DB_NAME="$(e2e_db_name)"
-log "DB を作り直す: ${DB_NAME}"
-recreate_db "${DB_NAME}"
+  acquire_lock
+  ensure_docker
+  ensure_postgres
 
-read -r PORT OFFLINE_PORT <<<"$(pick_ports)"
+  DB_NAME="$(e2e_db_name)"
+  log "DB を作る: ${DB_NAME}（終わったら消す）"
+  create_db "${DB_NAME}"
 
-# .env は読まない（Next.js は .env を読むが、ここで渡す環境変数が優先される）。worktree に .env があれば知らせる
-for f in .env .env.local; do
-  [[ -e "${ROOT}/${f}" ]] && echo "[e2e-local] 注意: ${f} があります。ここで渡す変数（DATABASE_URL・AUTH_SECRET など）が優先されますが、それ以外の値は Next.js に読まれます。"
-done
+  read -r PORT OFFLINE_PORT <<<"$(pick_ports)"
 
-export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:${PG_HOST_PORT}/${DB_NAME}"
-export AUTH_SECRET="e2e-local-$(node -e 'console.log(require("crypto").randomBytes(24).toString("hex"))')"
-export AUTH_TRUST_HOST=true
-export E2E_SEED_TOKEN="$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
-export E2E_PORT="$PORT"
-export E2E_OFFLINE_PORT="$OFFLINE_PORT"
-export E2E_START=true
-export E2E_REUSE_SERVER=false
+  # .env は読まない（Next.js は .env を読むが、ここで渡す環境変数が優先される）。worktree に .env があれば知らせる
+  for f in .env .env.local; do
+    [[ -e "${ROOT}/${f}" ]] && echo "[e2e-local] 注意: ${f} があります。ここで渡す変数（DATABASE_URL・AUTH_SECRET など）が優先されますが、それ以外の値は Next.js に読まれます。"
+  done
 
-log "db:migrate"
-npm run db:migrate
+  export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:${PG_HOST_PORT}/${DB_NAME}"
+  export AUTH_SECRET="e2e-local-$(node -e 'console.log(require("crypto").randomBytes(24).toString("hex"))')"
+  export AUTH_TRUST_HOST=true
+  export E2E_SEED_TOKEN="$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
+  export E2E_PORT="$PORT"
+  export E2E_OFFLINE_PORT="$OFFLINE_PORT"
+  export E2E_START=true
+  export E2E_REUSE_SERVER=false
 
-log "本番ビルド（E2E_BUILD=true）"
-E2E_BUILD=true npm run build
+  log "db:migrate"
+  npm run db:migrate
 
-log "E2E（ポート ${E2E_PORT}）"
-if [[ $# -gt 0 ]]; then
-  npx playwright test "$@"
-  exit 0
+  log "本番ビルド（E2E_BUILD=true）"
+  E2E_BUILD=true npm run build
+
+  log "ゲストモード E2E（ポート ${E2E_PORT}）"
+  if [[ $# -gt 0 ]]; then
+    npx playwright test "$@"
+    return 0
+  fi
+  # ゲストモード（IndexedDB だけ）は並列で流す
+  npx playwright test --project=chromium --project="Mobile Chrome"
+
+  # ログイン済み（e2e/auth）は、ファイルをまたいで同じユーザー A / B と同じ DB を使うため、並列だとほかのテストの
+  # merge や件数に干渉されて落ちることがある（merge-foreign-id など）。CI と同じく 1 ワーカーで流す
+  log "ログイン済み E2E（1 ワーカー）"
+  npx playwright test --project=chromium-auth --workers=1
+
+  log "offline E2E（ポート ${E2E_OFFLINE_PORT}）"
+  E2E_OFFLINE=true npx playwright test --project=offline
+
+  log "OK（DB: ${DB_NAME}、ポート: ${E2E_PORT} / ${E2E_OFFLINE_PORT}）"
+}
+
+# テストから関数だけを読み込めるよう、直接実行されたときだけ main を動かす
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-npx playwright test --project=chromium --project=chromium-auth --project="Mobile Chrome"
-
-log "offline E2E（ポート ${E2E_OFFLINE_PORT}）"
-E2E_OFFLINE=true npx playwright test --project=offline
-
-log "OK（DB: ${DB_NAME}、ポート: ${E2E_PORT} / ${E2E_OFFLINE_PORT}）"

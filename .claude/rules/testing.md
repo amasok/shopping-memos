@@ -30,8 +30,8 @@
 
 ## E2E の実行（#142）
 
-- push の前に `npm run test:e2e:local` で全部（chromium・chromium-auth・Mobile Chrome・offline）を流す。Docker の postgres に worktree ごとの DB を作り直し、本番ビルドを空いているポートで動かす。`.env` は使わない
-- 一部だけ流すときは `npm run test:e2e:local -- e2e/ogp-preview.spec.ts`（引数は playwright test に渡す。offline は流さない）
+- push の前に `npm run test:e2e:local` で全部（chromium・chromium-auth・Mobile Chrome・offline）を流す。Docker の postgres に実行ごとの DB（ブランチ名・worktree のハッシュ・実行 ID）を作って終わったら消し、本番ビルドを空いているポートで動かす。`.env` は使わない。ゲストモードは並列、ログイン済み（chromium-auth）は 1 ワーカーで流す。同じ worktree での同時実行はロックで止まる（.next などを共有するため。別の worktree なら同時に流せる）
+- 一部だけ流すときは `npm run test:e2e:local -- e2e/ogp-preview.spec.ts`（引数は playwright test に渡す。offline は流さない）。ログイン済み（`e2e/auth`）を流すときは `--project=chromium-auth --workers=1` を付ける（同じユーザーを共有するので、並列だと干渉する）
 - tester は結果（件数）を報告に書き、リーダーは PR の本文に書く。CI の E2E は main へのリリースのときだけ動く最後の確認
 
 コード例・モックの書き方は `testing-patterns` スキル、TDD の進め方は `tdd-guide` エージェントを参照。

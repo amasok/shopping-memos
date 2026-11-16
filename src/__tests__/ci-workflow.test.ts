@@ -154,16 +154,16 @@ describe("CI ワークフローの E2E ジョブ", () => {
     )
   })
 
-  describe("実行する Playwright のプロジェクト（Actions の使用量削減）", () => {
+  describe("実行する Playwright のプロジェクト（#142）", () => {
     const runStep = () => e2e.steps[stepIndex("test:e2e")]
 
     /** E2E の run を、npm を引数を出力するだけの偽物に差し替えて実行し、渡されたプロジェクトを返す */
-    function projectsFor(baseRef: string, ref: string): string[] {
+    function projectsFor(ref: string): string[] {
       const bin = mkdtempSync(path.join(tmpdir(), "fake-npm-"))
       writeFileSync(path.join(bin, "npm"), '#!/bin/bash\nfor a in "$@"; do echo "$a"; done\n')
       chmodSync(path.join(bin, "npm"), 0o755)
       const result = spawnSync("bash", ["-e", "-c", runStep().run ?? ""], {
-        env: { ...process.env, ...runStep().env, PATH: `${bin}:${process.env.PATH}`, BASE_REF: baseRef, GITHUB_REF: ref },
+        env: { ...process.env, ...runStep().env, PATH: `${bin}:${process.env.PATH}`, GITHUB_REF: ref },
         encoding: "utf-8",
       })
       expect(result.status, result.stderr).toBe(0)
@@ -173,21 +173,24 @@ describe("CI ワークフローの E2E ジョブ", () => {
         .map((a) => a.slice("--project=".length))
     }
 
-    it("base_ref を環境変数で渡す（式を run に直接埋め込まない）", () => {
-      expect(runStep().env?.BASE_REF).toBe("${{ github.base_ref }}")
+    it("式を run に直接埋め込まない", () => {
       expect(runStep().run ?? "").not.toContain("${{")
     })
 
-    it("develop への PR では chromium と chromium-auth だけ（Mobile Chrome は動かさない）", () => {
-      expect(projectsFor("develop", "refs/pull/1/merge")).toEqual(["chromium", "chromium-auth"])
-    })
+    it.each([["refs/pull/2/merge"], ["refs/heads/main"]])(
+      "E2E ジョブが動くとき（main への PR と push）は、Mobile Chrome も含めて全部流す（%s）",
+      (ref) => {
+        expect(projectsFor(ref)).toEqual(["chromium", "chromium-auth", "Mobile Chrome"])
+      }
+    )
 
-    it("main への PR では Mobile Chrome も動かす", () => {
-      expect(projectsFor("main", "refs/pull/2/merge")).toEqual(["chromium", "chromium-auth", "Mobile Chrome"])
-    })
-
-    it("main への push では Mobile Chrome も動かす", () => {
-      expect(projectsFor("", "refs/heads/main")).toEqual(["chromium", "chromium-auth", "Mobile Chrome"])
+    it("npm run test:e2e:local と同じプロジェクトを流し、ローカルではログイン済みを 1 ワーカーにする", () => {
+      const script = readFileSync(path.resolve(__dirname, "../../scripts/e2e-local.sh"), "utf-8")
+      for (const name of ["chromium", "chromium-auth", "Mobile Chrome"]) {
+        expect(script).toContain(`--project=${name.includes(" ") ? `"${name}"` : name}`)
+      }
+      // ログイン済みのテストは同じユーザーを共有するので、並列だと干渉する（CI は workers: 1）
+      expect(script).toContain("--project=chromium-auth --workers=1")
     })
 
     it("指定するプロジェクト名が playwright.config.ts に存在する", () => {
