@@ -1,10 +1,32 @@
 name: CI
 
+# ドキュメントだけの変更では動かさない（Actions の使用量削減）。
+# paths-ignore では例外を書けないため、paths と否定パターンで書く（後に書いたパターンほど優先）。
+# AGENTS.md と CLAUDE.md は #122 の検査（repo-invariants.test.ts）の対象なので、除外したあとで戻す。
+# "!*.md" はルート直下の .md 用（"**/" がディレクトリ 0 個に一致しない場合に備える）。
+# push と pull_request の paths は同じにする（ci-workflow.test.ts で検査）
 on:
   push:
     branches: [main, develop]
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!*.md"
+      - "!.claude/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
   pull_request:
     branches: [main, develop]
+    # push と同じリスト（YAML のアンカーは使わない）
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!*.md"
+      - "!.claude/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
 
 permissions:
   contents: read
@@ -17,9 +39,12 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
 
 jobs:
+  # develop への push では Test・Build・E2E を動かさない（PR で確認済み。Actions の使用量削減）。
+  # develop への push で動くのは migrate-develop だけ
   test:
     name: Test
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout
@@ -59,6 +84,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     needs: test
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout
@@ -117,7 +143,7 @@ jobs:
   migrate-develop:
     name: Migrate Develop DB
     runs-on: ubuntu-latest
-    needs: build
+    # develop への push では Build を動かさないので、build には依存しない（npm ci と db:migrate だけ）
     # develop への push のときだけ、Preview（develop デプロイ）用の DB に migrate する（#134）。
     # Vercel の develop デプロイより先には終わらないため、デプロイ直後の数十秒は旧スキーマのままになりうる（検証環境なので許容）
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
@@ -219,8 +245,17 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      # Mobile Chrome は main への PR と main への push のときだけ動かす（Actions の使用量削減）。
+      # develop への PR では chromium と chromium-auth（auth-setup は dependencies で自動的に入る）だけ
       - name: Run E2E tests
-        run: npm run test:e2e
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          projects=(--project=chromium --project=chromium-auth)
+          if [ "$BASE_REF" = "main" ] || [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            projects+=("--project=Mobile Chrome")
+          fi
+          npm run test:e2e -- "${projects[@]}"
 
       # SW・オフライン（e2e/offline）。SW を有効にするため本番ビルド（next start, port 3100）で実行する
       - name: Run offline E2E tests

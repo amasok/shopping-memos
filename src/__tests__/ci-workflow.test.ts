@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { readFileSync } from "fs"
 import { spawnSync } from "child_process"
+import { mkdtempSync, writeFileSync, chmodSync } from "fs"
+import { tmpdir } from "os"
 import path from "path"
 import { parse } from "yaml"
 import { describe, it, expect } from "vitest"
@@ -25,7 +27,9 @@ type Job = {
   env?: Record<string, string>
   steps: Step[]
 }
+type Trigger = { branches?: string[]; paths?: string[]; "paths-ignore"?: string[] }
 type Workflow = {
+  on: { push?: Trigger; pull_request?: Trigger }
   permissions?: Record<string, string>
   concurrency?: { group?: string; "cancel-in-progress"?: string | boolean }
   jobs: Record<string, Job>
@@ -150,6 +154,50 @@ describe("CI ワークフローの E2E ジョブ", () => {
     )
   })
 
+  describe("実行する Playwright のプロジェクト（Actions の使用量削減）", () => {
+    const runStep = () => e2e.steps[stepIndex("test:e2e")]
+
+    /** E2E の run を、npm を引数を出力するだけの偽物に差し替えて実行し、渡されたプロジェクトを返す */
+    function projectsFor(baseRef: string, ref: string): string[] {
+      const bin = mkdtempSync(path.join(tmpdir(), "fake-npm-"))
+      writeFileSync(path.join(bin, "npm"), '#!/bin/bash\nfor a in "$@"; do echo "$a"; done\n')
+      chmodSync(path.join(bin, "npm"), 0o755)
+      const result = spawnSync("bash", ["-e", "-c", runStep().run ?? ""], {
+        env: { ...process.env, ...runStep().env, PATH: `${bin}:${process.env.PATH}`, BASE_REF: baseRef, GITHUB_REF: ref },
+        encoding: "utf-8",
+      })
+      expect(result.status, result.stderr).toBe(0)
+      return result.stdout
+        .split("\n")
+        .filter((a) => a.startsWith("--project="))
+        .map((a) => a.slice("--project=".length))
+    }
+
+    it("base_ref を環境変数で渡す（式を run に直接埋め込まない）", () => {
+      expect(runStep().env?.BASE_REF).toBe("${{ github.base_ref }}")
+      expect(runStep().run ?? "").not.toContain("${{")
+    })
+
+    it("develop への PR では chromium と chromium-auth だけ（Mobile Chrome は動かさない）", () => {
+      expect(projectsFor("develop", "refs/pull/1/merge")).toEqual(["chromium", "chromium-auth"])
+    })
+
+    it("main への PR では Mobile Chrome も動かす", () => {
+      expect(projectsFor("main", "refs/pull/2/merge")).toEqual(["chromium", "chromium-auth", "Mobile Chrome"])
+    })
+
+    it("main への push では Mobile Chrome も動かす", () => {
+      expect(projectsFor("", "refs/heads/main")).toEqual(["chromium", "chromium-auth", "Mobile Chrome"])
+    })
+
+    it("指定するプロジェクト名が playwright.config.ts に存在する", () => {
+      const config = readFileSync(path.resolve(__dirname, "../../playwright.config.ts"), "utf-8")
+      for (const name of ["chromium", "chromium-auth", "Mobile Chrome"]) {
+        expect(config).toContain(`name: "${name}"`)
+      }
+    })
+  })
+
   it("Playwright が対応する OS バージョンに固定されている", () => {
     // ubuntu-latest は OS 更新で Playwright 未対応になり得る（26.04 で発生）
     expect(e2e["runs-on"]).toMatch(/^ubuntu-\d{2}\.\d{2}$/)
@@ -232,10 +280,103 @@ describe("develop 用 DB のマイグレーション（migrate-develop ジョブ
     expect(exec("postgresql://u:p@host/db").status).toBe(0)
   })
 
-  it("変更の有無で判定せず毎回 db:migrate を実行し、ビルドが通ってから動く", () => {
+  it("変更の有無で判定せず毎回 db:migrate を実行する", () => {
     expect(job.steps.some((s) => s.uses?.startsWith("dorny/paths-filter"))).toBe(false)
     expect(migrateStep()?.if).toBeUndefined()
-    expect([job.needs ?? []].flat()).toContain("build")
+  })
+
+  it("develop への push では Build を動かさないので、build に依存せず、npm ci と db:migrate だけを行う（Actions の使用量削減）", () => {
+    expect(job.needs).toBeUndefined()
+    const runs = job.steps.map((s) => s.run ?? "").join("\n")
+    expect(runs).toContain("npm ci")
+    expect(runs).toContain("npm run db:migrate")
+    expect(runs).not.toContain("npm run build")
+    expect(runs).not.toContain("test")
+  })
+})
+
+/**
+ * GitHub Actions の paths の評価を真似る（後に書いたパターンほど優先。! で除外）。
+ * `**` は / を含む任意の文字列、`*` は / を含まない任意の文字列
+ */
+function globToRegExp(glob: string): RegExp {
+  let re = ""
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]
+    if (c === "*" && glob[i + 1] === "*") {
+      if (glob[i + 2] === "/") {
+        re += "(?:.*/)?"
+        i += 2
+      } else {
+        re += ".*"
+        i += 1
+      }
+    } else if (c === "*") {
+      re += "[^/]*"
+    } else {
+      re += c.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    }
+  }
+  return new RegExp(`^${re}$`)
+}
+
+function triggeredBy(paths: string[], file: string): boolean {
+  let matched = false
+  for (const pattern of paths) {
+    const negated = pattern.startsWith("!")
+    if (globToRegExp(negated ? pattern.slice(1) : pattern).test(file)) matched = !negated
+  }
+  return matched
+}
+
+describe("CI の起動条件（Actions の使用量削減）", () => {
+  it.each([["push"], ["pull_request"]] as const)("%s は paths で絞り、paths-ignore は使わない", (event) => {
+    const trigger = workflow.on[event]
+    expect(trigger?.branches).toEqual(["main", "develop"])
+    expect(trigger?.["paths-ignore"]).toBeUndefined()
+    expect(trigger?.paths?.length ?? 0).toBeGreaterThan(0)
+  })
+
+  it("ルート直下の .md も明示して除外する（`**/` がディレクトリ 0 個に一致するかに頼らない）", () => {
+    const paths = workflow.on.push?.paths ?? []
+    expect(paths).toContain("!*.md")
+    // AGENTS.md・CLAUDE.md を戻す行は、除外の行より後に置く
+    expect(paths.indexOf("AGENTS.md")).toBeGreaterThan(paths.indexOf("!*.md"))
+    expect(paths.indexOf("CLAUDE.md")).toBeGreaterThan(paths.indexOf("!*.md"))
+  })
+
+  it.each([
+    ["docs/features/sharing.md", false],
+    ["docs/ogp-link-preview.md", false],
+    ["docs/images/flow.png", false],
+    ["README.md", false],
+    ["GEMINI.md", false],
+    ["src/components/README.md", false],
+    [".claude/rules/team-operation.md", false],
+    [".claude/settings.json", false],
+    // #122 の検査（repo-invariants.test.ts）の対象なので、変わったら CI を動かす
+    ["AGENTS.md", true],
+    ["CLAUDE.md", true],
+    ["src/app/page.tsx", true],
+    ["package.json", true],
+    [".github/workflows/ci.yml", true],
+    ["drizzle/0005_x.sql", true],
+  ])("%s だけの変更で CI が動くか: %s", (file, expected) => {
+    for (const event of ["push", "pull_request"] as const) {
+      expect(triggeredBy(workflow.on[event]?.paths ?? [], file), `${event}`).toBe(expected)
+    }
+  })
+
+  it("push と pull_request の paths は同じ", () => {
+    expect(workflow.on.push?.paths).toEqual(workflow.on.pull_request?.paths)
+  })
+
+  it.each([["test"], ["build"]])("%s は PR と main への push だけで動く（develop への push では動かさない）", (name) => {
+    expect(workflow.jobs[name].if).toBe("github.event_name == 'pull_request' || github.ref == 'refs/heads/main'")
+  })
+
+  it("本番の migrate は今のまま build の後に動く", () => {
+    expect([workflow.jobs.migrate.needs ?? []].flat()).toContain("build")
   })
 })
 
@@ -280,8 +421,6 @@ describe("SW ライフサイクル E2E のワークフロー（sw-e2e.yml）", (
       "src/components/pwa/**",
       "src/app/serwist/**",
       "next.config.ts",
-      "package.json",
-      "package-lock.json",
       "playwright.config.ts",
       "src/hooks/useServiceWorkerUpdate.ts",
       "src/app/api/version/**",
@@ -289,6 +428,13 @@ describe("SW ライフサイクル E2E のワークフロー（sw-e2e.yml）", (
     ]) {
       expect(paths).toContain(p)
     }
+  })
+
+  it("package.json と package-lock.json の変更だけでは動かさない（依存の更新ごとに 5〜7 分かかるため。手動実行は残す）", () => {
+    const paths = swWorkflow.on.pull_request?.paths ?? []
+    expect(paths).not.toContain("package.json")
+    expect(paths).not.toContain("package-lock.json")
+    expect(swWorkflow.on).toHaveProperty("workflow_dispatch")
   })
 
   it("npm run test:e2e:sw-lifecycle を実行し、タイムアウトと OS 固定がある", () => {
