@@ -181,14 +181,16 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
 
-  # E2Eテストは PR と main への push で実行
+  # E2E は main への PR と main への push だけで実行する（#142。Actions の使用量削減）。
+  # develop への PR では動かさず、tester が push の前に npm run test:e2e:local で全件を流して、結果を PR に書く。
+  # CI の E2E は、main へのリリースのときの最後の確認
   # ログイン済みテスト（e2e/auth）は実DBが必要なため Postgres サービスを起動する
   e2e:
     name: E2E Tests
     # ubuntu-latest(26.04) は Playwright 1.58 が未対応のため、対応OSに固定する
     runs-on: ubuntu-24.04
     needs: build
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     timeout-minutes: 30
 
     services:
@@ -243,17 +245,10 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      # Mobile Chrome は main への PR と main への push のときだけ動かす（Actions の使用量削減）。
-      # develop への PR では chromium と chromium-auth（auth-setup は dependencies で自動的に入る）だけ
+      # E2E ジョブは main への PR と main への push だけで動くので、Mobile Chrome も含めて全部流す（#142）。
+      # auth-setup は chromium-auth の dependencies で自動的に入る。npm run test:e2e:local と同じプロジェクト
       - name: Run E2E tests
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          projects=(--project=chromium --project=chromium-auth)
-          if [ "$BASE_REF" = "main" ] || [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            projects+=("--project=Mobile Chrome")
-          fi
-          npm run test:e2e -- "${projects[@]}"
+        run: npm run test:e2e -- --project=chromium --project=chromium-auth --project="Mobile Chrome"
 
       # SW・オフライン（e2e/offline）。SW を有効にするため本番ビルド（next start, port 3100）で実行する
       - name: Run offline E2E tests

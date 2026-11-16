@@ -57,6 +57,8 @@ npm run test:run              # Vitest 1回実行
 npm run test:coverage         # カバレッジ付き
 npm run test:e2e              # Playwright（E2E_BUILD=true E2E_TEST=true で dev サーバーを自動起動。E2E_SEED_TOKEN は自動生成）
 npm run test:e2e:ui           # Playwright UI モード
+npm run test:e2e:local        # CI と同じ E2E（chromium・chromium-auth・Mobile Chrome・offline）を全部ローカルで流す。Docker の postgres に worktree ごとの DB、空いているポート（#142）
+# ポートは E2E_PORT / E2E_OFFLINE_PORT（既定 3000 / 3100）。別の worktree のサーバーに当たらないよう、並行するときは変える
 # 自分で起動したサーバーを使い回す場合は、サーバーを E2E_BUILD=true E2E_TEST=true E2E_SEED_TOKEN=<32文字以上> で起動し、テストにも同じ E2E_SEED_TOKEN を渡す
 
 # Docker
