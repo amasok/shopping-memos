@@ -46,6 +46,13 @@ next-env.d.ts
 # Playwright auth state
 e2e/.auth/
 
+# Playwright reports
+/playwright-report/
+/test-results/
+
+# editor swap files
+*.swp
+
 # Claude Code (個人設定は除外)
 .claude/settings.local.json
 # next-agents-md

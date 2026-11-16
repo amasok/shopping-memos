@@ -2,7 +2,7 @@
 name: doc-updater
 description: ドキュメント管理スペシャリスト。README、CLAUDE.md、APIドキュメントの更新を担当。コードからドキュメントを生成・同期。
 tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
-model: opus
+model: sonnet
 ---
 
 # ドキュメント更新スペシャリスト
@@ -78,7 +78,7 @@ cp .env.example .env
 docker compose up -d
 
 # マイグレーション実行
-npx prisma migrate dev
+npm run db:migrate
 
 # 開発サーバーを起動
 npm run dev
@@ -91,14 +91,18 @@ npm run dev
 | `npm run dev` | 開発サーバー起動 |
 | `npm run build` | ビルド |
 | `npm run lint` | リント |
-| `npm test` | テスト実行 |
+| `npm run test:run` | ユニットテスト実行 |
+| `npm run test:e2e` | E2Eテスト実行 |
+| `npm run db:migrate` | DBマイグレーション適用 |
 
 ## 技術スタック
 
 - Next.js 16
 - TypeScript
-- Prisma
+- tRPC
+- Drizzle ORM
 - PostgreSQL
+- Dexie (IndexedDB)
 - Tailwind CSS
 
 ## ライセンス
@@ -200,11 +204,14 @@ MIT
 npx typedoc --out docs/api src/
 ```
 
-### Prismaスキーマからの情報抽出
+### Drizzleスキーマからの情報抽出
 ```bash
-# ERD生成
-npx prisma-erd-generator
+# スキーマを GUI で確認
+npm run db:studio
 ```
+- テーブル定義: `src/infrastructure/db/drizzle/schema.ts`
+- マイグレーション履歴: `src/infrastructure/db/drizzle/migrations/`
+- ローカル DB（Dexie）: `src/lib/db/index.ts`
 
 ## ドキュメント更新コミットメッセージ
 
@@ -219,7 +226,7 @@ docs: [更新内容の要約]
 ```
 docs: APIドキュメントを更新
 
-- POST /api/items のリクエスト仕様を追加
+- tRPC catalog.createItem の入力仕様を追加
 - エラーレスポンスの説明を追加
 ```
 
