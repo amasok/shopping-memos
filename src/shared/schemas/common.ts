@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "./z"
 
 // ID
 export const idSchema = z.string().uuid()

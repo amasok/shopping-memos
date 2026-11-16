@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "./z"
 import { REQUEST_LIMITS, TEXT_LIMITS, quantitySchema, tagIdsSchema } from "./limits"
 
 // リストステータス

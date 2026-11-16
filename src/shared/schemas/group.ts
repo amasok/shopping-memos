@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "./z"
 import { REQUEST_LIMITS } from "./limits"
 
 // グループ役割

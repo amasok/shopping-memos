@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "./z"
 import { TEXT_LIMITS, quantitySchema, tagIdsSchema } from "./limits"
 
 // アイテム作成

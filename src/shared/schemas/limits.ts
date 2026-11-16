@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "./z"
 
 /**
  * 入力の上限をここに集める。値を変えるときはここだけを直す
