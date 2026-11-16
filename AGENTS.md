@@ -71,7 +71,17 @@ docker compose down           # 停止
 npm run lint && npm run test:run && npm run build
 ```
 
-CI（`.github/workflows/ci.yml`）は main / develop への push と PR で lint・unit test・coverage・build を実行する。main では本番 DB マイグレーションと E2E も実行される。
+CI（`.github/workflows/ci.yml`）は、PR と main への push で lint・typecheck・unit test・coverage・build を実行する。develop への push では develop 用 DB の migrate だけを行う。E2E は main への PR と main への push だけ（develop への PR の前に `npm run test:e2e:local` で全部流す）、本番 DB の migrate は main への push だけ。docs だけの変更では動かない。
+
+### CI が使う DB の接続先（GitHub Actions の secret）
+
+| secret | 中身 | 使う job |
+|--------|------|----------|
+| `NEON_DATABASE_URL` | 本番の DB（Neon の本番ブランチ） | `migrate`（main への push） |
+| `DEVELOP_DATABASE_URL` | Neon の develop ブランチの接続文字列 | `migrate-develop`（develop への push） |
+
+- Vercel の環境変数 `DATABASE_URL` は Production と Preview で共通の本番の値なので、`DEVELOP_DATABASE_URL` には使わない（コピーすると、develop の migration が本番に当たる）
+- `migrate-develop` は、`DEVELOP_DATABASE_URL` が本番と同じ DB（host と DB 名）を指していたら止まる（#139）
 
 ## アーキテクチャ
 

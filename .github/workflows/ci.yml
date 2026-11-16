@@ -159,7 +159,35 @@ jobs:
           DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
         run: |
           if [ -z "$DATABASE_URL" ]; then
-            echo "::error title=DEVELOP_DATABASE_URL is not set::GitHub の Settings → Secrets and variables → Actions に DEVELOP_DATABASE_URL（Vercel の Preview 用 DATABASE_URL と同じ値）を登録してください（#134）"
+            echo "::error title=DEVELOP_DATABASE_URL is not set::GitHub の Settings → Secrets and variables → Actions に DEVELOP_DATABASE_URL（Neon の develop ブランチの接続文字列。Vercel の DATABASE_URL は本番の値なので使わない）を登録してください（#134 #139）"
+            exit 1
+          fi
+
+      # 本番の DB を develop 用として登録していないかを確かめる（#139）。
+      # 値はログに出さない。host（Neon の -pooler は除く）と DB 名で比べ、認証情報・ポート・クエリ文字列の違いは無視する
+      - name: Check DEVELOP_DATABASE_URL is not production
+        env:
+          DEVELOP_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
+          PRODUCTION_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          db_target() {
+            local u="${1#*://}"
+            u="${u##*@}"
+            u="${u%%\?*}"
+            u="${u%%#*}"
+            u="$(printf '%s' "$u" | tr '[:upper:]' '[:lower:]')"
+            local host="${u%%/*}" db=""
+            [ "$host" != "$u" ] && db="${u#*/}"
+            host="${host%%:*}"
+            host="${host/-pooler./.}"
+            printf '%s/%s' "$host" "$db"
+          }
+          if [ -z "$PRODUCTION_URL" ]; then
+            echo "::warning title=NEON_DATABASE_URL is not set::本番の接続文字列がないため、DEVELOP_DATABASE_URL と比べられませんでした（#139）"
+            exit 0
+          fi
+          if [ "$DEVELOP_URL" = "$PRODUCTION_URL" ] || [ "$(db_target "$DEVELOP_URL")" = "$(db_target "$PRODUCTION_URL")" ]; then
+            echo "::error title=DEVELOP_DATABASE_URL points to production::DEVELOP_DATABASE_URL が本番の DB（NEON_DATABASE_URL と同じ host と DB 名）を指しています。Neon の develop ブランチの接続文字列に直してください（#139）"
             exit 1
           fi
 
