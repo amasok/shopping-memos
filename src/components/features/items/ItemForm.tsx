@@ -99,6 +99,8 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
     if (!name.trim()) return
 
     setIsSubmitting(true)
+    // 保存中に利用者が次のアイテムを入力することがあるため、送った値を控えておく
+    const submitted = { name, quantity, memo }
 
     try {
       if (isEditing && item) {
@@ -123,9 +125,10 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
 
       if (continueAdding) {
         // フォームをリセットして続ける（タグは維持）
-        setName("")
-        setQuantity(1)
-        setMemo("")
+        // 送った値のままの項目だけ消す（保存中に入力された内容は残す）
+        setName((cur) => (cur === submitted.name ? "" : cur))
+        setQuantity((cur) => (cur === submitted.quantity ? 1 : cur))
+        setMemo((cur) => (cur === submitted.memo ? "" : cur))
         setIsSubmitting(false)
       } else {
         onClose()
