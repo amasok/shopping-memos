@@ -10,11 +10,11 @@ permissions:
   contents: read
 
 # 同じブランチ/PRの古い実行を止める。
-# main は本番DBマイグレーションを含むので、取り消さずに commit ごとに別 group にする。
-# 本番DBへの migrate どうしは、migrate ジョブの concurrency（migrate-production）で直列にする（#94）
+# main と develop は DB の migrate を含むので、migrate の途中で取り消さないよう、commit ごとに別 group にする（#134）。
+# DB への migrate どうしは、各 migrate ジョブの concurrency（migrate-production / migrate-develop）で直列にする（#94）
 concurrency:
-  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ci-${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
 
 jobs:
   test:
@@ -113,6 +113,47 @@ jobs:
         run: npm run db:migrate
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+
+  migrate-develop:
+    name: Migrate Develop DB
+    runs-on: ubuntu-latest
+    needs: build
+    # develop への push のときだけ、Preview（develop デプロイ）用の DB に migrate する（#134）。
+    # Vercel の develop デプロイより先には終わらないため、デプロイ直後の数十秒は旧スキーマのままになりうる（検証環境なので許容）
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    # 本番（migrate-production）と同じく、develop 用の DB への migrate も 1 本ずつ実行する
+    concurrency:
+      group: migrate-develop
+      cancel-in-progress: false
+
+    steps:
+      # secret が未設定のまま空の DATABASE_URL で動くと、drizzle-kit の分かりにくいエラーになる。先に明確に止める
+      - name: Check DEVELOP_DATABASE_URL
+        env:
+          DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error title=DEVELOP_DATABASE_URL is not set::GitHub の Settings → Secrets and variables → Actions に DEVELOP_DATABASE_URL（Vercel の Preview 用 DATABASE_URL と同じ値）を登録してください（#134）"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 本番と同じく、変更の有無では判定せず毎回実行する（冪等。未適用の分がすべて当たる）
+      - name: Run migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
 
   # E2Eテストは PR と main への push で実行
   # ログイン済みテスト（e2e/auth）は実DBが必要なため Postgres サービスを起動する
