@@ -176,4 +176,80 @@ describe("identity.joinByInviteCode (#67)", () => {
       expect(state.addMember).not.toHaveBeenCalled()
     })
   })
+
+  describe("エラーの統一 (#107)", () => {
+    /** joinByInviteCode を呼び、投げられたエラーの code と message を返す */
+    const failure = async () => {
+      try {
+        await caller().joinByInviteCode({ inviteCode: "ABCD2345" })
+      } catch (e) {
+        const err = e as { code: string; message: string }
+        return { code: err.code, message: err.message }
+      }
+      throw new Error("エラーが投げられなかった")
+    }
+
+    const setCase = (kind: "notFound" | "disabled" | "expired") => {
+      state.group =
+        kind === "notFound"
+          ? null
+          : kind === "disabled"
+            ? makeGroup({ inviteEnabled: false })
+            : makeGroup({ inviteCodeExpiresAt: new Date(Date.now() - 1000) })
+    }
+
+    it("見つからない・招待無効・期限切れは、codeもmessageも完全に同じ", async () => {
+      setCase("notFound")
+      const notFound = await failure()
+      setCase("disabled")
+      const disabled = await failure()
+      setCase("expired")
+      const expired = await failure()
+
+      expect(notFound.code).toBe("BAD_REQUEST")
+      expect(disabled).toEqual(notFound)
+      expect(expired).toEqual(notFound)
+    })
+
+    it.each([["notFound"], ["disabled"], ["expired"]] as const)("%s のとき addMember も isMember も呼ばれない", async (kind) => {
+      setCase(kind)
+
+      await failure()
+
+      expect(state.addMember).not.toHaveBeenCalled()
+      expect(state.isMemberFn).not.toHaveBeenCalled()
+    })
+
+    it("統一メッセージはコードの存在・無効化・期限切れの内訳を示さず、有効期限切れの可能性には触れる", async () => {
+      setCase("notFound")
+
+      const { message } = await failure()
+
+      expect(message).not.toContain("見つかりません")
+      expect(message).not.toContain("受け付けていません")
+      expect(message).toContain("無効")
+      expect(message).toContain("有効期限")
+    })
+
+    it("既にメンバーの場合のエラーは、3ケースとは別の文言のまま", async () => {
+      setCase("notFound")
+      const unified = await failure()
+      state.group = makeGroup()
+      state.isMember = true
+
+      const member = await failure()
+
+      expect(member.code).toBe("BAD_REQUEST")
+      expect(member.message).toContain("既に")
+      expect(member.message).not.toBe(unified.message)
+      expect(state.addMember).not.toHaveBeenCalled()
+    })
+
+    it("有効なコードなら統一エラーにならず参加できる", async () => {
+      state.group = makeGroup()
+
+      await expect(caller().joinByInviteCode({ inviteCode: "ABCD2345" })).resolves.toBeDefined()
+      expect(state.addMember).toHaveBeenCalledTimes(1)
+    })
+  })
 })
