@@ -18,11 +18,11 @@ export const USER_B_STORAGE = "e2e/.auth/user-b.json"
  * 2. POST /api/auth/callback/credentials → 認証実行（Set-Cookie でセッション取得）
  *    E2E 用のログインは x-e2e-token ヘッダが必要（#70）
  */
-export async function loginAndSaveState(
-  page: Page,
-  email: string,
-  storagePath: string
-): Promise<string> {
+/**
+ * Credentials プロバイダでログインする（セッションの Cookie がブラウザのコンテキストに入る）。
+ * merge 済みの印は付けないので、次に画面を開くと DataMergeContext がゲストのデータを merge する
+ */
+export async function loginWithCredentials(page: Page, email: string): Promise<void> {
   // 1. CSRFトークン取得（ブラウザ経由でcookieもセットさせる）
   await page.goto("/api/auth/csrf")
   const csrfResponse = await page.evaluate(() =>
@@ -50,10 +50,21 @@ export async function loginAndSaveState(
     },
     { csrfToken, email, headers: e2eHeaders() }
   )
+}
+
+export async function loginAndSaveState(
+  page: Page,
+  email: string,
+  storagePath: string
+): Promise<string> {
+  await loginWithCredentials(page, email)
 
   // 3. ホームに遷移してセッション確認
   await page.goto("/")
   await page.waitForLoadState("networkidle")
+  // 以前の仕組みからの移行（ゲストのデータの扱いのバージョン）が済むのを待つ。
+  // 済む前に印を付けて保存すると、各テストの最初の読み込みで、印が以前の意味の印として扱われる
+  await page.waitForFunction(() => localStorage.getItem("guest-data-version") === "2")
 
   // 4. ユーザーIDを取得（seed APIを使用）
   const { id: userId } = await getUser(email)

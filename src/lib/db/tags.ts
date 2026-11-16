@@ -57,14 +57,16 @@ export async function deleteTag(id: string): Promise<void> {
   })
 }
 
+/** ゲストの初期タグの名前（DB が空のときに作る） */
+export const DEFAULT_TAG_NAMES = ["食品", "日用品", "エンタメ"] as const
+
 // デフォルトタグを初期化
 export async function initializeDefaultTags(): Promise<void> {
   const count = await db.tags.count()
   if (count === 0) {
-    const defaultTags = ["食品", "日用品", "エンタメ"]
     const now = new Date()
     await db.tags.bulkAdd(
-      defaultTags.map((name) => ({
+      DEFAULT_TAG_NAMES.map((name) => ({
         id: generateId(),
         name,
         createdAt: now,

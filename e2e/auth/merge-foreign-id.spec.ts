@@ -4,13 +4,16 @@ import { USER_B_STORAGE } from "./fixtures/auth-helpers"
 import { trpcMutation, trpcQuery } from "./fixtures/trpc-helpers"
 
 /**
- * #116: 他のユーザーが持つ ID と衝突したレコードは、「取り込み済み」ではなく「失敗」として数える（実 DB）
+ * #116: 他のユーザーが持つ ID と衝突したレコードは、「取り込み済み」として数えない（実 DB）
  *
  * 分割送信の再試行では、同じユーザーが前回取り込んだ同じ ID の INSERT 失敗を失敗に数えない（alreadyMergedCount）。
  * その判定が他人のデータには働かないこと、他人のデータは変わらないことを確かめる。
+ * アイテム・リストは失敗として数える。タグは、同じブラウザで別のアカウントが先に取り込んだ初期タグで起きるため、
+ * 失敗にせず、新しい ID（または同じ名前の自分のタグ）に付け替える
  */
 test.describe("sync.merge と他のユーザーの ID の衝突 (#116)", () => {
   type MergeResponse = {
+    idMappings: Array<{ entity: string; localId: string; serverId: string }>
     mergeResult: {
       mergedCounts: Record<string, number>
       notImportedCount: number
@@ -26,7 +29,7 @@ test.describe("sync.merge と他のユーザーの ID の衝突 (#116)", () => {
   const pendingCount = async (request: APIRequestContext) =>
     (await trpcQuery<{ pendingCount: number }>(request, "sync.getStatus", undefined)).pendingCount
 
-  test("B が持つ ID のタグ・アイテム・リストを A が merge すると、失敗として数え、B のデータは変わらず、A の ID としても取り込まれない", async ({
+  test("B が持つ ID のタグ・アイテム・リストを A が merge すると、アイテム・リストは失敗、タグは新しい ID で取り込み、B のデータは変わらない", async ({
     request,
     browser,
   }) => {
@@ -64,13 +67,18 @@ test.describe("sync.merge と他のユーザーの ID の衝突 (#116)", () => {
         lists: [{ id: listId, name: `Aが送った同じID-${suffix}`, status: "in_progress", createdAt: now }],
       })
 
-      // 同じ ID の 3 件は、取り込み済みではなく失敗として数える。正常な 2 件は取り込まれる
-      expect(aResult.mergeResult.notImportedCount).toBe(3)
+      // 同じ ID のアイテムとリストは、取り込み済みではなく失敗として数える
+      expect(aResult.mergeResult.notImportedCount).toBe(2)
       expect(aResult.mergeResult.alreadyMergedCount).toBe(0)
-      expect(aResult.mergeResult.errors).toHaveLength(3)
-      expect(aResult.mergeResult.mergedCounts).toMatchObject({ tags: 1, items: 1, lists: 0 })
-      // 同期ログは、A が取り込めた分（新規タグ 1 件 + 新規アイテム 1 件）だけ増える
-      expect((await pendingCount(request)) - aPendingBefore).toBe(2)
+      expect(aResult.mergeResult.errors).toHaveLength(2)
+      // 同じ ID のタグは失敗にせず、A の新しい ID で作る（同じブラウザで別のアカウントが先に取り込んだ場合）
+      expect(aResult.mergeResult.mergedCounts).toMatchObject({ tags: 2, items: 1, lists: 0 })
+      expect(aResult.idMappings).toHaveLength(1)
+      expect(aResult.idMappings[0]).toMatchObject({ entity: "tag", localId: tagId })
+      const remappedTagId = aResult.idMappings[0].serverId
+      expect(remappedTagId).not.toBe(tagId)
+      // 同期ログは、A が取り込めた分（付け替えたタグ 1 件 + 新規タグ 1 件 + 新規アイテム 1 件）だけ増える
+      expect((await pendingCount(request)) - aPendingBefore).toBe(3)
 
       // B のデータは変わっていない
       const bTags = await trpcQuery<Array<{ id: string; name: string }>>(bRequest, "catalog.getTags", {})
@@ -85,6 +93,7 @@ test.describe("sync.merge と他のユーザーの ID の衝突 (#116)", () => {
       const aTags = await trpcQuery<Array<{ id: string }>>(request, "catalog.getTags", {})
       expect(aTags.map((t) => t.id)).not.toContain(tagId)
       expect(aTags.map((t) => t.id)).toContain(newTagId)
+      expect(aTags.map((t) => t.id)).toContain(remappedTagId)
     } finally {
       await bContext.close()
     }

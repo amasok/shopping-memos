@@ -11,18 +11,39 @@ import {
 } from "react"
 import { useAuth } from "@/contexts/AuthContext"
 import { db } from "@/lib/db"
+import {
+  MERGE_COMPLETED_KEY,
+  SELECTED_GROUP_KEY,
+  clearGuestData,
+  clearLoginScopedState,
+  ensureGuestDataMigrated,
+  hasGuestDataToMerge,
+} from "@/lib/db/guestData"
 import { trpc } from "@/infrastructure/trpc/client"
 import { MERGE_LIMITS } from "@/shared/schemas/sync"
 import { REQUEST_LIMITS, TEXT_LIMITS, clampQuantity, clipText } from "@/shared/schemas/limits"
 import { hasMergeData, splitMergeData } from "@/lib/merge/splitMergeData"
+import { applyTagIdMappings } from "@/lib/merge/applyTagIdMappings"
 
 const clipNullable = (value: string | null | undefined, max: number) =>
   value == null ? null : clipText(value, max)
 
-const MERGE_COMPLETED_KEY = "data-merge-completed"
+/**
+ * Dexie の日付を ISO 文字列にする。アプリは Date で保存するが、古いデータや別の経路で文字列が入っていても、
+ * merge 全体を例外で止めない。不正な値はそのまま送り、サーバーの検証でその 1 件だけがスキップされる（#86）
+ */
+function toIso(value: unknown): string {
+  if (!(value instanceof Date)) return value as string
+  // 中身が不正な Date（new Date("x")）は toISOString() が RangeError を投げる。null にすると、null を許す項目
+  // （purchasedAt など）で意味が黙って変わるので、"Invalid Date" として送り、サーバーの検証でその 1 件だけをスキップさせる
+  return Number.isNaN(value.getTime()) ? String(value) : value.toISOString()
+}
+function toIsoNullable(value: unknown): string | null {
+  return value == null ? null : toIso(value)
+}
+
 /** 取り込めなかった件数（リロードをまたいで表示するため localStorage に保存する） */
 const MERGE_SKIPPED_KEY = "data-merge-skipped"
-const SELECTED_GROUP_KEY = "selectedGroupId"
 /**
  * 1 回の sync.merge のボディの目安。サーバーの上限（sync.merge 単独で 4MB）より少し小さくして、
  * 見積もりの誤差があっても 413 にならないようにする（#116）
@@ -78,6 +99,15 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     if (!user) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- ユーザーログアウト時にリセットが必要
       setIsMergeCompleted(false)
+      // ゲストに戻った（ログアウト・セッション切れ）ら、ログイン中だけの状態を消す。
+      // 次にログインしたときに、ゲストのデータがあればもう一度 merge する。
+      // 以前の印は移行の判定に使うので、移行が終わってから消す
+      // 移行に失敗したら印を残す（次の読み込みで移行をやり直す）
+      if (!isAuthLoading) {
+        void ensureGuestDataMigrated().then((migrated) => {
+          if (migrated) clearLoginScopedState()
+        })
+      }
       return
     }
 
@@ -89,7 +119,7 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     // マージ後のリロードをまたいで、取り込めなかった件数を通知する
     const skipped = Number(localStorage.getItem(`${MERGE_SKIPPED_KEY}-${user.id}`) ?? 0)
     setSkippedCount(Number.isFinite(skipped) && skipped > 0 ? skipped : 0)
-  }, [user])
+  }, [user, isAuthLoading])
 
   const dismissSkipped = useCallback(() => {
     if (user) localStorage.removeItem(`${MERGE_SKIPPED_KEY}-${user.id}`)
@@ -98,6 +128,14 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
 
   const executeMerge = useCallback(async () => {
     if (!user) return
+
+    // 以前の仕組みの印がある端末では、ゲストのデータを送らずに空にする（一度だけ）。
+    // 移行に失敗した読み込みでは merge しない（古いゲストのデータを送らない）。サーバーのデータを表示し、
+    // 次の読み込みで移行からやり直す
+    if (!(await ensureGuestDataMigrated())) {
+      setIsMergeCompleted(true)
+      return
+    }
 
     const mergeKey = `${MERGE_COMPLETED_KEY}-${user.id}`
     const alreadyMerged = localStorage.getItem(mergeKey) === "true"
@@ -124,12 +162,14 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
       // 履歴はlistsのpurchasedAtが設定されているもの
       const localHistory = localLists.filter((list) => !!list.purchasedAt)
 
-      // ローカルにデータがなければマージ不要
+      // 送るデータがなければマージ不要（初期タグだけのゲストも送らない）
       if (
-        localItems.length === 0 &&
-        localTags.length === 0 &&
-        localLists.length === 0 &&
-        localListItems.length === 0
+        !hasGuestDataToMerge({
+          tags: localTags,
+          items: localItems,
+          lists: localLists,
+          listItems: localListItems,
+        })
       ) {
         localStorage.setItem(mergeKey, "true")
         setIsMerging(false)
@@ -145,21 +185,21 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
           quantity: clampQuantity(item.quantity),
           memo: clipNullable(item.memo, TEXT_LIMITS.memo),
           tagIds: item.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
-          purchasedAt: item.purchasedAt?.toISOString() ?? null,
-          createdAt: item.createdAt.toISOString(),
+          purchasedAt: toIsoNullable(item.purchasedAt),
+          createdAt: toIso(item.createdAt),
         })),
         tags: localTags.map((tag) => ({
           id: tag.id,
           name: clipText(tag.name, TEXT_LIMITS.tagName),
-          createdAt: tag.createdAt.toISOString(),
+          createdAt: toIso(tag.createdAt),
         })),
         lists: localLists.map((list) => ({
           id: list.id,
           name: clipText(list.name, TEXT_LIMITS.listName),
           status: list.status,
-          createdAt: list.createdAt.toISOString(),
-          completedAt: list.completedAt?.toISOString() ?? null,
-          purchasedAt: list.purchasedAt?.toISOString() ?? null,
+          createdAt: toIso(list.createdAt),
+          completedAt: toIsoNullable(list.completedAt),
+          purchasedAt: toIsoNullable(list.purchasedAt),
           location: clipNullable(list.location, TEXT_LIMITS.location),
         })),
         listItems: localListItems.map((listItem) => ({
@@ -170,14 +210,14 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
           memo: clipNullable(listItem.memo, TEXT_LIMITS.memo),
           tagIds: listItem.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
           checked: listItem.checked,
-          createdAt: listItem.createdAt.toISOString(),
+          createdAt: toIso(listItem.createdAt),
         })),
         // 履歴はlistsのpurchasedAtが設定されているもの（listId = list.id）
         history: localHistory.map((list) => ({
           id: list.id,
           listId: list.id,
           location: clipNullable(list.location, TEXT_LIMITS.location),
-          purchasedAt: list.purchasedAt!.toISOString(),
+          purchasedAt: toIso(list.purchasedAt),
         })),
       }
 
@@ -191,19 +231,28 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
           })
         : []
       let skipped = 0
+      // サーバーが付け替えたタグの ID（ほかのユーザーのタグと ID が重なった場合）。後から送る分に反映する
+      const tagIdMap = new Map<string, string>()
       for (const [index, chunk] of chunks.entries()) {
-        const result = await mergeMutation.mutateAsync({ data: chunk })
+        const result = await mergeMutation.mutateAsync({ data: applyTagIdMappings(chunk, tagIdMap) })
+        for (const mapping of result.idMappings ?? []) {
+          if (mapping.entity === "tag") tagIdMap.set(mapping.localId, mapping.serverId)
+        }
         // 検証でスキップした件数と、レコード単位で取り込めなかった件数だけを数える
         skipped += result.mergeResult.notImportedCount
         console.log(`Data merge ${index + 1}/${chunks.length} completed:`, result.mergeResult)
       }
 
-      // 最後の分まで成功してから、マージ完了をマーク
+      // 最後の分まで成功してから、このログインの間は merge 済みにする（ゲストに戻ったら消える）
       localStorage.setItem(mergeKey, "true")
 
-      // 取り込めなかったデータ（形式が不正など）があれば、リロード後に件数を通知する
       if (skipped > 0) {
+        // 取り込めなかったデータがあれば、リロード後に件数を通知する。
+        // ゲストのデータは全部残し、次のログインで送り直す（取り込み済みの分は「取り込み済み」になるだけ）
         localStorage.setItem(`${MERGE_SKIPPED_KEY}-${user.id}`, String(skipped))
+      } else {
+        // 全部取り込めたら、ゲストのデータを空にする（ログアウトしても、ログイン前のデータが見えないように）
+        await clearGuestData()
       }
 
       // マージされたアイテムが個人アイテム（groupId = undefined）を含む場合、
