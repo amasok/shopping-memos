@@ -48,6 +48,8 @@ npm run db:migrate            # マイグレーション適用
 npm run db:push               # スキーマを直接反映（開発用）
 npm run db:studio             # Drizzle Studio
 npm run db:reset              # ローカル DB の public スキーマを作り直して db:push
+# migration は _journal.json の when の順に当たる。ブランチ間で migration が衝突したら、
+# 手で解消せず develop を取り込んでから db:generate で作り直す（古い when が残ると本番で飛ばされる。#122）
 
 # テスト
 npm test                      # Vitest（watch）
