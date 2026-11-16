@@ -97,10 +97,16 @@ test.describe(`SW ライフサイクル (${STAGE})`, () => {
       // ［更新］で SKIP_WAITING が送られ、新しい SW が有効になってリロードされる
       await page.getByTestId("update-available-button").click()
       await expect
-        .poll(() => page.evaluate(() => (window as unknown as { __marker?: number }).__marker), {
-          timeout: 30_000,
-        })
+        .poll(
+          // リロード中は evaluate が "Execution context was destroyed" で失敗する。リロードが始まった = マーカーが消えた、とみなす
+          () =>
+            page
+              .evaluate(() => (window as unknown as { __marker?: number }).__marker)
+              .catch(() => undefined),
+          { timeout: 30_000 }
+        )
         .toBeUndefined()
+      await page.waitForLoadState("load")
 
       await page.waitForFunction(() => !!navigator.serviceWorker.controller)
       const after = await page.evaluate(async () => {
