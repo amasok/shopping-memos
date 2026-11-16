@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "./z"
 
 // グループ役割
 export const groupRoleSchema = z.enum(["owner", "member"])

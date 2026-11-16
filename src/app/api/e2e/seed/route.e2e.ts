@@ -11,7 +11,7 @@ import {
   listItems,
 } from "@/infrastructure/db/drizzle/schema"
 import { and, eq, like, inArray } from "drizzle-orm"
-import { z } from "zod"
+import { z } from "@/shared/schemas/z"
 import {
   E2E_EMAIL_DOMAIN,
   isE2EEmail,

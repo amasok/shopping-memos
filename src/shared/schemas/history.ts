@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "./z"
 import { paginationSchema, dateRangeSchema } from "./common"
 
 // 履歴取得クエリ
