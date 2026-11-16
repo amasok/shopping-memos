@@ -30,6 +30,16 @@ test.describe("Service Worker (O1)", () => {
     await expect(page.locator("body")).toBeVisible()
     await expect(page).not.toHaveURL(/~offline/)
     await expect(page.getByText("オフラインです")).toHaveCount(0)
+    // 空の白紙ではなく、ホームの実際の内容（アプリシェル）が描画されている
+    await expect(page.getByText("買いたいもの").first()).toBeVisible()
+  })
+
+  test("O-1: オフラインでも、プリキャッシュ済みのページ（タグ管理）に遷移できる", async ({ page, context }) => {
+    await waitForControl(page)
+    await context.setOffline(true)
+    await page.goto("/tags")
+    await expect(page).not.toHaveURL(/~offline/)
+    await expect(page.getByText("タグを追加")).toBeVisible()
   })
 
   test("O-2: 未訪問の URL はオフラインで /~offline のフォールバックになる", async ({ page, context }) => {
