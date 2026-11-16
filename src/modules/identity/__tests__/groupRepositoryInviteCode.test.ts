@@ -15,8 +15,9 @@ vi.mock("@/infrastructure/db/drizzle/client", async () => {
   const { PgDialect: Dialect } = await import("drizzle-orm/pg-core")
   const d = new Dialect()
   const row = (table: string, values: Record<string, unknown>) => ({ id: "g", ...values, _table: table })
-  return {
-    db: {
+  const db = {
+      // グループ作成はトランザクション（#73-3）。この疑似 DB では、そのまま同じ db で実行する
+      transaction: async (cb: (tx: unknown) => Promise<unknown>) => cb(db),
       insert: (t: unknown) => ({
         values: (values: Record<string, unknown>) => {
           state.inserts.push({ table: name(t), values })
@@ -47,8 +48,8 @@ vi.mock("@/infrastructure/db/drizzle/client", async () => {
           },
         }),
       }),
-    },
   }
+  return { db }
 })
 
 import { DrizzleGroupRepository } from "../infrastructure/repositories/DrizzleGroupRepository"

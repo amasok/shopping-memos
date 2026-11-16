@@ -134,14 +134,15 @@ function findContent(tags: Attributes[], key: "property" | "name", value: string
 }
 
 /**
- * og:image をページの URL 基準で絶対 URL にし、http/https 以外（javascript:, data: など）は捨てる。
+ * og:image をページの URL 基準で絶対 URL にし、https 以外（http:, javascript:, data: など）は捨てる。
  * 相対パスのまま返すと、表示側で自サイトの URL として解釈されてしまう。
+ * http の画像は混在コンテンツになり、CSP の img-src（https: のみ）でも許可していない（#73-4）
  */
 export function resolveImageUrl(raw: string | undefined, baseUrl: string): string | undefined {
   if (!raw) return undefined
   try {
     const resolved = new URL(raw, baseUrl)
-    if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return undefined
+    if (resolved.protocol !== "https:") return undefined
     return resolved.href
   } catch {
     return undefined

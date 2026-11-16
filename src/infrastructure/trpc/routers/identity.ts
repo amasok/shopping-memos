@@ -13,6 +13,7 @@ import {
   getGroupMembersQuerySchema,
 } from "@/shared/schemas"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
+import { isUniqueViolation } from "@/infrastructure/db/errors"
 import {
   INVITE_LINK_EXPIRY_DAYS,
   INVITE_TOKEN_LENGTH,
@@ -232,16 +233,29 @@ export const identityRouter = router({
         })
       }
 
-      // メンバーとして追加
-      await groupRepository.addMember({
-        id: crypto.randomUUID(),
-        groupId: invite.groupId,
-        userId: ctx.userId,
-        role: "member",
-      })
-
-      // 招待を使用済みにする
-      await groupRepository.markInviteAsUsed(invite.id, ctx.userId)
+      // 招待リンクの確保とメンバーの追加を 1 つのトランザクションで行う（#73-2）。
+      // 上の確認のあとに別のユーザーが同時に使った場合も、使えるのは 1 人だけ
+      let accepted: boolean
+      try {
+        accepted = await groupRepository.acceptInvite({
+          inviteId: invite.id,
+          groupId: invite.groupId,
+          userId: ctx.userId,
+          memberId: crypto.randomUUID(),
+        })
+      } catch (error) {
+        // 同時に同じグループへ参加した（メンバーの一意制約）。招待リンクは未使用のまま戻る
+        if (isUniqueViolation(error)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "既にこのグループのメンバーです" })
+        }
+        throw error
+      }
+      if (!accepted) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "この招待リンクは既に使用されています",
+        })
+      }
 
       // グループ情報を返す
       const group = await groupRepository.findById(invite.groupId)
