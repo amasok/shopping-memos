@@ -1,7 +1,6 @@
 ---
 name: verify
 description: PR前の総合検証。ビルド、型チェック、リント、テスト、セキュリティを一括チェック。/verify で実行。
-tools: ["Bash", "Read", "Grep"]
 ---
 
 # /verify - 総合検証

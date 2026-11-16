@@ -34,7 +34,12 @@ Progressive Web App の実装・最適化を担当する専門エージェント
 
 ## Next.js での PWA 設定
 
-### next-pwa のセットアップ
+> **このプロジェクトの現状**: Service Worker ライブラリは未導入。`src/app/manifest.ts` と、キャッシュしない最小の
+> `public/sw.js`（`src/components/pwa/RegisterSW.tsx` で登録）のみ。next-pwa は Turbopack 非互換のため使わず、
+> ADR 005（`docs/adr/005-pwa-architecture.md`）で Serwist（`@serwist/next`）の採用を提案中。オフライン対応は #62 で進行中。
+> 以下の next-pwa の設定例は一般的な参考情報。
+
+### next-pwa のセットアップ（参考）
 
 ```bash
 npm install next-pwa

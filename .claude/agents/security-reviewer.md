@@ -20,7 +20,7 @@ model: opus
 ## OWASP Top 10 チェックリスト
 
 ### 1. インジェクション
-- [ ] SQLインジェクション対策（Prismaのパラメータ化クエリ使用）
+- [ ] SQLインジェクション対策（Drizzle のクエリビルダー / `sql` テンプレートのパラメータ化を使用）
 - [ ] コマンドインジェクション対策
 - [ ] NoSQLインジェクション対策
 
@@ -96,29 +96,32 @@ const API_KEY = process.env.API_KEY
 // ❌ 危険（生SQLの場合）
 const query = `SELECT * FROM users WHERE id = ${userId}`
 
-// ✅ 安全（Prismaを使用）
-const user = await prisma.user.findUnique({ where: { id: userId } })
+// ✅ 安全（Drizzle のクエリビルダーを使用）
+const [user] = await db.select().from(users).where(eq(users.id, userId))
 ```
 
 **認可チェック漏れ**
 ```typescript
-// ❌ 危険
-export async function DELETE(req, { params }) {
-  await prisma.item.delete({ where: { id: params.id } })
-}
+// ❌ 危険（publicProcedure で所有者チェックなし）
+delete: publicProcedure
+  .input(z.object({ id: z.string() }))
+  .mutation(async ({ input }) => {
+    await db.delete(items).where(eq(items.id, input.id))
+  }),
 
-// ✅ 安全
-export async function DELETE(req, { params }) {
-  const session = await auth()
-  if (!session) return new Response("Unauthorized", { status: 401 })
-
-  const item = await prisma.item.findUnique({ where: { id: params.id } })
-  if (item.userId !== session.user.id) {
-    return new Response("Forbidden", { status: 403 })
-  }
-
-  await prisma.item.delete({ where: { id: params.id } })
-}
+// ✅ 安全（protectedProcedure + 所有者 / グループメンバーシップを確認）
+delete: protectedProcedure
+  .input(z.object({ id: z.string() }))
+  .mutation(async ({ ctx, input }) => {
+    const [item] = await db.select().from(items).where(eq(items.id, input.id))
+    if (!item) throw new TRPCError({ code: "NOT_FOUND" })
+    if (item.groupId) {
+      await verifyGroupMembership(item.groupId, ctx.userId)
+    } else if (item.userId !== ctx.userId) {
+      throw new TRPCError({ code: "FORBIDDEN" })
+    }
+    await db.delete(items).where(eq(items.id, input.id))
+  }),
 ```
 
 ### 🟡 HIGH
@@ -145,9 +148,11 @@ export async function DELETE(req, { params }) {
 - [ ] コールバックURLの検証
 - [ ] セッション設定の適切性
 
-### Prisma
-- [ ] 生SQLを使用していないか
-- [ ] `$queryRaw` 使用時のパラメータ化
+### Drizzle ORM / tRPC
+- [ ] 文字列連結で SQL を組み立てていないか（`sql.raw()` にユーザー入力を渡していないか）
+- [ ] `sql` テンプレートでは値をプレースホルダとして埋め込んでいるか
+- [ ] 認証が必要な処理は `protectedProcedure` を使っているか
+- [ ] グループデータは `verifyGroupMembership` / `verifyGroupOwnership` で検証しているか
 
 ### 環境変数
 - [ ] `.env` がgitignoreに含まれているか

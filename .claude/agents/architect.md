@@ -85,8 +85,8 @@ YYYY-MM-DD
 - **データフェッチ**: Server Actions / Route Handlers
 
 ### バックエンド
-- **API設計**: RESTful / Server Actions
-- **Repository Pattern**: Prisma Client をラップ
+- **API設計**: tRPC（`src/infrastructure/trpc/routers`）
+- **Repository Pattern**: Drizzle を使う実装を `src/modules/*/infrastructure/repositories` に置き、インターフェースは `domain/repositories`
 - **Service Layer**: ビジネスロジックの分離
 
 ### データ
@@ -105,7 +105,9 @@ YYYY-MM-DD
 
 ### 現在のアーキテクチャ
 ```
-[ブラウザ] → [Next.js App Router] → [Prisma] → [PostgreSQL]
+[ブラウザ] ─ ゲスト ──→ [Dexie (IndexedDB)]
+    │
+    └─ ログイン → [tRPC] → [modules/* (DDD)] → [Drizzle ORM] → [PostgreSQL]
                     ↓
               [NextAuth.js]
 ```

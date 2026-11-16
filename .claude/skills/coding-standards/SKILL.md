@@ -1,7 +1,6 @@
 ---
 name: coding-standards
 description: TypeScript/React/Next.jsのコーディング規約とベストプラクティス。命名規則、エラーハンドリング、型安全性、ファイル構成。
-tools: ["Read", "Grep", "Glob"]
 ---
 
 # コーディング規約
@@ -321,34 +320,32 @@ export async function POST(request: Request) {
 ```
 src/
 ├── app/                    # Next.js App Router
-│   ├── (auth)/            # 認証グループ
-│   │   ├── login/
-│   │   └── register/
-│   ├── (main)/            # メイングループ
-│   │   ├── lists/
-│   │   └── settings/
-│   ├── api/               # API Routes
-│   │   ├── items/
-│   │   └── lists/
+│   ├── api/               # Route Handlers（auth, trpc, ogp, e2e）
+│   ├── lists/, items/, groups/, history/, tags/, settings/, login/
 │   ├── layout.tsx
+│   ├── providers.tsx
 │   └── page.tsx
+├── modules/               # 境界づけられたコンテキスト（catalog / identity / shopping / sync）
+│   └── <context>/{domain,application,infrastructure}/
+├── infrastructure/
+│   ├── auth/              # NextAuth 設定
+│   ├── db/drizzle/        # client.ts, schema.ts, migrations/
+│   ├── trpc/              # server, client, provider, routers/
+│   └── sync/              # SyncEngine
 ├── components/
-│   ├── ui/                # 汎用UI
-│   │   ├── Button.tsx
-│   │   ├── Input.tsx
-│   │   └── Modal.tsx
-│   └── features/          # 機能固有
-│       ├── items/
-│       └── family/
-├── hooks/                 # カスタムフック
-│   ├── useShoppingList.ts
-│   └── useFamily.ts
-├── lib/                   # ユーティリティ
-│   ├── prisma.ts
-│   ├── auth.ts
+│   ├── ui/                # 汎用UI（Button, Input, BottomSheet など）
+│   ├── layouts/
+│   └── features/          # 機能固有（items, tags, groups, sync, auth）
+├── hooks/
+│   └── data/              # useItems, useLists など（useDataSource で Dexie / tRPC 切り替え）
+├── contexts/              # React Context
+├── lib/
+│   ├── db/                # Dexie（IndexedDB）
 │   └── utils.ts
-└── types/                 # 型定義
-    └── index.ts
+├── shared/
+│   ├── schemas/           # Zod スキーマ
+│   └── types/
+└── types/                 # 型定義（next-auth.d.ts）
 ```
 
 ## アンチパターン
