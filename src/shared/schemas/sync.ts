@@ -1,5 +1,13 @@
 import { z } from "./z"
-import { TEXT_LIMITS } from "./limits"
+import {
+  MERGE_LIMITS,
+  REQUEST_LIMITS,
+  TEXT_LIMITS,
+  boundedRecordSchema,
+} from "./limits"
+
+// 既存の import（@/shared/schemas/sync の MERGE_LIMITS）のために再エクスポートする
+export { MERGE_LIMITS }
 
 /**
  * 同期可能なエンティティタイプ
@@ -29,7 +37,7 @@ export const syncQueueItemSchema = z.object({
   entity: syncEntitySchema,
   entityId: z.string().uuid(),
   operation: syncOperationTypeSchema,
-  payload: z.record(z.string(), z.unknown()),
+  payload: boundedRecordSchema,
   createdAt: z.coerce.date(),
   retryCount: z.number().int().min(0).default(0),
 })
@@ -40,16 +48,18 @@ export type SyncQueueItem = z.infer<typeof syncQueueItemSchema>
  * 同期プッシュリクエスト
  */
 export const syncPushInputSchema = z.object({
-  operations: z.array(
-    z.object({
-      id: z.string().uuid(),
-      entity: syncEntitySchema,
-      entityId: z.string().uuid(),
-      operation: syncOperationTypeSchema,
-      payload: z.record(z.string(), z.unknown()),
-      createdAt: z.coerce.date(),
-    }),
-  ),
+  operations: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        entity: syncEntitySchema,
+        entityId: z.string().uuid(),
+        operation: syncOperationTypeSchema,
+        payload: boundedRecordSchema,
+        createdAt: z.coerce.date(),
+      }),
+    )
+    .max(REQUEST_LIMITS.pushOperations),
 })
 
 export type SyncPushInput = z.infer<typeof syncPushInputSchema>
@@ -82,7 +92,7 @@ export type SyncPushOutput = z.infer<typeof syncPushOutputSchema>
  */
 export const syncPullInputSchema = z.object({
   since: z.coerce.date().optional(),
-  groupIds: z.array(z.string().uuid()).optional(),
+  groupIds: z.array(z.string().uuid()).max(REQUEST_LIMITS.groupIds).optional(),
 })
 
 export type SyncPullInput = z.infer<typeof syncPullInputSchema>
@@ -104,15 +114,7 @@ export type SyncPullOutput = z.infer<typeof syncPullOutputSchema>
 /**
  * 初回ログイン時のマージリクエスト
  */
-/** マージ入力の上限（巨大なペイロードで DB の容量や処理時間を消費されないようにする） */
-export const MERGE_LIMITS = {
-  items: 1000,
-  tags: 500,
-  lists: 500,
-  listItems: 1000,
-  history: 500,
-  tagIdsPerEntity: 50,
-} as const
+// マージ入力の上限（MERGE_LIMITS）は limits.ts に置く
 
 // 日付は ISO 文字列（または Date）。Invalid Date は拒否する。null / undefined は coerce せずにそのまま通す
 const mergeDate = z.coerce.date()

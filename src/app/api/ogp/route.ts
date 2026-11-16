@@ -1,3 +1,4 @@
+import { REQUEST_LIMITS } from "@/shared/schemas/limits"
 import type { IncomingMessage } from "http"
 import { NextRequest, NextResponse } from "next/server"
 import { requestPinned } from "./http-client"
@@ -13,6 +14,8 @@ import {
 
 const MAX_REDIRECTS = 5
 const TIMEOUT_MS = 8000
+/** 受け付ける URL の長さ（#72） */
+const MAX_URL_LENGTH = REQUEST_LIMITS.ogpUrl
 // OGP は <head> にあるので先頭だけ読む（DoS・正規表現の計算量対策）
 const MAX_BYTES = 512 * 1024
 
@@ -136,6 +139,11 @@ export async function GET(request: NextRequest) {
 
   if (!url) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 })
+  }
+
+  // 長すぎる URL は解析せずに拒否する（#72）
+  if (url.length > MAX_URL_LENGTH) {
+    return NextResponse.json({ error: "Invalid URL" }, { status: 400 })
   }
 
   let parsedUrl: URL
