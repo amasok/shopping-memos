@@ -2,13 +2,13 @@
 
 > ステータス: **設計レビュー待ち**（未承認・未実装）
 > 関連 Issue: #61（本機能）、#49（Vercel/Google OAuth 初期設定 → 内容更新が必要）、#62（オフライン対応。オフライン時のセッション扱いで連携）
-> 関連セキュリティ Issue: #65（Auth.js / Next.js の既知脆弱性）、#70（E2E 用ログインのバックドア構造）、#72（レート制限なし）、#73-8（JWT セッションを失効できない）、#71（セキュリティヘッダ）。「## セキュリティ」節で対応関係を示す
+> 関連セキュリティ Issue: #65（Auth.js / Next.js の既知脆弱性）、#67（招待コードの総当たり）、#70（E2E 用ログインのバックドア構造）、#72（レート制限なし）、#73-8（JWT セッションを失効できない）、#71（セキュリティヘッダ・CSRF）。「## セキュリティ」節で対応関係を示す
 
 ## 概要
 
 Google OAuth を廃止し、**メールアドレス + ワンタイムコード（OTP）** でアカウント作成・ログインし、ログイン後に**任意でパスキー（WebAuthn）を登録**して以後はパスキーでワンタップログインできるようにする。Google アカウントを持たない家族メンバーでも使えるようにすることが目的。
 
-> **前提の確認が必要**: Issue #61 は「本番未デプロイ（#49 未完了）」としているが、2026-11-16 時点で Vercel の GitHub 連携（main → Production / develop → Preview）が稼働しているという記録がある。本設計は**本番に既存の Google ユーザーとデータがある前提**で、データを失わない移行を組み込む（「## 既存ユーザーの移行」参照）。本当に未利用なら、この節の作業は省略できる。
+> **前提（2026-11-16 確定）**: 本番は稼働している（Vercel の GitHub 連携で main → Production、develop → Preview）。Issue #61 本文の「本番未デプロイ」は誤り。本番には **Google でログインしている既存ユーザーが 1 家族**いる。移行は「同じメールアドレスなら既存の `users` 行に紐付け、家族に 1 回メールのコードでログインしてもらい、パスキーを登録してもらう」という単純な方式にする（「## 既存ユーザーの移行」参照）。段階的な廃止や Google との併用期間は設けない。
 
 ## ユーザーストーリー
 
@@ -180,7 +180,13 @@ export const auth = betterAuth({
 
 - tRPC の `createContext` は `auth.api.getSession({ headers: await headers() })` に置き換え、`Context` の型は変えない
 - `trustedOrigins` に本番 URL を設定し、Better Auth の Origin 検証を有効のままにする（CSRF 対策）
-- OTP 送信の API は、登録済みかどうかに関わらず同じレスポンスを返す（メールアドレスの存在が分からないようにする）
+- OTP 送信の API は、登録済みかどうかに関わらず同じレスポンス・同程度の応答時間を返す（メールアドレスの存在が分からないようにする）。エラーメッセージにも「未登録」などの文言を出さない
+- OTP の保存と照合:
+  - `verifications` には**ハッシュ化して保存**する（Better Auth `emailOTP` の `storeOTP: "hashed"`。オプション名は実装時に確認）
+  - 照合は定数時間で比較する（ライブラリの実装を確認し、自前の比較は書かない）
+  - 成功したらそのコードをすぐ削除する（使い回し不可）。新しいコードを送ったら古いコードは無効にする
+- OTP 送信のレート制限は **IP 単位とメールアドレス単位の両方**にかける（メール爆撃と Resend のコスト対策、#72）
+- tRPC の mutation でも `Origin` / `Sec-Fetch-Site` を確認し、別オリジンからのリクエストは 403 にする（tRPC の route handler に追加。#71 で指摘された CSRF 対策。Cookie 方式のセッションのまま、SameSite=Lax だけに頼らない）
 - Resend の 1 日 100 通の上限に対しては、IP ごとのレート制限に加えて**メールアドレスごとの再送間隔（60 秒）** を設ける。上限に達したら「時間をおいて再試行」と表示する。ボット対策（Turnstile 等）は乱用が観測されたら別 Issue で検討する
 
 ### DB スキーマ（Drizzle）
@@ -189,16 +195,30 @@ Better Auth のコアスキーマ（user / session / account / verification）�
 
 | テーブル | 変更 |
 |---------|------|
-| `users` | `name` を NOT NULL（初期値 `''`）、`email_verified` を timestamp から boolean に変更。`image` は残す（未使用） |
+| `users` | `name` を NOT NULL（初期値 `''`）、`email_verified` を timestamp から boolean に変更。`image` は列を残すが、値は NULL にする（Google のアバター URL は `remotePatterns` 削除後に表示できないため。アバターはイニシャル表示にする）。`email` を正規化済みの値（trim・小文字）に揃える |
 | `sessions` | Better Auth の形に作り直す（`id`, `token`(unique), `user_id`, `expires_at`, `ip_address`, `user_agent`, `created_at`, `updated_at`） |
-| `accounts` | Better Auth の形に作り直す（OAuth を使わないので行はほぼ入らないが、コアスキーマとして必要） |
+| `accounts` | 「### accounts テーブルの扱い」参照 |
 | `verification_tokens` → `verifications` | `id`, `identifier`, `value`, `expires_at`, `created_at`, `updated_at`（OTP を保存） |
 | `passkeys`（新規） | `id`, `name`, `public_key`, `user_id`(FK cascade), `credential_id`(unique), `counter`, `device_type`, `backed_up`, `transports`, `aaguid`, `created_at` |
 | `rate_limits`（新規） | `storage: "database"` 用（`key`, `count`, `last_request`） |
 
 - 正確なカラム定義は `npx @better-auth/cli generate` の出力を元に、`schema.ts` へ手で反映する（CLI に schema.ts を上書きさせない）
-- `users` の行と ID はそのまま残す（グループ・アイテム等の外部キーを壊さない）。破棄するのは、既存のセッション（Auth.js の JWT はそもそも DB にない）、Google の `accounts` 行、`verification_tokens` だけ。データの変換は `users.email_verified` の型変換（NULL 以外を true）と、`name` が NULL の行を `''` にすることだけ
-- マイグレーションは `drizzle-kit generate` で作り、テーブルを DROP せず ALTER / RENAME で書く（生成された SQL を目視で確認する）
+- `users` の行と ID はそのまま残す（グループ・アイテム等の外部キーを壊さない）。データの変換は次の 3 つだけ
+  - `users.email_verified` の型変換（NULL 以外を true）
+  - `name` が NULL の行を `''` にする（既存の家族は Google の名前が入っているので、表示名の設定画面は出ない）
+  - `image` を NULL にする
+- 破棄してよいもの: `sessions`（JWT 方式なので空のはず）、`verification_tokens`（Google ログインでは未使用）
+- マイグレーションは `drizzle-kit generate` で作り、`users` は ALTER だけで変更する（DROP しない）。生成された SQL を目視で確認する
+
+### accounts テーブルの扱い
+
+- 現在の `accounts` には、既存の家族の Google 連携の行（`provider = 'google'`、アクセストークンやリフレッシュトークンを含む）が入っている
+- Better Auth の `account` モデルは列の構成が違う（`id`, `account_id`, `provider_id`, `user_id`, `access_token`, `refresh_token`, `id_token`, `access_token_expires_at`, `refresh_token_expires_at`, `scope`, `password`, `created_at`, `updated_at`）。そこで A2 のマイグレーションでは次のようにする
+  1. 既存の `accounts` を `accounts_authjs_backup` にリネームする（ロールバック用の保険）
+  2. 新しい形式の `accounts` を作る
+  3. Google の行は移さない。Google ログインは廃止するので、トークンを持ち続ける理由がない
+- メール OTP とパスキーのログインは、`accounts` に行がなくても動く（パスキーは `passkeys` テーブル。OTP はメールアドレスで `users` を引く）。Better Auth が内部で行を作る場合は、それに任せる
+- `accounts_authjs_backup` は、本番で移行が完了して 2 週間問題がなければ、A5 で DROP する（中のトークンは Google 側でも無効にする。下記「既存ユーザーの移行」の手順 6）
 
 ### クライアント
 
@@ -243,13 +263,57 @@ Better Auth のコアスキーマ（user / session / account / verification）�
 
 ## 既存ユーザーの移行
 
-本番に Google でログインしたユーザーがいる場合の扱い。
+対象は本番の 1 家族だけなので、併用期間を設けない**一括切り替え**にする。
 
-- **同じメールアドレスで OTP ログインすれば、同じユーザーとしてデータを引き継げる**。Google アカウントのメール（Gmail）は `users.email` に保存済みで、Better Auth の emailOTP はメールアドレスで既存ユーザーを引き当てる。Gmail に届いたコードを入力すればよい
-- 切り替えたタイミングで、既存の Auth.js のセッション（JWT Cookie）は無効になり、**全員 1 回だけ再ログインが必要**になる。ログイン画面に「ログイン方法が変わりました。Google アカウントのメールアドレスでログインしてください」という告知を一定期間出す
-- ゲストモードの IndexedDB のデータは、端末内に残るので影響はない
-- 切り替え手順: A2 を develop（Preview）で確認 → 本番の DB をバックアップ（Neon のブランチ作成）→ main にマージ → 本番でマイグレーション → 自分のアカウントで再ログインして確認
-- ロールバック: Neon のバックアップブランチに戻し、ひとつ前のデプロイを Vercel で Promote する
+- **紐付けの方法**: 同じメールアドレスなら、既存の `users` 行に紐付ける。Google ログイン時に保存された Gmail アドレスが `users.email` に入っているので、そのアドレスで OTP ログインすれば同じ `users.id` になる。グループ・アイテム・リスト・履歴はそのまま見える
+- **手順**
+  1. 事前に家族へ連絡する（「○日からログイン方法が変わります。Gmail のアドレスにコードが届きます」）
+  2. A2 を本番にリリースする（下記「## 本番環境への影響とリリース手順」）
+  3. 切り替えた時点で、既存の Auth.js のセッション（JWT Cookie）は読めなくなり、家族の端末はログアウト状態になる。ログイン画面に「ログイン方法が変わりました。以前 Google で使っていた Gmail アドレスを入力してください」という案内を出す（A5 で削除）
+  4. 家族がそれぞれの端末で、Gmail アドレス + コードでログインする → 同じデータが見えることを確認する
+  5. A4（パスキー）のリリース後、ログイン後の提案から各端末でパスキーを登録してもらう。これで移行は完了
+  6. 移行完了を確認したら、Google Cloud Console の OAuth クライアントを削除し、Vercel の `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` を消す。2 週間後に `accounts_authjs_backup` を DROP する
+- ゲストモードの IndexedDB のデータは端末内に残るので、影響はない
+- **ログアウト状態になった後のデータ**: 同期済みのデータはサーバーにある。切り替え前の Google ログイン中は tRPC を直接呼んでいたので、端末内に未送信のデータはない
+
+## 本番環境への影響とリリース手順
+
+### 本番への影響
+
+| 項目 | 影響 |
+|------|------|
+| 既存の家族 | 切り替え時に 1 回ログアウトされ、メールのコードで再ログインが必要。データは失われない |
+| DB | `users` の ALTER、`sessions` / `accounts` / `verifications` の作り直し、`passkeys` / `rate_limits` の追加 |
+| 環境変数（Vercel Production / Preview） | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `RESEND_API_KEY`, `EMAIL_FROM`, `PASSKEY_RP_ID`, `NEXT_PUBLIC_PASSKEY_ENABLED` を追加。Google の変数は手順 6 で削除 |
+| 外部サービス | Resend のアカウントと送信ドメインの DNS（SPF / DKIM）。DNS の反映待ちがあるので、A2 のリリースより前に済ませる |
+| Preview 環境 | develop へのマージで自動デプロイされる。メールは実際に送られるため、Preview でも Resend を使う（送信先は自分のアドレスで確認）。`E2E_TEST` は Preview に**絶対に設定しない**（#70） |
+| デプロイとマイグレーションの順序 | Vercel のデプロイと CI の `migrate` ジョブ（main への push で `drizzle-kit migrate`）は、互いを待たずに並行して走る。A2 のマイグレーションは後方互換ではないため、数分間ログインできない時間が出うる。家族が使わない時間帯にリリースし、事前に連絡する |
+
+### リリース手順（develop → main）
+
+各ステップの PR を develop にマージするたびに、Preview で確認する。本番へは次の単位でまとめてリリースする。
+
+| リリース | 含める PR | 備考 |
+|---------|----------|------|
+| R0 | #65（依存パッケージの更新）、#67（招待コード対策） | 認証移行より前に本番へ出す。メールでアカウントを作りやすくなると、招待コードの総当たりが悪化するため |
+| R1 | A1 + A2 + A3 | 一括切り替え。この時点で Google ログインはなくなる |
+| R2 | A4 | パスキー。家族に登録してもらう |
+| R3 | A5 | ドキュメント、`accounts_authjs_backup` の DROP、移行の案内の削除 |
+
+各リリースの手順:
+
+1. develop と main の差分を確認する（`git log origin/main..origin/develop`）。今回の対象外の未リリースのコミットがあれば、先に別のリリースとして出す
+2. Preview（develop）で、OTP ログイン、既存ユーザーとしてのログイン（Preview の DB に本番相当のテストユーザーを用意）、グループ共有、ログアウトを手動で確認する
+3. Neon で本番ブランチのバックアップ（`backup-before-r1` など）を作る
+4. develop → main の PR を作り、CI（lint / test / build / E2E）が通ることを確認してマージする
+5. CI の `migrate` ジョブの成功と、Vercel の本番デプロイの完了を確認する
+6. 自分のアカウントで本番にログインし、データが見えることを確認する → 家族に案内する
+
+### ロールバック
+
+- **アプリ**: Vercel で 1 つ前の本番デプロイを Promote する
+- **DB**: R1 のマイグレーションは後方互換ではないので、アプリだけを戻すと Auth.js が動かない。Neon のバックアップブランチを本番に戻す（R1 以降に作られたデータは失われるが、家族 1 組なので許容する）。`accounts_authjs_backup` があるので、Google 連携の行を手で戻すこともできる
+- 判断の目安: リリース後 30 分以内に家族のログインが確認できない、または 500 エラーが続く場合はロールバックする
 
 ## 実装ステップ（1 ステップ = 1 PR、500 行以下目安）
 
@@ -257,8 +321,8 @@ Better Auth のコアスキーマ（user / session / account / verification）�
 
 | # | PR | 主な内容 | 依存 | 規模目安 |
 |---|----|---------|------|---------|
-| A1 | `feat: メール送信基盤（EmailSender/Resend）を追加` | `EmailSender` インターフェース、Resend / Console / TestMailbox の実装、OTP メールテンプレート、メールアドレスの正規化、環境変数の検証（Zod） | #65（依存更新） | ~250 |
-| A2 | `feat: Better Auth に移行しメールOTP認証を導入` | Better Auth 本体（emailOTP・レート制限・cookieCache）、スキーマとマイグレーション、`[...all]` ルート、tRPC context、`AuthContext` の置き換え、ログイン画面の OTP UI（2 段階）、E2E ログインヘルパーとテスト用 OTP ルート、Credentials プロバイダ・next-auth・Google の削除 | A1 | ~500（マイグレーション SQL を除く） |
+| A1 | `feat: メール送信基盤（EmailSender/Resend）を追加` | `EmailSender` インターフェース、Resend / Console / TestMailbox の実装、OTP メールテンプレート、メールアドレスの正規化、環境変数の検証（Zod） | #65（依存更新）、#67（招待コード対策） | ~250 |
+| A2 | `feat: Better Auth に移行しメールOTP認証を導入` | Better Auth 本体（emailOTP・レート制限・cookieCache）、スキーマとマイグレーション、`[...all]` ルート、tRPC context、`AuthContext` の置き換え、ログイン画面の OTP UI（2 段階）、E2E ログインヘルパーとテスト用 OTP ルート、Credentials プロバイダ・next-auth・Google の削除、`accounts` の退避、tRPC mutation の Origin 確認、ログイン画面の移行案内 | A1 | ~500（マイグレーション SQL を除く） |
 | A3 | `feat: 初回ログイン時の表示名設定を追加` | `/onboarding`、`name === ''` のときの誘導、`users.name` 更新用の tRPC（`identity.updateProfile`）、設定画面のアカウント節（表示名・メール） | A2 | ~300 |
 | A4 | `feat: パスキーの登録・ログイン・管理を追加` | passkey プラグイン、`passkeys` テーブル、ログイン画面のパスキーボタンと Conditional UI、登録提案のボトムシート、設定画面のパスキー一覧・追加・削除、プレビュー環境での無効化 | A3 | ~450 |
 | A5 | `docs: 認証方式変更に伴いインフラ手順を更新` | `docs/INFRASTRUCTURE.md`、`AGENTS.md`（Prisma → Drizzle の記述修正も含む）、`.env.example`、#49 の本文更新（Google OAuth の手順を Resend / DNS の手順に置き換え） | A4 | ~150 |
@@ -277,6 +341,7 @@ Better Auth のコアスキーマ（user / session / account / verification）�
 | 環境変数の検証 | 本番で `RESEND_API_KEY` / `BETTER_AUTH_SECRET` が欠けていたら起動時エラー、開発時は Console 送信にフォールバック |
 | `/api/test/otp` ルート | `E2E_TEST` が未設定、または `NODE_ENV=production` のときに 404。E2E 時は直近のコードを返す |
 | tRPC `createContext` | セッションあり → `userId` を設定、なし → undefined。`protectedProcedure` が 401 を返す |
+| マイグレーション（DB を使うテスト） | Auth.js 形式のデータ（Google の `accounts` 行、`email_verified` が timestamp、大文字を含む email）を入れた DB にマイグレーションを適用 → `users` の行と ID が残る、`email_verified` が boolean、email が小文字、`accounts_authjs_backup` に Google の行が退避される |
 | `identity.updateProfile` | 正常系、空文字・50 文字超でバリデーションエラー、他人の更新不可 |
 | `AuthContext` | ローディング → 認証済み / 未認証の遷移、`logout` で signOut とデータ消去フックが呼ばれる |
 | ログイン画面 | メール形式のバリデーション、送信後にコード入力へ切り替わる、再送ボタンの 60 秒クールダウン、エラーメッセージ、オフライン時はボタンが無効 |
@@ -293,6 +358,7 @@ Better Auth のコアスキーマ（user / session / account / verification）�
 | L-5 | パスキー登録（仮想認証器）→ ログアウト → パスキーでログイン（chromium のみ） |
 | L-6 | 設定画面でパスキーを削除 → パスキーでログインできず、OTP ではログインできる |
 | L-7 | 既存の `e2e/auth/**`（グループ共有など）が新しいログインヘルパーで全件パスする |
+| L-8 | 既存ユーザーの移行: Google ログインで作られた想定の `users` 行（name・Gmail アドレスあり）とグループ・アイテムを seed → 同じアドレスで OTP ログイン → 同じ `users.id` で既存データが見え、表示名の設定画面が出ない |
 
 ## セキュリティ
 
@@ -300,8 +366,10 @@ Better Auth のコアスキーマ（user / session / account / verification）�
 - メールアドレスの列挙対策: OTP 送信の結果を登録有無で変えない
 - CSRF: Better Auth の Origin 検証と `trustedOrigins`、Cookie は `Secure` / `HttpOnly` / `SameSite=Lax`
 - パスキー: `userVerification: "preferred"`、署名カウンタの検証はライブラリに任せる。RP ID は環境変数で固定し、リクエストの Host ヘッダから決めない
-- E2E 用のテストルートは二重条件（`E2E_TEST` と `NODE_ENV`）で守り、本番ビルドで 404 になることをテストする
-- **メールアドレスの正規化**（#65 で指摘された Auth.js のホモグリフ問題を、移行後に再発させない）: 送信・照合の前に `trim` + 小文字化 + Unicode NFKC で正規化し、Zod でメール形式を検証する。ASCII 以外を含むアドレス（IDN を含む）は当面拒否する。正規化後の値で `users.email` を一意にする
+- E2E 用のテストルートは多重条件（`E2E_TEST`・`NODE_ENV`・`VERCEL_ENV`）と共有シークレットで守り、本番条件で 404 になることをテストする。可能ならルート自体を本番ビルドに含めない（`E2E_TEST` のときだけ有効になる `pageExtensions`、または別のエントリで分ける）
+- **メールアドレスの正規化**は「Unicode 正規化（NFKC）→ trim・小文字化 → 形式の検証」の順に行う（#65）
+- OTP はハッシュ化して保存し、照合は定数時間、使用後はすぐ無効にする
+- **メールアドレスの正規化の詳細**（#65 で指摘された Auth.js のホモグリフ問題を、移行後に再発させない）: 送信・照合の前に正規化する。ASCII 以外を含むアドレス（IDN を含む）は当面拒否する。正規化後の値で `users.email` を一意にする
 
 ### セキュリティ Issue との対応
 
@@ -309,9 +377,10 @@ Better Auth のコアスキーマ（user / session / account / verification）�
 |-------|------|---------------|
 | #65 | next-auth / @auth/core / Next.js の既知脆弱性 | **A2 で next-auth を削除するため、Auth.js 側は解消する**。ただし A2 のマージまでに時間がかかるので、#65 の依存更新（next-auth beta.32 以上、Next.js 16.4.x 以上）は**本 Issue より先に**行う。A1 は #65 の後に着手する。メール正規化は上記で対応 |
 | #70 | `E2E_TEST` の環境変数 1 つでパスワードなしログインが有効になる | **A2 で Credentials プロバイダを削除する**。代わりの `/api/test/otp` は #70 の方針に合わせ、`E2E_TEST === "true"` かつ `NODE_ENV !== "production"` かつ `VERCEL_ENV` が production / preview でないことを条件にし、さらに `E2E_SEED_TOKEN` ヘッダを必須にする。本番条件で 404 になることをユニットテストで確認する。`/api/e2e/seed` の修正は #70 側で行う |
+| #67 | 招待コードを総当たりで推測できる | メール認証でアカウントを量産しやすくなると悪化する。**R1 より前（R0）に #67 を本番へ出す** |
 | #72 | レート制限がない | 認証系のエンドポイント（OTP 送信・サインイン・パスキー）は **Better Auth の rateLimit** で A2 から制限する。#72 で Upstash Redis などを導入する場合は、Better Auth の `secondaryStorage` を同じ Redis に向け、`storage: "secondary-storage"` に切り替える |
 | #73-8 | JWT セッションを個別に失効できない | **DB セッションに変えることで解消する**（ログアウト・セッション削除が即時に効く）。将来「他の端末からログアウト」を設定画面に加える余地がある（本 Issue の対象外） |
-| #71 | セキュリティヘッダがない | #71 で Permissions-Policy を入れる際、`publickey-credentials-get` / `publickey-credentials-create` を `self` で許可する（塞ぐとパスキーが動かない） |
+| #71 | セキュリティヘッダがない。tRPC で Origin を確認していない | A2 で tRPC mutation の `Origin` / `Sec-Fetch-Site` 確認を入れる。Better Auth の `trustedOrigins` には本番 URL だけを設定する（Preview は環境変数で追加する）。#71 で Permissions-Policy を入れる際、`publickey-credentials-get` / `publickey-credentials-create` を `self` で許可する（塞ぐとパスキーが動かない） |
 
 ## 考慮事項
 
@@ -319,6 +388,7 @@ Better Auth のコアスキーマ（user / session / account / verification）�
 - **Conditional UI 非対応ブラウザ**: パスキーボタンを明示的に置いているので問題ない。`PublicKeyCredential` がない環境ではボタンを出さない
 - **共有端末**: パスキーは端末に保存されるため、共有端末では登録の提案を「あとで」にできる
 - **既存データ**: ユーザー・グループは残る（`users.id` を維持）。同じメールアドレスで OTP ログインすれば、そのままグループに参加した状態になる
+- **家族が Gmail 以外のアドレスに変えたい場合**: メールアドレスの変更機能は対象外。必要なら、リリース前に DB の `users.email` を手で更新する（1 家族なので手作業で足りる）
 - **ゲストデータのマージ**: 既存の `DataMergeContext`（ログイン時に `trpc.sync.merge` を呼ぶ）は、セッション取得部分が `AuthContext` 経由なので動作は変わらない。E2E の L-1 / L-2 で回帰を確認する
 - **メールが届かない**: 迷惑メールフォルダの案内を表示する。Resend のダッシュボードで送信ログを確認できる
 - **AGENTS.md の記述が古い**（Prisma / next-pwa と書かれている）ので、A5 で直す
@@ -330,4 +400,3 @@ Better Auth のコアスキーマ（user / session / account / verification）�
 3. **メール送信は Resend でよいですか？ また、送信元にできる独自ドメインはありますか？**（Resend / SES とも独自ドメインの DNS 設定が必要。ない場合はドメインの取得が先に必要）
 4. **パスキーは任意（ログイン後に登録を提案）とし、復旧手段はメールのコードとする方針でよいですか？**（必須にはしない。Vercel のプレビュー環境ではドメインが毎回変わるため、パスキーを無効にしてメールのコードだけにする）
 5. **初回ログイン時に表示名の入力を必須にしてよいですか？**（Google と違って名前が自動で入らないため。グループのメンバー表示に使う）
-6. **本番環境に、すでに Google でログインして使っているユーザー（家族など）はいますか？**（Issue では「未デプロイ」となっているが、Vercel の本番デプロイは稼働している記録がある。いる場合は「同じメールアドレスでコードログインすれば引き継げる、切り替え時に 1 回だけ再ログインが必要」という移行でよいか）
