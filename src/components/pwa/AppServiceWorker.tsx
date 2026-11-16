@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react"
 import { SerwistProvider } from "@serwist/turbopack/react"
+import { SWUpdateManager } from "./SWUpdateManager"
 import { SWKillSwitch } from "./SWKillSwitch"
 import { isSwEnabled } from "@/lib/sw/kill-switch"
 
@@ -22,6 +23,7 @@ export function AppServiceWorker({ children }: { children: ReactNode }) {
       options={{ scope: "/", updateViaCache: "none" }}
     >
       {children}
+      <SWUpdateManager />
     </SerwistProvider>
   )
 }

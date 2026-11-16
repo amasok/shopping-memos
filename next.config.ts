@@ -4,6 +4,11 @@ import { withSerwist } from "@serwist/turbopack"
 const noStore = [{ key: "Cache-Control", value: "private, no-store" }]
 
 const nextConfig: NextConfig = {
+  env: {
+    // 強制更新（MIN_CLIENT_RELEASE）のリリース番号。新しいデプロイほど必ず大きい
+    NEXT_PUBLIC_BUILD_TIME: String(Date.now()),
+    NEXT_PUBLIC_APP_VERSION: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev",
+  },
   images: {
     remotePatterns: [
       {

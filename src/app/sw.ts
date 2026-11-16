@@ -2,6 +2,7 @@
 /// <reference lib="webworker" />
 import { Serwist, type PrecacheEntry, type SerwistGlobalConfig } from "serwist"
 import { isStaleAppCache } from "@/lib/sw/config"
+import { SKIP_WAITING_MESSAGE } from "@/lib/sw/version"
 import { runtimeCaching } from "@/lib/sw/runtime-caching"
 
 declare global {
@@ -14,8 +15,9 @@ declare const self: ServiceWorkerGlobalScope
 
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
-  // O1b で更新通知を入れるまでは、新しい SW をすぐ有効にする
-  skipWaiting: true,
+  // 新しい SW は waiting で待ち、利用者が［更新］を選んだとき（SKIP_WAITING）に有効にする。
+  // kill switch のビルドは sw-kill.ts が配信されるので、自動で skipWaiting する
+  skipWaiting: false,
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching,
@@ -38,6 +40,12 @@ self.addEventListener("activate", (event) => {
         Promise.all(names.filter(isStaleAppCache).map((n) => caches.delete(n)))
       )
   )
+})
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === SKIP_WAITING_MESSAGE) {
+    void self.skipWaiting()
+  }
 })
 
 serwist.addEventListeners()

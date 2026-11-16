@@ -74,4 +74,28 @@ test.describe("Service Worker (O1)", () => {
       )
       .toBe(0)
   })
+
+  test("/api/version は no-store で buildTime と minClientRelease を返す", async ({ request }) => {
+    const res = await request.get("/api/version")
+    expect(res.headers()["cache-control"]).toContain("no-store")
+    const body = await res.json()
+    expect(typeof body.buildTime).toBe("number")
+    expect(body.minClientRelease).toBe(0)
+  })
+
+  test("O-14（簡易）: 最低リリース番号を上回るとき、強制更新のモーダルが出る", async ({ page }) => {
+    await page.route("**/api/version", (route) =>
+      route.fulfill({
+        json: { buildTime: 1, minClientRelease: Number.MAX_SAFE_INTEGER },
+      })
+    )
+    await page.goto("/")
+    await expect(page.getByTestId("force-update-modal")).toBeVisible()
+  })
+
+  test("更新がなければ、更新トーストも強制更新モーダルも出ない", async ({ page }) => {
+    await waitForControl(page)
+    await expect(page.getByTestId("update-available-toast")).toHaveCount(0)
+    await expect(page.getByTestId("force-update-modal")).toHaveCount(0)
+  })
 })
