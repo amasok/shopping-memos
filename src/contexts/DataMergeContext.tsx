@@ -68,6 +68,8 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
   const [mergedCounts, setMergedCounts] = useState<MergedCounts | null>(null)
   const [skippedCount, setSkippedCount] = useState(0)
   const mergeAttempted = useRef(false)
+  /** 実行中の merge があるか（分割送信を 2 本同時に走らせない。#116） */
+  const mergeInFlight = useRef(false)
 
   const mergeMutation = trpc.sync.merge.useMutation()
 
@@ -103,6 +105,8 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
       setIsMergeCompleted(true)
       return
     }
+    if (mergeInFlight.current) return
+    mergeInFlight.current = true
 
     setIsMerging(true)
     setError(null)
@@ -218,6 +222,8 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
       console.error("Data merge failed:", err)
       setIsMerging(false)
       setError(err instanceof Error ? err.message : "マージに失敗しました")
+    } finally {
+      mergeInFlight.current = false
     }
   }, [user, mergeMutation])
 
@@ -234,7 +240,8 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     if (user) {
       const mergeKey = `${MERGE_COMPLETED_KEY}-${user.id}`
       localStorage.removeItem(mergeKey)
-      mergeAttempted.current = false
+      // 自動実行の effect にもう一度走らせない（ここで 1 回だけ実行する）
+      mergeAttempted.current = true
       setIsMergeCompleted(false)
       executeMerge()
     }
