@@ -45,7 +45,7 @@ npm run lint                  # ESLint
 # DB（Drizzle）
 npm run db:generate           # schema.ts からマイグレーション SQL を生成
 npm run db:migrate            # マイグレーション適用
-npm run db:push               # スキーマを直接反映（開発用）
+npm run db:push               # スキーマを直接反映（ローカル DB 専用。develop・本番の DB には使わない。記録が残らず migrate が失敗する）
 npm run db:studio             # Drizzle Studio
 npm run db:reset              # ローカル DB の public スキーマを作り直して db:push
 # migration は _journal.json の when の順に当たる。ブランチ間で migration が衝突したら、
