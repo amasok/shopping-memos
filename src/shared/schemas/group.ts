@@ -1,6 +1,4 @@
-// z.object を作る前に Zod の JIT を止める（CSP の eval 違反を避ける。#71）
-import "./zod-config"
-import { z } from "zod"
+import { z } from "./z"
 
 // グループ役割
 export const groupRoleSchema = z.enum(["owner", "member"])
