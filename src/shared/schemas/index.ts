@@ -1,5 +1,6 @@
 // 共通
 export * from "./common"
+export * from "./limits"
 
 // エンティティ別
 export * from "./item"

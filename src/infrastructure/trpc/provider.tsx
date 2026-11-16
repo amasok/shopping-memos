@@ -2,7 +2,9 @@
 
 import { useState } from "react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { httpBatchLink } from "@trpc/client"
+import { httpBatchLink, httpLink, splitLink } from "@trpc/client"
+import { REQUEST_LIMITS } from "@/shared/schemas/limits"
+import { MERGE_PATH } from "./request-limits"
 import superjson from "superjson"
 import { trpc } from "./client"
 
@@ -44,9 +46,20 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
   const [trpcClient] = useState(() =>
     trpc.createClient({
       links: [
-        httpBatchLink({
-          url: `${getBaseUrl()}/api/trpc`,
-          transformer: superjson,
+        // sync.merge はボディが大きいので、バッチに混ぜず単独で送る（サーバーは単独のときだけ大きい上限を使う。#72）
+        splitLink({
+          condition: (op) => op.path === MERGE_PATH,
+          true: httpLink({
+            url: `${getBaseUrl()}/api/trpc`,
+            transformer: superjson,
+          }),
+          false: httpBatchLink({
+            url: `${getBaseUrl()}/api/trpc`,
+            // サーバーのバッチ件数の上限（#72）に合わせて分割する
+            maxItems: REQUEST_LIMITS.clientBatchSize,
+            maxURLLength: REQUEST_LIMITS.clientMaxUrlLength,
+            transformer: superjson,
+          }),
         }),
       ],
     })
