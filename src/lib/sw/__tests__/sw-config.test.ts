@@ -68,3 +68,23 @@ describe("SW のキャッシュ設定", () => {
     }
   })
 })
+
+describe("画像・フォントのキャッシュは status 200 のみ保存する (#62 O1)", () => {
+  type Plugin = { cacheWillUpdate?: (o: { response: Response }) => Promise<Response | null> }
+  const mk = (dest: string) =>
+    ({
+      url: new URL("https://example.com/a"),
+      request: { destination: dest, headers: new Headers() },
+      sameOrigin: true,
+    }) as never
+
+  it.each(["image", "font"])("%s のキャッシュは 200 だけを保存し、404 / 206 は保存しない（opaque は status 0 なので対象外）", async (dest) => {
+    const rt = runtimeCaching.find((r) => (r.matcher as (o: never) => boolean)(mk(dest)))!
+    const plugins = (rt.handler as unknown as { plugins: Plugin[] }).plugins
+    const check = plugins.find((p) => p.cacheWillUpdate)!.cacheWillUpdate!
+
+    expect(await check({ response: new Response("x", { status: 200 }) })).not.toBeNull()
+    expect(await check({ response: new Response("x", { status: 404 }) })).toBeNull()
+    expect(await check({ response: new Response(null, { status: 206 }) })).toBeNull()
+  })
+})
