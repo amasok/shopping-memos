@@ -1,6 +1,8 @@
 import { REQUEST_LIMITS } from "@/shared/schemas/limits"
 import type { IncomingMessage } from "http"
 import { NextRequest, NextResponse } from "next/server"
+import { pipeline, type Readable, type Transform } from "stream"
+import zlib from "zlib"
 import { requestPinned } from "./http-client"
 import { parseOGP } from "./parse-ogp"
 import { getClientIp, ogpRateLimiter } from "./rate-limit"
@@ -25,7 +27,8 @@ const FETCH_HEADERS = {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-  "Accept-Encoding": "identity",
+  // 圧縮を受け付ける（identity だけを求めると応答しないサイトがある）。展開は readHead で行う
+  "Accept-Encoding": "gzip, br",
 }
 
 const URL_ERROR_MESSAGES: Record<UrlValidationError, string> = {
@@ -88,11 +91,36 @@ async function fetchWithValidation(
   throw new UpstreamError("Too many redirects")
 }
 
+class UnsupportedEncodingError extends Error {}
+
+/**
+ * Content-Encoding に応じて展開するストリームを返す。圧縮なしは応答をそのまま返す。
+ * 送っていない圧縮方式（zstd・deflate など）は扱わない
+ */
+function decodeBody(res: IncomingMessage): Readable {
+  const encoding = String(res.headers["content-encoding"] ?? "").trim().toLowerCase()
+  let decoder: Transform
+  if (encoding === "" || encoding === "identity") return res
+  if (encoding === "gzip" || encoding === "x-gzip") decoder = zlib.createGunzip()
+  else if (encoding === "br") decoder = zlib.createBrotliDecompress()
+  else throw new UnsupportedEncodingError(encoding)
+
+  // 応答側のエラー（切断・中断）も decoder に伝える
+  pipeline(res, decoder, () => {})
+  return decoder
+}
+
+/**
+ * <head> までを読む。上限は展開後の大きさで数える（zip bomb 対策）。
+ * 上限に達したら読むのをやめ、展開も接続も止める
+ */
 async function readHead(res: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = []
   let total = 0
+  let body: Readable = res
   try {
-    for await (const chunk of res as AsyncIterable<Buffer>) {
+    body = decodeBody(res)
+    for await (const chunk of body as AsyncIterable<Buffer>) {
       const remaining = MAX_BYTES - total
       const piece = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk
       chunks.push(piece)
@@ -100,7 +128,14 @@ async function readHead(res: IncomingMessage): Promise<string> {
       if (total >= MAX_BYTES) break
       if (piece.includes("</head") || piece.includes("</HEAD")) break
     }
+  } catch (error) {
+    // 壊れた圧縮データは取得先の問題として扱う（中断はそのまま投げてタイムアウトとして返す）
+    if (body !== res && !(error instanceof Error && error.name === "AbortError")) {
+      throw new UpstreamError("Failed to decode response")
+    }
+    throw error
   } finally {
+    body.destroy()
     res.destroy()
   }
   return new TextDecoder().decode(Buffer.concat(chunks))
@@ -199,7 +234,7 @@ export async function GET(request: NextRequest) {
     if (error instanceof BlockedUrlError) {
       return NextResponse.json({ error: error.message }, { status: 400 })
     }
-    if (error instanceof UpstreamError) {
+    if (error instanceof UpstreamError || error instanceof UnsupportedEncodingError) {
       return NextResponse.json({ error: "Failed to fetch URL" }, { status: 422 })
     }
     if (signal.aborted) {

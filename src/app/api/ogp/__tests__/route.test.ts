@@ -18,6 +18,7 @@ vi.mock("../http-client", () => ({
 }))
 
 import { Readable } from "stream"
+import zlib from "zlib"
 import { GET } from "../route"
 import { ogpRateLimiter } from "../rate-limit"
 
@@ -229,6 +230,82 @@ describe("GET /api/ogp: 読み込む大きさの上限", () => {
     mockFetch.mockResolvedValueOnce(chunkedHtmlResponse(`<html><head><script>${padding}</script>${OG_TAGS}</head></html>`))
 
     const res = await GET(makeRequest("https://example.com/huge"))
+
+    expect(res.status).toBe(422)
+  })
+})
+
+describe("GET /api/ogp: 圧縮された応答", () => {
+  const HTML = `<html><head><meta property="og:title" content="圧縮されたページ"></head><body></body></html>`
+
+  function encodedResponse(body: Buffer, encoding: string) {
+    return Object.assign(Readable.from([body]), {
+      statusCode: 200,
+      headers: { "content-type": "text/html", "content-encoding": encoding },
+    })
+  }
+
+  beforeEach(() => {
+    mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
+  })
+
+  it("圧縮を受け付ける Accept-Encoding を送る（identity だけだと応答しないサイトがある）", async () => {
+    mockFetch.mockResolvedValueOnce(mockHtmlResponse(HTML))
+
+    await GET(makeRequest("https://example.com/"))
+
+    const options = mockFetch.mock.calls[0][2] as { headers: Record<string, string> }
+    expect(options.headers["Accept-Encoding"]).toBe("gzip, br")
+  })
+
+  it.each([
+    ["gzip", zlib.gzipSync(HTML)],
+    ["x-gzip", zlib.gzipSync(HTML)],
+    ["br", zlib.brotliCompressSync(HTML)],
+  ])("Content-Encoding: %s の応答を展開して OGP を返す", async (encoding, body) => {
+    mockFetch.mockResolvedValueOnce(encodedResponse(body, encoding))
+
+    const res = await GET(makeRequest("https://example.com/"))
+
+    expect(res.status).toBe(200)
+    expect((await res.json()).title).toBe("圧縮されたページ")
+  })
+
+  it("展開すると巨大になる応答（zip bomb）は展開後 2MiB で読むのをやめる", async () => {
+    // 64MiB の空白を圧縮すると数十 KB になる。og タグは上限より後ろにあるので読まれない
+    const bomb = zlib.gzipSync(
+      Buffer.concat([Buffer.from("<html><head>"), Buffer.alloc(64 * 1024 * 1024, " "), Buffer.from(HTML)])
+    )
+    mockFetch.mockResolvedValueOnce(encodedResponse(bomb, "gzip"))
+    const inflated: number[] = []
+    const createGunzip = zlib.createGunzip
+    const spy = vi.spyOn(zlib, "createGunzip").mockImplementation((...args) => {
+      const stream = createGunzip(...args)
+      stream.on("data", (chunk: Buffer) => inflated.push(chunk.byteLength))
+      return stream
+    })
+
+    const res = await GET(makeRequest("https://example.com/bomb"))
+    spy.mockRestore()
+
+    expect(res.status).toBe(422)
+    const total = inflated.reduce((a, b) => a + b, 0)
+    expect(total).toBeGreaterThanOrEqual(2 * 1024 * 1024)
+    expect(total).toBeLessThan(4 * 1024 * 1024)
+  })
+
+  it("壊れた圧縮データは 422 を返す", async () => {
+    mockFetch.mockResolvedValueOnce(encodedResponse(Buffer.from("not gzip data"), "gzip"))
+
+    const res = await GET(makeRequest("https://example.com/"))
+
+    expect(res.status).toBe(422)
+  })
+
+  it("送っていない圧縮方式（zstd）は 422 を返す", async () => {
+    mockFetch.mockResolvedValueOnce(encodedResponse(Buffer.from(HTML), "zstd"))
+
+    const res = await GET(makeRequest("https://example.com/"))
 
     expect(res.status).toBe(422)
   })
