@@ -23,7 +23,7 @@ vi.mock("@/infrastructure/trpc/client", () => ({
 
 vi.mock("@/lib/db/guestData", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
-  ensureGuestDataMigrated: async () => {},
+  ensureGuestDataMigrated: async () => true,
 }))
 
 import { AuthProvider, useAuth } from "../AuthContext"

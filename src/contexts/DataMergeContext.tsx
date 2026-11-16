@@ -88,7 +88,12 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
       // ゲストに戻った（ログアウト・セッション切れ）ら、ログイン中だけの状態を消す。
       // 次にログインしたときに、ゲストのデータがあればもう一度 merge する。
       // 以前の印は移行の判定に使うので、移行が終わってから消す
-      if (!isAuthLoading) void ensureGuestDataMigrated().then(() => clearLoginScopedState())
+      // 移行に失敗したら印を残す（次の読み込みで移行をやり直す）
+      if (!isAuthLoading) {
+        void ensureGuestDataMigrated().then((migrated) => {
+          if (migrated) clearLoginScopedState()
+        })
+      }
       return
     }
 
@@ -110,8 +115,13 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
   const executeMerge = useCallback(async () => {
     if (!user) return
 
-    // 以前の仕組みの印がある端末では、ゲストのデータを送らずに空にする（一度だけ）
-    await ensureGuestDataMigrated()
+    // 以前の仕組みの印がある端末では、ゲストのデータを送らずに空にする（一度だけ）。
+    // 移行に失敗した読み込みでは merge しない（古いゲストのデータを送らない）。サーバーのデータを表示し、
+    // 次の読み込みで移行からやり直す
+    if (!(await ensureGuestDataMigrated())) {
+      setIsMergeCompleted(true)
+      return
+    }
 
     const mergeKey = `${MERGE_COMPLETED_KEY}-${user.id}`
     const alreadyMerged = localStorage.getItem(mergeKey) === "true"

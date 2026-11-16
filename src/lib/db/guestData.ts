@@ -37,17 +37,17 @@ export function hasGuestDataToMerge(snapshot: GuestSnapshot): boolean {
   return snapshot.tags.some((tag) => !defaults.includes(tag.name))
 }
 
-/** merge が終わったゲストのデータを消す（次に開いたときに、初期タグだけが作り直される） */
+/**
+ * ゲストのデータを消して、初期タグだけの状態に戻す。
+ * 消すテーブルは、DB の現在のスキーマ（db.tables）から取る。決め打ちにすると、廃止したテーブル（v8 の history）を
+ * 指定して InvalidTableError になったり、追加したテーブルを消し忘れたりする
+ */
 export async function clearGuestData(): Promise<void> {
-  await db.transaction("rw", [db.tags, db.items, db.lists, db.listItems, db.table("history")], async () => {
-    await Promise.all([
-      db.tags.clear(),
-      db.items.clear(),
-      db.lists.clear(),
-      db.listItems.clear(),
-      db.table("history").clear(),
-    ])
+  const tables = db.tables
+  await db.transaction("rw", tables, async () => {
+    await Promise.all(tables.map((table) => table.clear()))
   })
+  await initializeDefaultTags()
 }
 
 /** ログイン中だけの状態（merge 済みの印・選んでいたグループ）を消す。ログアウトのとき・ゲストに戻ったときに呼ぶ */
@@ -81,23 +81,28 @@ export async function migrateLegacyGuestData(storage: Storage = localStorage): P
   }
   if (hasLegacyMark) {
     await clearGuestData()
-    await initializeDefaultTags()
   }
   storage.setItem(GUEST_DATA_VERSION_KEY, GUEST_DATA_VERSION)
   return hasLegacyMark ? "cleared" : "none"
 }
 
-let migration: Promise<unknown> | null = null
+let migration: Promise<boolean> | null = null
 
 /**
- * 移行が終わるのを待つ（1 回のページの読み込みで 1 回だけ実行する）。
- * merge の判定・ゲストに戻ったときの印の削除・ログアウトの前に呼ぶ（以前の印を消す前に、移行の判定に使うため）
+ * 移行が終わるのを待つ（1 回のページの読み込みで 1 回だけ実行する）。成功したら true。
+ * merge の判定・ゲストに戻ったときの印の削除・ログアウトの前に呼ぶ（以前の印を消す前に、移行の判定に使うため）。
+ * 失敗したら false を返す。呼び出し側は以前の印を消さないこと（次の読み込みで移行をやり直すため。
+ * 印を消すと、次は移行が必要と分からず、古いゲストのデータが次のログインで送られてしまう）
  */
-export function ensureGuestDataMigrated(): Promise<unknown> {
-  migration ??= migrateLegacyGuestData().catch((error) => {
-    // 失敗したら次の読み込みでやり直す（バージョンのキーは付けない）
-    console.error("[guestData] 移行に失敗:", error)
-    migration = null
-  })
+export function ensureGuestDataMigrated(): Promise<boolean> {
+  migration ??= migrateLegacyGuestData().then(
+    () => true,
+    (error) => {
+      // バージョンのキーは付いていないので、次の呼び出しでやり直す
+      console.error("[guestData] 移行に失敗:", error)
+      migration = null
+      return false
+    }
+  )
   return migration
 }

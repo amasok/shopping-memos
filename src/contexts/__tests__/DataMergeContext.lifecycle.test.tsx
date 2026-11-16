@@ -26,12 +26,15 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/infrastructure/trpc/client", () => ({
   trpc: { sync: { merge: { useMutation: () => ({ mutateAsync: state.mutateAsync }) } } },
 }))
-const guestData = vi.hoisted(() => ({ clearGuestData: vi.fn(async () => {}) }))
+const guestData = vi.hoisted(() => ({
+  clearGuestData: vi.fn(async () => {}),
+  migrated: true,
+}))
 vi.mock("@/lib/db/guestData", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
   clearGuestData: guestData.clearGuestData,
   // 以前の仕組みからの移行は guestData.test.ts で確かめる
-  ensureGuestDataMigrated: async () => {},
+  ensureGuestDataMigrated: async () => guestData.migrated,
 }))
 
 import { DataMergeProvider, useDataMerge } from "../DataMergeContext"
@@ -68,6 +71,7 @@ beforeEach(() => {
   state.items = []
   state.mutateAsync.mockReset().mockResolvedValue(result(0))
   guestData.clearGuestData.mockClear()
+  guestData.migrated = true
   reload = vi.fn()
   Object.defineProperty(window, "location", { configurable: true, value: { ...window.location, reload } })
   vi.spyOn(console, "log").mockImplementation(() => {})
@@ -136,6 +140,27 @@ describe("ゲストに戻ったとき（ログアウト・セッション切れ�
   it("認証の読み込み中は、ゲストとみなさず印を消さない", async () => {
     state.user = null
     state.isLoading = true
+    localStorage.setItem(MERGE_KEY, "true")
+    renderProvider()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(localStorage.getItem(MERGE_KEY)).toBe("true")
+  })
+})
+
+describe("以前の仕組みからの移行に失敗した読み込み", () => {
+  it("ログイン中: merge せず（古いゲストのデータを送らない）、サーバーのデータを表示する", async () => {
+    guestData.migrated = false
+    state.items = [guestItem()]
+    localStorage.setItem("data-merge-completed-user-2", "true")
+    renderProvider()
+    await waitFor(() => expect(screen.getByTestId("completed")).toHaveTextContent("true"))
+    expect(state.mutateAsync).not.toHaveBeenCalled()
+    expect(guestData.clearGuestData).not.toHaveBeenCalled()
+  })
+
+  it("ゲスト: 以前の印を消さない（次の読み込みで移行をやり直すため）", async () => {
+    guestData.migrated = false
+    state.user = null
     localStorage.setItem(MERGE_KEY, "true")
     renderProvider()
     await new Promise((r) => setTimeout(r, 20))
