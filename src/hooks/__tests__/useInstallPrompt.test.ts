@@ -1,10 +1,10 @@
 import { renderHook, act } from "@testing-library/react"
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from "vitest"
 import { useInstallPrompt } from "../useInstallPrompt"
 
 describe("useInstallPrompt", () => {
-  let addEventListenerSpy: ReturnType<typeof vi.spyOn>
-  let removeEventListenerSpy: ReturnType<typeof vi.spyOn>
+  let addEventListenerSpy: MockInstance<typeof window.addEventListener>
+  let removeEventListenerSpy: MockInstance<typeof window.removeEventListener>
 
   beforeEach(() => {
     Object.defineProperty(window, "matchMedia", {

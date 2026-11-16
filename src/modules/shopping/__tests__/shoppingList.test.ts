@@ -55,6 +55,8 @@ describe("ShoppingList エンティティ", () => {
         groupId: "group-1",
         createdAt: new Date(),
         completedAt: null,
+        purchasedAt: null,
+        location: null,
       }
 
       expect(list.id).toBe("list-1")
@@ -71,6 +73,8 @@ describe("ShoppingList エンティティ", () => {
         groupId: null,
         createdAt: new Date(),
         completedAt: null,
+        purchasedAt: null,
+        location: null,
       }
 
       expect(list.groupId).toBeNull()
@@ -86,6 +90,8 @@ describe("ShoppingList エンティティ", () => {
         groupId: "group-1",
         createdAt: new Date(),
         completedAt: null,
+        purchasedAt: null,
+        location: null,
         items: [
           {
             id: "item-1",
@@ -191,6 +197,8 @@ describe("ShoppingListRepository インターフェース", () => {
       groupId: input.groupId ?? null,
       createdAt: new Date(),
       completedAt: null,
+      purchasedAt: null,
+      location: null,
       items: [],
     }
     mockRepo.lists.set(input.id, list)
@@ -285,6 +293,8 @@ describe("買い物リストのビジネスルール", () => {
       groupId: null,
       createdAt: new Date(),
       completedAt: new Date(),
+      purchasedAt: null,
+      location: null,
     }
 
     expect(canTransition(list.status, ListStatus.IN_PROGRESS)).toBe(false)
@@ -298,6 +308,8 @@ describe("買い物リストのビジネスルール", () => {
       groupId: null,
       createdAt: new Date(),
       completedAt: null,
+      purchasedAt: null,
+      location: null,
     }
 
     expect(canTransition(list.status, ListStatus.COMPLETED)).toBe(true)
