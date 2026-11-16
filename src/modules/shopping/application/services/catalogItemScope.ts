@@ -1,21 +1,12 @@
-import { and, eq, isNotNull, isNull, sql, type SQL } from "drizzle-orm"
-import type { DrizzleDB } from "@/infrastructure/db/drizzle/client"
+import { and, eq, isNotNull, type SQL } from "drizzle-orm"
 import { items, shoppingLists } from "@/infrastructure/db/drizzle/schema"
+import { scopeCondition, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
 
-/**
- * DB実行コンテキスト（db 本体またはトランザクション）
- */
-export type DbExecutor = DrizzleDB | Parameters<Parameters<DrizzleDB["transaction"]>[0]>[0]
+// 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）
+export type { DbExecutor } from "@/infrastructure/db/ownership"
 
-/**
- * リストの所有スコープ
- * - groupId あり: グループリスト
- * - groupId なし: userId（作成者）の個人リスト
- */
-export interface ListScope {
-  userId: string | null
-  groupId: string | null
-}
+/** リストの所有スコープ（共通の OwnerScope と同じ） */
+export type ListScope = OwnerScope
 
 /**
  * リストと同じスコープのカタログアイテムに限定する WHERE 条件
@@ -25,13 +16,7 @@ export interface ListScope {
  * スコープが特定できない場合（所有者なしの個人リスト）は何にも一致しない。
  */
 export function catalogItemScopeCondition(scope: ListScope): SQL {
-  if (scope.groupId) {
-    return eq(items.groupId, scope.groupId)
-  }
-  if (scope.userId) {
-    return and(isNull(items.groupId), eq(items.userId, scope.userId)) as SQL
-  }
-  return sql`false`
+  return scopeCondition(items, scope)
 }
 
 /**

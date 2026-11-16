@@ -1,36 +1,11 @@
 import { inArray } from "drizzle-orm"
-import { db, type DrizzleDB } from "@/infrastructure/db/drizzle/client"
+import { db } from "@/infrastructure/db/drizzle/client"
 import { tags } from "@/infrastructure/db/drizzle/schema"
+import { isSameScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
 
-/**
- * DB実行コンテキスト（db 本体またはトランザクション）
- */
-export type DbExecutor = DrizzleDB | Parameters<Parameters<DrizzleDB["transaction"]>[0]>[0]
-
-/**
- * データの所有スコープ
- * - groupId あり: グループのデータ
- * - groupId なし: userId（作成者）の個人データ
- */
-export interface OwnerScope {
-  userId: string | null
-  groupId: string | null | undefined
-}
-
-/**
- * 2つのデータが同じ所有スコープに属するか判定する
- * - グループデータ同士: groupId が一致
- * - 個人データ同士: userId が一致
- * - 所有者が特定できないデータはどのスコープとも一致しない
- */
-export function isSameScope(a: OwnerScope, b: OwnerScope): boolean {
-  const aGroup = a.groupId ?? null
-  const bGroup = b.groupId ?? null
-  if (aGroup || bGroup) {
-    return aGroup === bGroup
-  }
-  return a.userId !== null && a.userId === b.userId
-}
+// 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
+// 既存の import のために再エクスポートする
+export { isSameScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
 
 /**
  * 指定したタグがすべて存在し、かつ scope と同じ所有スコープに属するか判定する

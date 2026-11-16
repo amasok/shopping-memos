@@ -2,12 +2,8 @@ import { and, eq, isNull } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import { describeDbError, formatDbErrorKind, type DbErrorKind } from "@/infrastructure/db/errors"
 import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
-import {
-  canAccessScope,
-  findEntityScope,
-  findListScope,
-  type DbExecutor,
-} from "@/modules/sync/infrastructure/entityAccess"
+import { canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
+import { findEntityScope, findListScope } from "@/modules/sync/infrastructure/entityAccess"
 import type { SyncEntity } from "@/modules/sync/domain/entities/SyncOperation"
 import {
   items,

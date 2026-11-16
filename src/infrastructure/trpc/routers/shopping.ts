@@ -26,7 +26,8 @@ import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-object
 import { ShoppingService, ShoppingDomainError } from "@/modules/shopping/application/services/ShoppingService"
 import { ShoppingSyncService } from "@/modules/shopping/application/services/ShoppingSyncService"
 import type { ItemWithTags } from "@/modules/catalog/domain/entities/Item"
-import { areTagsInScope, isSameScope } from "@/modules/catalog/application/services/ownership"
+import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
+import { isSameScope } from "@/infrastructure/db/ownership"
 import {
   getListScope,
   markScopedItemsUnpurchasedByName,

@@ -1,10 +1,10 @@
 import { eq, and, inArray, isNull, like } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
+import { canAccessScope } from "@/infrastructure/db/ownership"
 import {
   items,
   tags,
   itemTags,
-  groupMembers,
 } from "@/infrastructure/db/drizzle/schema"
 import type { ItemRepository } from "../../domain/repositories/ItemRepository"
 import type {
@@ -220,23 +220,8 @@ export class DrizzleItemRepository implements ItemRepository {
       return false
     }
 
-    // グループなしのアイテムは作成者のみアクセス可能
-    if (!item.groupId) {
-      return item.userId === userId
-    }
-
-    // グループメンバーか確認
-    const membership = await db
-      .select({ id: groupMembers.id })
-      .from(groupMembers)
-      .where(
-        and(
-          eq(groupMembers.groupId, item.groupId),
-          eq(groupMembers.userId, userId)
-        )
-      )
-
-    return membership.length > 0
+    // グループのアイテムはメンバー、個人のアイテムは作成者だけ（共通の判定。#101）
+    return canAccessScope(db, item, userId)
   }
 }
 
