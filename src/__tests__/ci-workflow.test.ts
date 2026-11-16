@@ -13,6 +13,7 @@ import { parse } from "yaml"
 
 type Step = { name?: string; run?: string }
 type Job = {
+  "runs-on"?: string
   needs?: string | string[]
   if?: string
   "timeout-minutes"?: number
@@ -68,6 +69,11 @@ describe("CI ワークフローの E2E ジョブ", () => {
 
   it("PR でも実行され、main マージ前に失敗を検知できる", () => {
     expect(e2e.if ?? "").toContain("pull_request")
+  })
+
+  it("Playwright が対応する OS バージョンに固定されている", () => {
+    // ubuntu-latest は OS 更新で Playwright 未対応になり得る（26.04 で発生）
+    expect(e2e["runs-on"]).toMatch(/^ubuntu-\d{2}\.\d{2}$/)
   })
 
   it("ジョブにタイムアウトが設定されている", () => {
