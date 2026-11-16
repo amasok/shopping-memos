@@ -320,19 +320,22 @@ export class ErrorBoundary extends Component<Props, State> {
 
 ### Server Component (デフォルト)
 
-```typescript
-// src/app/items/page.tsx
-// 'use client' なし = Server Component
+> このプロジェクトのページはゲストモード（IndexedDB）対応のためクライアントコンポーネント中心で、
+> データは `src/hooks/data` のフック経由で取得する。Server Component は静的ページ（`privacy`、`terms`）などに使う。
 
-import { prisma } from '@/lib/prisma'
+```typescript
+// 'use client' なし = Server Component（一般的な例）
+
+import { db } from '@/infrastructure/db/drizzle/client'
+import { items } from '@/infrastructure/db/drizzle/schema'
 
 export default async function ItemsPage() {
   // サーバーで直接DB取得（クライアントにコードが送られない）
-  const items = await prisma.shoppingItem.findMany()
+  const rows = await db.select().from(items).limit(100)
 
   return (
     <ul>
-      {items.map(item => (
+      {rows.map(item => (
         <li key={item.id}>{item.name}</li>
       ))}
     </ul>

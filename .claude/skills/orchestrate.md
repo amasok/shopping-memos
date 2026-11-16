@@ -79,7 +79,7 @@ security-reviewer → code-reviewer → architect
 ### 変更ファイル
 - src/app/api/share/route.ts (新規)
 - src/components/ShareModal.tsx (新規)
-- prisma/schema.prisma (修正)
+- src/infrastructure/db/drizzle/schema.ts (修正)
 
 ### 未解決事項
 - エラーハンドリングの詳細

@@ -107,9 +107,7 @@ description: レビューモード。品質・セキュリティ・保守性を�
   const query = `SELECT * FROM items WHERE name = '${name}'`
 
   // After
-  const items = await prisma.item.findMany({
-    where: { name }
-  })
+  const result = await db.select().from(items).where(eq(items.name, name))
   ```
 
 #### 🟡 Warning
@@ -117,7 +115,7 @@ description: レビューモード。品質・セキュリティ・保守性を�
 **[W1] N+1クエリ**
 - ファイル: `src/components/ListPage.tsx:23`
 - 問題: ループ内でデータ取得
-- 修正案: `include` を使用して一括取得
+- 修正案: JOIN や `inArray` で一括取得
 
 ### 良い点
 - [良かった実装やパターン]
