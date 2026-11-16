@@ -222,7 +222,7 @@ describe("develop 用 DB のマイグレーション（migrate-develop ジョブ
   it("確認のスクリプトは、secret が空なら失敗してメッセージを出し、設定されていれば通る", () => {
     const run = job.steps.find((s) => s.name === "Check DEVELOP_DATABASE_URL")?.run ?? ""
     const exec = (value: string) =>
-      spawnSync("bash", ["-e", "-c", run], { env: { PATH: process.env.PATH, DATABASE_URL: value }, encoding: "utf-8" })
+      spawnSync("bash", ["-e", "-c", run], { env: { ...process.env, DATABASE_URL: value }, encoding: "utf-8" })
     const missing = exec("")
     expect(missing.status).toBe(1)
     expect(missing.stdout).toContain("::error title=DEVELOP_DATABASE_URL is not set::")
