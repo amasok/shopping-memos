@@ -8,6 +8,18 @@ import type { ShoppingListWithItems } from "../../domain/entities/ShoppingList"
 import { ListStatus, isInProgress, canTransition } from "../../domain/value-objects/ListStatus"
 import { getListScope, markScopedItemsPurchasedByName } from "./catalogItemScope"
 
+
+/**
+ * 買い物の業務ルールの違反（利用者に見せてよいメッセージ）。
+ * DB のエラーなど、それ以外の例外と区別するために使う（#135）
+ */
+export class ShoppingDomainError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ShoppingDomainError"
+  }
+}
+
 export interface FinishShoppingResult {
   list: ShoppingListWithItems
   purchasedItemIds: string[]
@@ -39,16 +51,16 @@ export class ShoppingService {
     // リストを取得
     const list = await this.shoppingListRepository.findById(listId)
     if (!list) {
-      throw new Error("リストが見つかりません")
+      throw new ShoppingDomainError("リストが見つかりません")
     }
 
     // ステータス確認
     if (!isInProgress(list.status)) {
-      throw new Error("このリストは既に完了しています")
+      throw new ShoppingDomainError("このリストは既に完了しています")
     }
 
     if (!canTransition(list.status, ListStatus.COMPLETED)) {
-      throw new Error("このステータスから完了に遷移できません")
+      throw new ShoppingDomainError("このステータスから完了に遷移できません")
     }
 
     // チェック済み・未チェックアイテムを抽出
@@ -126,7 +138,7 @@ export class ShoppingService {
     // 更新後のリストを取得して返す
     const updatedList = await this.shoppingListRepository.findById(listId)
     if (!updatedList) {
-      throw new Error("更新後のリストが見つかりません")
+      throw new ShoppingDomainError("更新後のリストが見つかりません")
     }
 
     return {
