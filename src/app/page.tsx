@@ -1,5 +1,6 @@
 "use client"
 
+import { listDetailHref } from "@/lib/routes"
 import { GroupSelector } from "@/components/features/groups/GroupSelector"
 import { ItemForm } from "@/components/features/items/ItemForm"
 import { MemoText } from "@/components/features/items/MemoText"
@@ -287,7 +288,7 @@ export default function HomePage() {
                     <div key={list.id} className="mb-4">
                       <button
                         type="button"
-                        onClick={() => router.push(`/lists/${list.id}`)}
+                        onClick={() => router.push(listDetailHref(list.id))}
                         className="mb-2 flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline"
                       >
                         {list.name}

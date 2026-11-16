@@ -1,5 +1,6 @@
 "use client"
 
+import { listDetailHref } from "@/lib/routes"
 import { GroupSelector } from "@/components/features/groups/GroupSelector"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
@@ -96,7 +97,7 @@ export default function ListsPage() {
                   return (
                     <li key={list.id}>
                       <Link
-                        href={`/lists/${list.id}`}
+                        href={listDetailHref(list.id)}
                         data-testid={`list-item-${list.id}`}
                         className={cn(
                           "flex items-center justify-between rounded-xl bg-white p-4 shadow-sm",

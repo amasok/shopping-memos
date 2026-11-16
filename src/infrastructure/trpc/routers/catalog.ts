@@ -16,6 +16,7 @@ import { shoppingLists, listItems } from "@/infrastructure/db/drizzle/schema"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
 import { CatalogSyncService } from "@/modules/catalog/application/services/CatalogSyncService"
+import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
 import { verifyGroupMembership } from "../middleware/groupAuth"
 
 // 同期サービスインスタンス
@@ -108,6 +109,18 @@ export const catalogRouter = router({
       // グループ指定時はメンバーシップを検証
       await verifyGroupMembership(input.groupId, ctx.userId)
 
+      // タグはアイテムと同じスコープのものに限定
+      const tagsOk = await areTagsInScope(input.tagIds, {
+        userId: ctx.userId,
+        groupId: input.groupId,
+      })
+      if (!tagsOk) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "指定されたタグを使用する権限がありません",
+        })
+      }
+
       return catalogSyncService.createItem(
         {
           id: crypto.randomUUID(),
@@ -133,6 +146,18 @@ export const catalogRouter = router({
           code: "FORBIDDEN",
           message: "このアイテムを編集する権限がありません",
         })
+      }
+
+      // タグはアイテムと同じスコープのものに限定
+      if (input.tagIds !== undefined) {
+        const item = await itemRepository.findById(input.id)
+        const tagsOk = item !== null && (await areTagsInScope(input.tagIds, item))
+        if (!tagsOk) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "指定されたタグを使用する権限がありません",
+          })
+        }
       }
 
       return catalogSyncService.updateItem(

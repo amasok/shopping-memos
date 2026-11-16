@@ -21,6 +21,8 @@ test.describe("買い物リスト作成", () => {
     await page.locator("[data-testid='bottom-sheet']").waitFor({ state: "visible" })
     await page.locator("[data-testid='item-name-input']").fill("牛乳")
     await page.locator("[data-testid='item-add-continue']").click()
+    // フォームがリセットされる前に fill すると、リセットで消えてボタンが無効のままになる
+    await expect(page.locator("[data-testid='item-name-input']")).toHaveValue("")
     await page.locator("[data-testid='item-name-input']").fill("パン")
     await page.locator("[data-testid='item-add-close']").click()
     await expect(page.locator("[data-testid='bottom-sheet']")).toBeHidden()

@@ -5,8 +5,9 @@
 export interface Group {
   id: string
   name: string
-  inviteCode: string // 6文字の招待コード
+  inviteCode: string // 8文字の招待コード（旧形式は6文字）
   inviteEnabled: boolean
+  inviteCodeExpiresAt: Date
   createdAt: Date
   updatedAt: Date
 }

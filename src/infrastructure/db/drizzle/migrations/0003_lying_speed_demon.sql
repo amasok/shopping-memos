@@ -1,1 +1,1 @@
-ALTER TABLE "groups" ADD COLUMN "invite_enabled" boolean DEFAULT true NOT NULL;
+ALTER TABLE "groups" ADD COLUMN IF NOT EXISTS "invite_enabled" boolean DEFAULT true NOT NULL;

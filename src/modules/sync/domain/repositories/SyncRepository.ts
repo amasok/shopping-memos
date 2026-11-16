@@ -2,6 +2,7 @@ import type {
   SyncOperation,
   CreateSyncOperationInput,
   SyncEntity,
+  EntityAccess,
 } from "../entities/SyncOperation"
 
 /**
@@ -28,12 +29,23 @@ export interface SyncRepository {
   ): Promise<SyncOperation[]>
 
   /**
-   * エンティティの最新状態を取得
+   * エンティティの最新状態（最も新しい同期操作）を取得
+   * @param options.userId 指定時はそのユーザー自身の操作ログに限定する
    */
   findLatestEntityState(
     entity: SyncEntity,
-    entityId: string
+    entityId: string,
+    options?: { userId?: string }
   ): Promise<SyncOperation | null>
+
+  /**
+   * ユーザーがエンティティにアクセスできるか判定
+   */
+  checkEntityAccess(
+    entity: SyncEntity,
+    entityId: string,
+    userId: string
+  ): Promise<EntityAccess>
 
   /**
    * 同期操作を同期済みとしてマーク

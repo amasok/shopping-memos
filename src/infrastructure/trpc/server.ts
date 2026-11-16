@@ -1,4 +1,5 @@
 import { initTRPC, TRPCError } from "@trpc/server"
+import { formatErrorShape } from "./error-format"
 import superjson from "superjson"
 import { auth } from "@/infrastructure/auth"
 
@@ -41,8 +42,9 @@ export async function createContext(): Promise<Context> {
  */
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
-  errorFormatter({ shape }) {
-    return shape
+  // 本番では予期しないエラーのメッセージと stack を返さない（#135）
+  errorFormatter({ shape, error }) {
+    return formatErrorShape(shape, error, { isProduction: process.env.NODE_ENV === "production" })
   },
 })
 

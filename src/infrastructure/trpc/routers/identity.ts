@@ -13,10 +13,20 @@ import {
   getGroupMembersQuerySchema,
 } from "@/shared/schemas"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
+import { isUniqueViolation } from "@/infrastructure/db/errors"
 import {
   INVITE_LINK_EXPIRY_DAYS,
   INVITE_TOKEN_LENGTH,
 } from "@/modules/identity/domain/entities/InviteLink"
+import {
+  INVITE_CODE_ATTEMPT_WINDOW_MS,
+  INVITE_CODE_MAX_ATTEMPTS,
+  isInviteCodeExpired,
+} from "@/modules/identity/domain/entities/InviteCode"
+
+/** 招待コードで参加できないときの共通メッセージ */
+const INVALID_INVITE_CODE_MESSAGE =
+  "招待コードが無効か、有効期限が切れています。グループの管理者に確認してください"
 
 /**
  * 安全な招待トークンを生成
@@ -223,16 +233,29 @@ export const identityRouter = router({
         })
       }
 
-      // メンバーとして追加
-      await groupRepository.addMember({
-        id: crypto.randomUUID(),
-        groupId: invite.groupId,
-        userId: ctx.userId,
-        role: "member",
-      })
-
-      // 招待を使用済みにする
-      await groupRepository.markInviteAsUsed(invite.id, ctx.userId)
+      // 招待リンクの確保とメンバーの追加を 1 つのトランザクションで行う（#73-2）。
+      // 上の確認のあとに別のユーザーが同時に使った場合も、使えるのは 1 人だけ
+      let accepted: boolean
+      try {
+        accepted = await groupRepository.acceptInvite({
+          inviteId: invite.id,
+          groupId: invite.groupId,
+          userId: ctx.userId,
+          memberId: crypto.randomUUID(),
+        })
+      } catch (error) {
+        // 同時に同じグループへ参加した（メンバーの一意制約）。招待リンクは未使用のまま戻る
+        if (isUniqueViolation(error)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "既にこのグループのメンバーです" })
+        }
+        throw error
+      }
+      if (!accepted) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "この招待リンクは既に使用されています",
+        })
+      }
 
       // グループ情報を返す
       const group = await groupRepository.findById(invite.groupId)
@@ -243,21 +266,28 @@ export const identityRouter = router({
   joinByInviteCode: protectedProcedure
     .input(joinByInviteCodeSchema)
     .mutation(async ({ input, ctx }) => {
-      // 招待コードでグループを検索
-      const group = await groupRepository.findByInviteCode(input.inviteCode)
-
-      if (!group) {
+      // 総当たり対策: 成否にかかわらず試行を記録し、上限を超えたら拒否する
+      const attempts = await groupRepository.recordInviteCodeAttempt(
+        ctx.userId,
+        INVITE_CODE_ATTEMPT_WINDOW_MS
+      )
+      if (attempts > INVITE_CODE_MAX_ATTEMPTS) {
         throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "招待コードが見つかりません",
+          code: "TOO_MANY_REQUESTS",
+          message: "試行回数が上限に達しました。しばらくしてからお試しください",
         })
       }
 
-      // 招待が無効化されている場合は参加不可
-      if (!group.inviteEnabled) {
+      // 招待コードでグループを検索
+      const group = await groupRepository.findByInviteCode(input.inviteCode)
+
+      // 見つからない・招待無効・期限切れは同じエラーにする（#107）。
+      // 区別できるとコードの存在有無を判定する手がかりになるため。
+      // オーナーにはグループ詳細の一時停止・期限切れ表示で案内する
+      if (!group || !group.inviteEnabled || isInviteCodeExpired(group.inviteCodeExpiresAt)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "現在招待を受け付けていません",
+          message: INVALID_INVITE_CODE_MESSAGE,
         })
       }
 

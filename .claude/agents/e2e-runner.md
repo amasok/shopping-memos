@@ -2,8 +2,10 @@
 name: e2e-runner
 description: E2Eテスト実行スペシャリスト。Playwrightを使用したエンドツーエンドテストの作成・実行・デバッグを担当。重要なユーザーフローのテストを確保。
 tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
-model: opus
+model: sonnet
 ---
+
+> 不安定なテスト（flaky）の原因調査など、原因が分からない場合は Opus に切り替える（`.claude/rules/performance.md`）。
 
 # E2Eテストランナー
 

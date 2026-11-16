@@ -1,12 +1,23 @@
 import { type Page } from "@playwright/test"
 import { randomUUID } from "crypto"
+import { E2E_ORIGIN } from "../../ports"
 
-const SEED_API_URL = "http://localhost:3000/api/e2e/seed"
+const SEED_API_URL = `${E2E_ORIGIN}/api/e2e/seed`
 
 /**
  * E2Eテスト用DB操作ヘルパー
  * /api/e2e/seed エンドポイント経由でサーバーDBを操作
  */
+
+/**
+ * seed API・テスト用ログインに付けるヘッダ（#70）。
+ * トークンは playwright.config.ts が生成し、環境変数で worker に渡される
+ */
+export function e2eHeaders(): Record<string, string> {
+  const token = process.env.E2E_SEED_TOKEN
+  if (!token) throw new Error("E2E_SEED_TOKEN が設定されていません（playwright.config.ts を経由して実行する）")
+  return { "x-e2e-token": token }
+}
 
 /** テスト用UUID生成 */
 export function testUUID(): string {
@@ -17,7 +28,7 @@ export function testUUID(): string {
 export async function cleanupE2EData(): Promise<void> {
   const res = await fetch(SEED_API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...e2eHeaders() },
     body: JSON.stringify({ action: "cleanup" }),
   })
   if (!res.ok) {
@@ -30,7 +41,7 @@ export async function cleanupE2EData(): Promise<void> {
 export async function cleanupGroups(): Promise<void> {
   const res = await fetch(SEED_API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...e2eHeaders() },
     body: JSON.stringify({ action: "cleanup-groups" }),
   })
   if (!res.ok) {
@@ -46,10 +57,12 @@ export async function seedGroup(data: {
   ownerUserId: string
   inviteCode: string
   inviteEnabled?: boolean
+  /** ISO 文字列。省略時は DB の既定値（7 日後） */
+  inviteCodeExpiresAt?: string
 }): Promise<void> {
   const res = await fetch(SEED_API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...e2eHeaders() },
     body: JSON.stringify({ action: "seed-group", data }),
   })
   if (!res.ok) {
@@ -65,7 +78,7 @@ export async function addGroupMember(data: {
 }): Promise<void> {
   const res = await fetch(SEED_API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...e2eHeaders() },
     body: JSON.stringify({ action: "add-group-member", data }),
   })
   if (!res.ok) {
@@ -82,7 +95,7 @@ export async function seedItems(data: {
 }): Promise<void> {
   const res = await fetch(SEED_API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...e2eHeaders() },
     body: JSON.stringify({ action: "seed-items", data }),
   })
   if (!res.ok) {
@@ -95,7 +108,7 @@ export async function seedItems(data: {
 export async function getUser(email: string): Promise<{ id: string; name: string; email: string }> {
   const res = await fetch(SEED_API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...e2eHeaders() },
     body: JSON.stringify({ action: "get-user", data: { email } }),
   })
   if (!res.ok) {

@@ -292,7 +292,7 @@ export default function SettingsPage() {
         onClose={() => setIsLogoutDialogOpen(false)}
         onConfirm={handleLogoutConfirm}
         title="ログアウト"
-        message="ログアウトしますか？ローカルデータは保持されます。"
+        message="ログアウトしますか？ログアウトすると、この端末はゲストの状態に戻ります。"
         confirmLabel="ログアウト"
         cancelLabel="キャンセル"
         confirmVariant="danger"

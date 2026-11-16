@@ -1,10 +1,10 @@
 import { eq, and, or, inArray, isNull, isNotNull, desc } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
+import { canAccessScope } from "@/infrastructure/db/ownership"
 import {
   shoppingLists,
   listItems,
   tags,
-  groupMembers,
 } from "@/infrastructure/db/drizzle/schema"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
 import type {
@@ -233,23 +233,8 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
       return false
     }
 
-    // グループなしのリストは作成者のみアクセス可能
-    if (!list[0].groupId) {
-      return list[0].ownerId === userId
-    }
-
-    // グループメンバーか確認
-    const membership = await db
-      .select({ id: groupMembers.id })
-      .from(groupMembers)
-      .where(
-        and(
-          eq(groupMembers.groupId, list[0].groupId),
-          eq(groupMembers.userId, userId)
-        )
-      )
-
-    return membership.length > 0
+    // グループのリストはメンバー、個人のリストは作成者だけ（共通の判定。#101）
+    return canAccessScope(db, { userId: list[0].ownerId, groupId: list[0].groupId }, userId)
   }
 
   async canAccessItem(itemId: string, userId: string): Promise<boolean> {

@@ -4,6 +4,14 @@
 export type SyncEntity = "item" | "tag" | "list" | "listItem" | "history"
 
 /**
+ * エンティティへのアクセス判定結果
+ * - allowed: アクセス可能
+ * - denied: 存在するがアクセス不可
+ * - not_found: サーバーに存在しない（未作成 or 削除済み）
+ */
+export type EntityAccess = "allowed" | "denied" | "not_found"
+
+/**
  * 同期操作タイプ
  */
 export type SyncOperationType = "create" | "update" | "delete"

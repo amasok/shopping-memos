@@ -1,8 +1,9 @@
-import { z } from "zod"
+import { z } from "./z"
+import { TEXT_LIMITS } from "./limits"
 
 // タグ作成
 export const createTagSchema = z.object({
-  name: z.string().min(1, "名前は必須です").max(50, "名前は50文字以内です"),
+  name: z.string().min(1, "名前は必須です").max(TEXT_LIMITS.tagName, `名前は${TEXT_LIMITS.tagName}文字以内です`),
   groupId: z.string().uuid().optional(),
 })
 
@@ -11,7 +12,7 @@ export type CreateTagInput = z.infer<typeof createTagSchema>
 // タグ更新
 export const updateTagSchema = z.object({
   id: z.string().uuid(),
-  name: z.string().min(1, "名前は必須です").max(50, "名前は50文字以内です").optional(),
+  name: z.string().min(1, "名前は必須です").max(TEXT_LIMITS.tagName, `名前は${TEXT_LIMITS.tagName}文字以内です`).optional(),
 })
 
 export type UpdateTagInput = z.infer<typeof updateTagSchema>

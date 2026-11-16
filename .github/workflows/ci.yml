@@ -1,15 +1,50 @@
 name: CI
 
+# ドキュメントだけの変更では動かさない（Actions の使用量削減）。
+# paths-ignore では例外を書けないため、paths と否定パターンで書く（後に書いたパターンほど優先）。
+# AGENTS.md と CLAUDE.md は #122 の検査（repo-invariants.test.ts）の対象なので、除外したあとで戻す。
+# "!*.md" はルート直下の .md 用（"**/" がディレクトリ 0 個に一致しない場合に備える）。
+# push と pull_request の paths は同じにする（ci-workflow.test.ts で検査）
 on:
   push:
     branches: [main, develop]
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!*.md"
+      - "!.claude/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
   pull_request:
     branches: [main, develop]
+    # push と同じリスト（YAML のアンカーは使わない）
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!*.md"
+      - "!.claude/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+
+permissions:
+  contents: read
+
+# 同じブランチ/PRの古い実行を止める。
+# main と develop は DB の migrate を含むので、migrate の途中で取り消さないよう、commit ごとに別 group にする（#134）。
+# DB への migrate どうしは、各 migrate ジョブの concurrency（migrate-production / migrate-develop）で直列にする（#94）
+concurrency:
+  group: ci-${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
 
 jobs:
+  # develop への push では Test・Build・E2E を動かさない（PR で確認済み。Actions の使用量削減）。
+  # develop への push で動くのは migrate-develop だけ
   test:
     name: Test
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout
@@ -26,6 +61,11 @@ jobs:
 
       - name: Run linter
         run: npm run lint
+
+      # next build はテストファイルの型エラーを検出しない（Next.js のバージョンで挙動が変わる）ため、
+      # tsconfig の全ファイルを明示的に型チェックする
+      - name: Type check
+        run: npm run typecheck
 
       - name: Run unit tests
         run: npm run test:run
@@ -44,6 +84,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     needs: test
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout
@@ -70,42 +111,143 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main'
     environment: production
+    # 本番 DB への migrate は常に 1 本ずつ実行する（#94）。drizzle の migrator は実行どうしの排他を前提にできない。
+    # 実行中のものは取り消さない。待機中のものは新しい実行に置き換えられることがあるが、
+    # 毎回すべての未適用分を当てるので（下記）、置き換えられた分の migration も次の実行で適用される
+    concurrency:
+      group: migrate-production
+      cancel-in-progress: false
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check for migration changes
-        uses: dorny/paths-filter@v3
-        id: changes
-        with:
-          filters: |
-            migrations:
-              - 'src/infrastructure/db/drizzle/migrations/**'
-
       - name: Setup Node.js
-        if: steps.changes.outputs.migrations == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
 
       - name: Install dependencies
-        if: steps.changes.outputs.migrations == 'true'
         run: npm ci
 
+      # 変更の有無（paths-filter）では判定せず、毎回実行する（#94）。
+      # 適用済みの分は飛ばされ、未適用の分がすべて当たる（冪等）。
+      # paths-filter は push 単位の差分しか見ないため、migration を含む実行が取り消されると、
+      # 後の実行で適用されないまま残るおそれがあった
       - name: Run migrations
-        if: steps.changes.outputs.migrations == 'true'
         run: npm run db:migrate
         env:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
 
-  # E2Eテストは手動実行またはmainマージ時のみ
+  migrate-develop:
+    name: Migrate Develop DB
+    runs-on: ubuntu-latest
+    # develop への push では Build を動かさないので、build には依存しない（npm ci と db:migrate だけ）
+    # develop への push のときだけ、Preview（develop デプロイ）用の DB に migrate する（#134）。
+    # Vercel の develop デプロイより先には終わらないため、デプロイ直後の数十秒は旧スキーマのままになりうる（検証環境なので許容）
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    # 本番（migrate-production）と同じく、develop 用の DB への migrate も 1 本ずつ実行する
+    concurrency:
+      group: migrate-develop
+      cancel-in-progress: false
+
+    steps:
+      # secret が未設定のまま空の DATABASE_URL で動くと、drizzle-kit の分かりにくいエラーになる。先に明確に止める
+      - name: Check DEVELOP_DATABASE_URL
+        env:
+          DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error title=DEVELOP_DATABASE_URL is not set::GitHub の Settings → Secrets and variables → Actions に DEVELOP_DATABASE_URL（Neon の console で develop ブランチを選び、Connect から取った接続文字列。pooling オフ。Vercel の画面の DATABASE_URL は本番の値なので使わない）を登録してください（#134 #139）"
+            exit 1
+          fi
+
+      # 本番の DB を develop 用として登録していないかを確かめる（#139）。
+      # 値はログに出さない。host（Neon の -pooler は除く）と DB 名で比べ、認証情報・ポート・クエリ文字列の違いは無視する。
+      # Neon はブランチごとに host（ep-xxx）が違うので、host で本番と develop ブランチを見分けられる。
+      # 限界: 比べるのはリポジトリの secret の NEON_DATABASE_URL。migrate（本番）が使う production 環境の同名の secret と同じ値かは、ここでは確かめられない
+      - name: Check DEVELOP_DATABASE_URL is not production
+        env:
+          DEVELOP_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
+          PRODUCTION_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          db_target() {
+            # コピペで紛れた改行や空白は除く（残ると一致せず、本番を指していても通ってしまう）
+            local u="${1//[[:space:]]/}"
+            u="${u#*://}"
+            # クエリ・フラグメントを先に落とす（値の中の @ で host を取り違えない）。認証情報は最後の @ まで
+            u="${u%%\?*}"
+            u="${u%%#*}"
+            u="${u##*@}"
+            u="$(printf '%s' "$u" | tr '[:upper:]' '[:lower:]')"
+            local host="${u%%/*}" db=""
+            [ "$host" != "$u" ] && db="${u#*/}"
+            db="${db%/}"
+            host="${host%%:*}"
+            host="${host/-pooler./.}"
+            printf '%s/%s' "$host" "$db"
+          }
+          if [ -z "$PRODUCTION_URL" ]; then
+            echo "::warning title=NEON_DATABASE_URL is not set::本番の接続文字列がないため、DEVELOP_DATABASE_URL と比べられませんでした（#139）"
+            exit 0
+          fi
+          if [ "$DEVELOP_URL" = "$PRODUCTION_URL" ] || [ "$(db_target "$DEVELOP_URL")" = "$(db_target "$PRODUCTION_URL")" ]; then
+            echo "::error title=DEVELOP_DATABASE_URL points to production::DEVELOP_DATABASE_URL が本番の DB（NEON_DATABASE_URL と同じ host と DB 名）を指しています。Neon の console で develop ブランチを選び、Connect から取った接続文字列（pooling オフ）に直してください（#139）"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 本番と同じく、変更の有無では判定せず毎回実行する（冪等。未適用の分がすべて当たる）
+      - name: Run migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
+
+  # E2E は main への PR と main への push だけで実行する（#142。Actions の使用量削減）。
+  # develop への PR では動かさず、tester が push の前に npm run test:e2e:local で全件を流して、結果を PR に書く。
+  # CI の E2E は、main へのリリースのときの最後の確認
+  # ログイン済みテスト（e2e/auth）は実DBが必要なため Postgres サービスを起動する
   e2e:
     name: E2E Tests
-    runs-on: ubuntu-latest
-    needs: [build, migrate]
-    if: github.ref == 'refs/heads/main'
+    # ubuntu-latest(26.04) は Playwright 1.58 が未対応のため、対応OSに固定する
+    runs-on: ubuntu-24.04
+    needs: build
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: shopping_memos_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/shopping_memos_e2e"
+      # E2E専用のダミー値（本番では使用しない）
+      AUTH_SECRET: "e2e-ci-only-secret-not-for-production"
+      # next start（NODE_ENV=production）では Auth.js が localhost を信頼しないため明示する
+      AUTH_TRUST_HOST: "true"
 
     steps:
       - name: Checkout
@@ -120,13 +262,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run migrations (E2E DB)
+        run: npm run db:migrate
+
+      # playwright.config.ts の webServer は CI では next start で起動するため、事前にビルドする。
+      # E2E 専用ルート（seed API・テスト用ログイン）は E2E_BUILD=true のビルドにだけ含まれる（#70）
+      - name: Build
+        run: npm run build
+        env:
+          E2E_BUILD: "true"
+
+      # E2E 専用ルートの共有シークレット（x-e2e-token）。実行ごとにランダムに生成する（#70）
+      - name: Generate E2E seed token
+        run: echo "E2E_SEED_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      # E2E ジョブは main への PR と main への push だけで動くので、Mobile Chrome も含めて全部流す（#142）。
+      # auth-setup は chromium-auth の dependencies で自動的に入る。npm run test:e2e:local と同じプロジェクト
       - name: Run E2E tests
-        run: npm run test:e2e
-        env:
-          DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
+        run: npm run test:e2e -- --project=chromium --project=chromium-auth --project="Mobile Chrome"
+
+      # SW・オフライン（e2e/offline）。SW を有効にするため本番ビルド（next start, port 3100）で実行する
+      - name: Run offline E2E tests
+        run: E2E_OFFLINE=true npx playwright test --project=offline
 
       - name: Upload E2E report
         uses: actions/upload-artifact@v4

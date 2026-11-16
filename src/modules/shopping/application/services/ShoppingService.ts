@@ -1,11 +1,24 @@
 import { db } from "@/infrastructure/db/drizzle/client"
-import { items, shoppingLists, listItems } from "@/infrastructure/db/drizzle/schema"
+import { shoppingLists, listItems } from "@/infrastructure/db/drizzle/schema"
 import { inArray } from "drizzle-orm"
 import { eq } from "drizzle-orm"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
 import type { ShoppingListWithItems } from "../../domain/entities/ShoppingList"
 import { ListStatus, isInProgress, canTransition } from "../../domain/value-objects/ListStatus"
+import { getListScope, markScopedItemsPurchasedByName } from "./catalogItemScope"
+
+
+/**
+ * 買い物の業務ルールの違反（利用者に見せてよいメッセージ）。
+ * DB のエラーなど、それ以外の例外と区別するために使う（#135）
+ */
+export class ShoppingDomainError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ShoppingDomainError"
+  }
+}
 
 export interface FinishShoppingResult {
   list: ShoppingListWithItems
@@ -38,16 +51,16 @@ export class ShoppingService {
     // リストを取得
     const list = await this.shoppingListRepository.findById(listId)
     if (!list) {
-      throw new Error("リストが見つかりません")
+      throw new ShoppingDomainError("リストが見つかりません")
     }
 
     // ステータス確認
     if (!isInProgress(list.status)) {
-      throw new Error("このリストは既に完了しています")
+      throw new ShoppingDomainError("このリストは既に完了しています")
     }
 
     if (!canTransition(list.status, ListStatus.COMPLETED)) {
-      throw new Error("このステータスから完了に遷移できません")
+      throw new ShoppingDomainError("このステータスから完了に遷移できません")
     }
 
     // チェック済み・未チェックアイテムを抽出
@@ -72,25 +85,15 @@ export class ShoppingService {
         .where(eq(shoppingLists.id, listId))
 
       // 2. チェック済みアイテムに対応するCatalog.ItemのpurchasedAtを設定
+      // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
       const purchasedCatalogItemIds: string[] = []
 
       if (checkedItems.length > 0) {
-        for (const checkedItem of checkedItems) {
-          const catalogItems = await tx
-            .select({ id: items.id })
-            .from(items)
-            .where(eq(items.name, checkedItem.name))
-
-          for (const catalogItem of catalogItems) {
-            await tx
-              .update(items)
-              .set({
-                purchasedAt: now,
-                updatedAt: now,
-              })
-              .where(eq(items.id, catalogItem.id))
-
-            purchasedCatalogItemIds.push(catalogItem.id)
+        const scope = await getListScope(tx, listId)
+        if (scope) {
+          for (const checkedItem of checkedItems) {
+            const ids = await markScopedItemsPurchasedByName(tx, scope, checkedItem.name, now)
+            purchasedCatalogItemIds.push(...ids)
           }
         }
       }
@@ -135,7 +138,7 @@ export class ShoppingService {
     // 更新後のリストを取得して返す
     const updatedList = await this.shoppingListRepository.findById(listId)
     if (!updatedList) {
-      throw new Error("更新後のリストが見つかりません")
+      throw new ShoppingDomainError("更新後のリストが見つかりません")
     }
 
     return {

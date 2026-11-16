@@ -7,11 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sw.json",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "test:e2e:sw-lifecycle": "bash scripts/e2e-sw-lifecycle.sh",
+    "test:e2e:local": "bash scripts/e2e-local.sh",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -19,7 +22,7 @@
     "db:reset": "docker exec shopping-memos-db psql -U postgres -d shopping_memos -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;' && npm run db:push"
   },
   "dependencies": {
-    "@auth/drizzle-adapter": "^1.11.1",
+    "@auth/drizzle-adapter": "^1.11.3",
     "@tanstack/react-query": "^5.90.20",
     "@trpc/client": "^11.9.0",
     "@trpc/react-query": "^11.9.0",
@@ -27,19 +30,20 @@
     "clsx": "^2.1.1",
     "dexie": "^4.2.1",
     "dexie-react-hooks": "^4.2.0",
-    "drizzle-orm": "^0.45.1",
+    "drizzle-orm": "^0.45.4",
     "lucide-react": "^0.563.0",
-    "next": "16.1.5",
-    "next-auth": "^5.0.0-beta.30",
+    "next": "16.4.6",
+    "next-auth": "5.0.0-beta.32",
     "postgres": "^3.4.8",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "superjson": "^2.2.6",
     "tailwind-merge": "^3.4.0",
-    "zod": "^4.3.6"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",
+    "@serwist/turbopack": "^9.5.14",
     "@tailwindcss/postcss": "^4",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
@@ -50,11 +54,15 @@
     "@vitejs/plugin-react": "^5.1.2",
     "@vitest/coverage-v8": "^4.0.18",
     "drizzle-kit": "^0.31.8",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
-    "eslint-config-next": "16.1.5",
+    "eslint-config-next": "16.4.6",
+    "fake-indexeddb": "^6.2.8",
     "jsdom": "^27.4.0",
+    "serwist": "^9.5.14",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "yaml": "^2.9.1"
   }
 }

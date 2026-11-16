@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "esnext",
+      "webworker"
+    ],
+    "plugins": [],
+    "incremental": false
+  },
+  "include": [
+    "src/app/sw.ts",
+    "src/app/sw-kill.ts",
+    "src/lib/sw/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/lib/sw/__tests__"
+  ]
+}

@@ -1,5 +1,6 @@
 "use client"
 
+import { TEXT_LIMITS } from "@/shared/schemas/limits"
 import { Badge, Button, LoadingSpinner } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
 import { type ShoppingItem } from "@/lib/db"
@@ -65,7 +66,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
   }
 
   const handleQuantityChange = (delta: number) => {
-    setQuantity((prev) => Math.max(1, prev + delta))
+    setQuantity((prev) => Math.min(TEXT_LIMITS.quantityMax, Math.max(1, prev + delta)))
   }
 
   const handleTagToggle = (tagId: string) => {
@@ -99,6 +100,8 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
     if (!name.trim()) return
 
     setIsSubmitting(true)
+    // 保存中に利用者が次のアイテムを入力することがあるため、送った値を控えておく
+    const submitted = { name, quantity, memo }
 
     try {
       if (isEditing && item) {
@@ -123,9 +126,10 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
 
       if (continueAdding) {
         // フォームをリセットして続ける（タグは維持）
-        setName("")
-        setQuantity(1)
-        setMemo("")
+        // 送った値のままの項目だけ消す（保存中に入力された内容は残す）
+        setName((cur) => (cur === submitted.name ? "" : cur))
+        setQuantity((cur) => (cur === submitted.quantity ? 1 : cur))
+        setMemo((cur) => (cur === submitted.memo ? "" : cur))
         setIsSubmitting(false)
       } else {
         onClose()
@@ -173,6 +177,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
         <input
           id="item-name"
           type="text"
+          maxLength={TEXT_LIMITS.itemName}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="例: 牛乳"
@@ -238,6 +243,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
         </label>
         <textarea
           id="item-memo"
+          maxLength={TEXT_LIMITS.memo}
           value={memo}
           onChange={(e) => setMemo(e.target.value)}
           placeholder="例: 低脂肪タイプ"
@@ -252,7 +258,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
           )}
         />
         {extractFirstUrl(memo) && (
-          <OGPPreview url={extractFirstUrl(memo)!} />
+          <OGPPreview url={extractFirstUrl(memo)!} fallback="link" />
         )}
       </div>
 
@@ -344,6 +350,7 @@ export function ItemForm({ item, onClose, onSaved, onDeleted, allowContinue = fa
             <input
               type="text"
               value={newTagName}
+              maxLength={TEXT_LIMITS.tagName}
               onChange={(e) => setNewTagName(e.target.value)}
               placeholder="新しいタグ名"
               autoFocus
