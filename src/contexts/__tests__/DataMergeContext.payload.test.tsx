@@ -25,7 +25,7 @@ vi.mock("@/infrastructure/trpc/client", () => ({
 }))
 
 import { DataMergeProvider } from "../DataMergeContext"
-import { syncMergeInputSchema } from "@/shared/schemas/sync"
+import { syncMergeStrictInputSchema as syncMergeInputSchema } from "@/shared/schemas/sync"
 
 const uuid = () => crypto.randomUUID()
 const NOW = new Date("2026-03-01T09:00:00Z")
@@ -106,10 +106,10 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
     }
   })
 
-  it("上限ちょうどの値（名前100文字・メモ500文字・タグ名50文字・数量9999）を受け付ける", async () => {
+  it("上限ちょうどの値（名前100文字・メモ2000文字・タグ名50文字・数量9999）を受け付ける", async () => {
     state.tags = [{ id: uuid(), name: "あ".repeat(50), createdAt: NOW, updatedAt: NOW }]
     state.items = [
-      { id: uuid(), name: "い".repeat(100), quantity: 9999, memo: "う".repeat(500), tagIds: [], createdAt: NOW, updatedAt: NOW },
+      { id: uuid(), name: "い".repeat(100), quantity: 9999, memo: "う".repeat(2000), tagIds: [], createdAt: NOW, updatedAt: NOW },
     ]
     state.lists = []
     state.listItems = []
@@ -128,7 +128,7 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
         id: uuid(),
         name: "い".repeat(150),
         quantity: 100000,
-        memo: "う".repeat(900),
+        memo: "う".repeat(3000),
         tagIds: Array.from({ length: 60 }, uuid),
         createdAt: NOW,
         updatedAt: NOW,
@@ -138,7 +138,7 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
       { id: listId, name: "え".repeat(120), status: "completed", createdAt: NOW, purchasedAt: NOW, location: "お".repeat(200) },
     ]
     state.listItems = [
-      { id: uuid(), listId, name: "か".repeat(120), quantity: 0, memo: "き".repeat(700), tagIds: [tagId], checked: false, createdAt: NOW },
+      { id: uuid(), listId, name: "か".repeat(120), quantity: 0, memo: "き".repeat(2500), tagIds: [tagId], checked: false, createdAt: NOW },
     ]
 
     const payload = await mergePayload()
@@ -149,14 +149,14 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
       const d = parsed.data.data
       expect(d.tags[0].name).toHaveLength(50)
       expect(d.items[0].name).toHaveLength(100)
-      expect(d.items[0].memo).toHaveLength(500)
+      expect(d.items[0].memo).toHaveLength(2000)
       expect(d.items[0].quantity).toBe(9999)
       expect(d.items[0].tagIds).toHaveLength(50)
       expect(d.lists[0].name).toHaveLength(100)
       expect(d.lists[0].location).toHaveLength(100)
       expect(d.history[0].location).toHaveLength(100)
       expect(d.listItems[0].name).toHaveLength(100)
-      expect(d.listItems[0].memo).toHaveLength(500)
+      expect(d.listItems[0].memo).toHaveLength(2000)
       expect(d.listItems[0].quantity).toBe(1)
     }
   })

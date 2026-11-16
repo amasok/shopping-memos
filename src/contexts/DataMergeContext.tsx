@@ -12,7 +12,8 @@ import {
 import { useAuth } from "@/contexts/AuthContext"
 import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
-import { MERGE_LIMITS, clampQuantity, clipText } from "@/shared/schemas/sync"
+import { MERGE_LIMITS } from "@/shared/schemas/sync"
+import { TEXT_LIMITS, clampQuantity, clipText } from "@/shared/schemas/limits"
 
 const clipNullable = (value: string | null | undefined, max: number) =>
   value == null ? null : clipText(value, max)
@@ -117,33 +118,33 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
         data: {
           items: localItems.map((item) => ({
             id: item.id,
-            name: clipText(item.name, MERGE_LIMITS.itemName),
+            name: clipText(item.name, TEXT_LIMITS.itemName),
             quantity: clampQuantity(item.quantity),
-            memo: clipNullable(item.memo, MERGE_LIMITS.memo),
+            memo: clipNullable(item.memo, TEXT_LIMITS.memo),
             tagIds: item.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
             purchasedAt: item.purchasedAt?.toISOString() ?? null,
             createdAt: item.createdAt.toISOString(),
           })),
           tags: localTags.map((tag) => ({
             id: tag.id,
-            name: clipText(tag.name, MERGE_LIMITS.tagName),
+            name: clipText(tag.name, TEXT_LIMITS.tagName),
             createdAt: tag.createdAt.toISOString(),
           })),
           lists: localLists.map((list) => ({
             id: list.id,
-            name: clipText(list.name, MERGE_LIMITS.listName),
+            name: clipText(list.name, TEXT_LIMITS.listName),
             status: list.status,
             createdAt: list.createdAt.toISOString(),
             completedAt: list.completedAt?.toISOString() ?? null,
             purchasedAt: list.purchasedAt?.toISOString() ?? null,
-            location: clipNullable(list.location, MERGE_LIMITS.location),
+            location: clipNullable(list.location, TEXT_LIMITS.location),
           })),
           listItems: localListItems.map((listItem) => ({
             id: listItem.id,
             listId: listItem.listId,
-            name: clipText(listItem.name, MERGE_LIMITS.listItemName),
+            name: clipText(listItem.name, TEXT_LIMITS.listItemName),
             quantity: clampQuantity(listItem.quantity),
-            memo: clipNullable(listItem.memo, MERGE_LIMITS.memo),
+            memo: clipNullable(listItem.memo, TEXT_LIMITS.memo),
             tagIds: listItem.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
             checked: listItem.checked,
             createdAt: listItem.createdAt.toISOString(),
@@ -152,7 +153,7 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
           history: localHistory.map((list) => ({
             id: list.id,
             listId: list.id,
-            location: clipNullable(list.location, MERGE_LIMITS.location),
+            location: clipNullable(list.location, TEXT_LIMITS.location),
             purchasedAt: list.purchasedAt!.toISOString(),
           })),
         },

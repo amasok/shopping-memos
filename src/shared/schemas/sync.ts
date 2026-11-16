@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { TEXT_LIMITS } from "./limits"
 
 /**
  * 同期可能なエンティティタイプ
@@ -111,38 +112,20 @@ export const MERGE_LIMITS = {
   listItems: 1000,
   history: 500,
   tagIdsPerEntity: 50,
-  quantityMax: 9999,
-  itemName: 100,
-  tagName: 50,
-  listName: 100,
-  listItemName: 100,
-  memo: 500,
-  location: 100,
 } as const
-
-/** 文字数の上限に収める（ゲストの画面には入力長の上限がないため、送信前に切り詰める） */
-export function clipText(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value
-}
-
-/** 数量を、サーバーが受け付ける範囲（1〜quantityMax の整数）に収める */
-export function clampQuantity(value: number): number {
-  if (!Number.isFinite(value)) return 1
-  return Math.min(MERGE_LIMITS.quantityMax, Math.max(1, Math.trunc(value)))
-}
 
 // 日付は ISO 文字列（または Date）。Invalid Date は拒否する。null / undefined は coerce せずにそのまま通す
 const mergeDate = z.coerce.date()
 const mergeId = z.string().uuid()
 const mergeTagIds = z.array(mergeId).max(MERGE_LIMITS.tagIdsPerEntity)
-const mergeQuantity = z.number().int().min(1).max(MERGE_LIMITS.quantityMax)
-const mergeMemo = z.string().max(MERGE_LIMITS.memo).nullish()
+const mergeQuantity = z.number().int().min(1).max(TEXT_LIMITS.quantityMax)
+const mergeMemo = z.string().max(TEXT_LIMITS.memo).nullish()
 
 // 文字数の上限は、各エンティティの作成スキーマ（item / tag / list）に合わせる。
 // 未知のキーは取り除かれる（クライアントが余分な項目を送っても受け付ける）
 export const mergeItemSchema = z.object({
   id: mergeId,
-  name: z.string().min(1).max(MERGE_LIMITS.itemName),
+  name: z.string().min(1).max(TEXT_LIMITS.itemName),
   quantity: mergeQuantity,
   memo: mergeMemo,
   tagIds: mergeTagIds,
@@ -152,24 +135,24 @@ export const mergeItemSchema = z.object({
 
 export const mergeTagSchema = z.object({
   id: mergeId,
-  name: z.string().min(1).max(MERGE_LIMITS.tagName),
+  name: z.string().min(1).max(TEXT_LIMITS.tagName),
   createdAt: mergeDate,
 })
 
 export const mergeListSchema = z.object({
   id: mergeId,
-  name: z.string().min(1).max(MERGE_LIMITS.listName),
+  name: z.string().min(1).max(TEXT_LIMITS.listName),
   status: z.enum(["in_progress", "completed"]),
   createdAt: mergeDate,
   completedAt: mergeDate.nullish(),
   purchasedAt: mergeDate.nullish(),
-  location: z.string().max(MERGE_LIMITS.location).nullish(),
+  location: z.string().max(TEXT_LIMITS.location).nullish(),
 })
 
 export const mergeListItemSchema = z.object({
   id: mergeId,
   listId: mergeId,
-  name: z.string().min(1).max(MERGE_LIMITS.listItemName),
+  name: z.string().min(1).max(TEXT_LIMITS.listItemName),
   quantity: mergeQuantity,
   memo: mergeMemo,
   tagIds: mergeTagIds,
@@ -180,19 +163,79 @@ export const mergeListItemSchema = z.object({
 export const mergeHistorySchema = z.object({
   id: mergeId,
   listId: mergeId,
-  location: z.string().max(MERGE_LIMITS.location).nullish(),
+  location: z.string().max(TEXT_LIMITS.location).nullish(),
   purchasedAt: mergeDate,
 })
 
+/** 1 件ごとの検証に使う、厳密な入力（`data` 部分） */
+export const syncMergeDataSchema = z.object({
+  items: z.array(mergeItemSchema).max(MERGE_LIMITS.items),
+  tags: z.array(mergeTagSchema).max(MERGE_LIMITS.tags),
+  lists: z.array(mergeListSchema).max(MERGE_LIMITS.lists),
+  listItems: z.array(mergeListItemSchema).max(MERGE_LIMITS.listItems),
+  history: z.array(mergeHistorySchema).max(MERGE_LIMITS.history),
+})
+
+export const syncMergeStrictInputSchema = z.object({ data: syncMergeDataSchema })
+
+export type MergeData = z.infer<typeof syncMergeDataSchema>
+
+/**
+ * tRPC の入力スキーマ。配列の件数の上限だけをここで検証し（超えると BAD_REQUEST）、
+ * 各要素は `parseMergeData` で 1 件ずつ検証する。
+ * 形式が不正な 1 件（UUID でないなど）のために、ほかの正しいデータまで取り込めなくならないようにする
+ */
 export const syncMergeInputSchema = z.object({
   data: z.object({
-    items: z.array(mergeItemSchema).max(MERGE_LIMITS.items),
-    tags: z.array(mergeTagSchema).max(MERGE_LIMITS.tags),
-    lists: z.array(mergeListSchema).max(MERGE_LIMITS.lists),
-    listItems: z.array(mergeListItemSchema).max(MERGE_LIMITS.listItems),
-    history: z.array(mergeHistorySchema).max(MERGE_LIMITS.history),
+    items: z.array(z.unknown()).max(MERGE_LIMITS.items),
+    tags: z.array(z.unknown()).max(MERGE_LIMITS.tags),
+    lists: z.array(z.unknown()).max(MERGE_LIMITS.lists),
+    listItems: z.array(z.unknown()).max(MERGE_LIMITS.listItems),
+    history: z.array(z.unknown()).max(MERGE_LIMITS.history),
   }),
 })
+
+const MERGE_ENTITY_LABELS = {
+  items: "アイテム",
+  tags: "タグ",
+  lists: "リスト",
+  listItems: "リストアイテム",
+  history: "履歴",
+} as const
+
+/**
+ * `syncMergeInputSchema` を通った入力を、要素ごとに検証する。
+ * 合わない要素はエラー文にして取り除き、残りを返す（データの中身はエラー文に含めない）
+ */
+export function parseMergeData(input: z.infer<typeof syncMergeInputSchema>["data"]): {
+  data: MergeData
+  errors: string[]
+} {
+  const errors: string[] = []
+  const pick = <T>(key: keyof typeof MERGE_ENTITY_LABELS, schema: z.ZodType<T>): T[] => {
+    const valid: T[] = []
+    input[key].forEach((raw, index) => {
+      const result = schema.safeParse(raw)
+      if (result.success) {
+        valid.push(result.data)
+      } else {
+        const field = result.error.issues[0]?.path.join(".") || "(全体)"
+        errors.push(`${MERGE_ENTITY_LABELS[key]} ${index + 1} 件目の形式が不正なためスキップ（${field}）`)
+      }
+    })
+    return valid
+  }
+  return {
+    data: {
+      items: pick("items", mergeItemSchema),
+      tags: pick("tags", mergeTagSchema),
+      lists: pick("lists", mergeListSchema),
+      listItems: pick("listItems", mergeListItemSchema),
+      history: pick("history", mergeHistorySchema),
+    },
+    errors,
+  }
+}
 
 export type SyncMergeInput = z.infer<typeof syncMergeInputSchema>
 

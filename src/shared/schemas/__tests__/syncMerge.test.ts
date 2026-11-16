@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest"
 import {
   MERGE_LIMITS,
-  clampQuantity,
-  clipText,
+  parseMergeData,
   syncMergeInputSchema,
+  syncMergeStrictInputSchema,
 } from "../sync"
+import { TEXT_LIMITS, clampQuantity, clipText } from "../limits"
 
 const id = () => crypto.randomUUID()
 const iso = "2026-01-01T00:00:00.000Z"
@@ -29,7 +30,7 @@ const validList = () => ({
   location: null,
 })
 
-const parse = (data: unknown) => syncMergeInputSchema.safeParse({ data })
+const parse = (data: unknown) => syncMergeStrictInputSchema.safeParse({ data })
 
 describe("syncMergeInputSchema（sync.merge の入力検証 #86）", () => {
   it("ゲスト側（DataMergeContext）が送る形（ISO 文字列・null）をそのまま受け付け、日付を Date に変換する", () => {
@@ -98,12 +99,15 @@ describe("syncMergeInputSchema（sync.merge の入力検証 #86）", () => {
       ],
       ["name が空", { ...validItem(), name: "" }],
       ["name が 101 文字", { ...validItem(), name: "あ".repeat(101) }],
-      ["memo が 501 文字", { ...validItem(), memo: "あ".repeat(501) }],
+      [
+        "memo が 2001 文字",
+        { ...validItem(), memo: "あ".repeat(TEXT_LIMITS.memo + 1) },
+      ],
       ["quantity が 0", { ...validItem(), quantity: 0 }],
       ["quantity が小数", { ...validItem(), quantity: 1.5 }],
       [
         "quantity が上限超え",
-        { ...validItem(), quantity: MERGE_LIMITS.quantityMax + 1 },
+        { ...validItem(), quantity: TEXT_LIMITS.quantityMax + 1 },
       ],
       ["tagIds に UUID でない値", { ...validItem(), tagIds: ["x"] }],
       [
@@ -184,7 +188,49 @@ describe("送信前の整形（clipText / clampQuantity）", () => {
     expect(clampQuantity(0)).toBe(1)
     expect(clampQuantity(-3)).toBe(1)
     expect(clampQuantity(2.9)).toBe(2)
-    expect(clampQuantity(100000)).toBe(MERGE_LIMITS.quantityMax)
+    expect(clampQuantity(100000)).toBe(TEXT_LIMITS.quantityMax)
     expect(clampQuantity(Number.NaN)).toBe(1)
+  })
+})
+
+describe("parseMergeData（1 件ずつの検証 #86）", () => {
+  const input = (data: Partial<Record<keyof typeof empty, unknown[]>>) =>
+    syncMergeInputSchema.parse({ data: { ...empty, ...data } }).data
+
+  it("形式が不正な 1 件は errors に入れてスキップし、ほかのデータは取り込む", () => {
+    const good = validItem()
+    const { data, errors } = parseMergeData(
+      input({
+        items: [{ ...validItem(), id: "not-a-uuid" }, good],
+        tags: [
+          { id: id(), name: "食品", createdAt: iso },
+          { id: "x", name: "y", createdAt: iso },
+        ],
+      }),
+    )
+    expect(data.items.map((i) => i.id)).toEqual([good.id])
+    expect(data.tags).toHaveLength(1)
+    expect(errors).toHaveLength(2)
+    expect(errors[0]).toContain("アイテム 1 件目")
+    expect(errors[1]).toContain("タグ 2 件目")
+  })
+
+  it("エラー文にデータの中身（名前など）を含めない", () => {
+    const { errors } = parseMergeData(
+      input({ items: [{ ...validItem(), id: "bad", name: "秘密の名前" }] }),
+    )
+    expect(errors.join()).not.toContain("秘密の名前")
+  })
+
+  it("すべて正しければ errors は空", () => {
+    expect(parseMergeData(input({ items: [validItem()] })).errors).toEqual([])
+  })
+
+  it("配列の件数が上限を超える入力は、tRPC の入力検証で拒否する", () => {
+    const tooMany = Array.from({ length: MERGE_LIMITS.items + 1 }, validItem)
+    expect(
+      syncMergeInputSchema.safeParse({ data: { ...empty, items: tooMany } })
+        .success,
+    ).toBe(false)
   })
 })

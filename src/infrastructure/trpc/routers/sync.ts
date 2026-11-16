@@ -3,6 +3,7 @@ import {
   syncPushInputSchema,
   syncPullInputSchema,
   syncMergeInputSchema,
+  parseMergeData,
 } from "@/shared/schemas/sync"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
@@ -140,8 +141,15 @@ export const syncRouter = router({
     .mutation(async ({ input, ctx }) => {
       const { data } = input
 
-      // 入力は Zod で検証・変換済み（型キャストや ?? による補完はしない）
-      const mergeResult = await dataMergeService.merge(ctx.userId, data)
+      // 入力は Zod で検証・変換する（型キャストや ?? による補完はしない）
+      // 形式が不正な要素は 1 件ずつスキップし、ほかのデータは取り込む
+      const { data: validData, errors: validationErrors } = parseMergeData(data)
+      const serviceResult = await dataMergeService.merge(ctx.userId, validData)
+      const mergeResult = {
+        ...serviceResult,
+        success: serviceResult.success && validationErrors.length === 0,
+        errors: [...validationErrors, ...serviceResult.errors],
+      }
 
       if (!mergeResult.success && mergeResult.errors.length > 0) {
         console.error("Merge errors:", mergeResult.errors)

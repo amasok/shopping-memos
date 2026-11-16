@@ -1,5 +1,6 @@
 "use client"
 
+import { TEXT_LIMITS } from "@/shared/schemas/limits"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Badge, Button, Input, LoadingPage, PageContainer } from "@/components/ui"
@@ -24,7 +25,7 @@ export default function NewItemPage() {
   const tags = useLiveQuery(() => db.tags.orderBy("createdAt").toArray(), [])
 
   const handleQuantityChange = (delta: number) => {
-    setQuantity((prev) => Math.max(1, prev + delta))
+    setQuantity((prev) => Math.min(TEXT_LIMITS.quantityMax, Math.max(1, prev + delta)))
   }
 
   const handleTagToggle = (tagId: string) => {
@@ -97,6 +98,7 @@ export default function NewItemPage() {
             label="アイテム名"
             name="name"
             value={name}
+            maxLength={TEXT_LIMITS.itemName}
             onChange={(e) => setName(e.target.value)}
             placeholder="例: 牛乳"
             autoFocus
@@ -190,6 +192,7 @@ export default function NewItemPage() {
                 <input
                   type="text"
                   value={newTagName}
+                  maxLength={TEXT_LIMITS.tagName}
                   onChange={(e) => setNewTagName(e.target.value)}
                   placeholder="新しいタグ名"
                   autoFocus

@@ -35,33 +35,33 @@ describe("sync.merge の入力検証 (#86)", () => {
       .mockReset()
       .mockResolvedValue({ success: true, mergedCounts: {}, errors: [] })
     state.findByUserId.mockReset().mockResolvedValue([])
-    state.getChangedEntities
-      .mockReset()
-      .mockResolvedValue({
-        items: [],
-        tags: [],
-        lists: [],
-        listItems: [],
-        history: [],
-      })
+    state.getChangedEntities.mockReset().mockResolvedValue({
+      items: [],
+      tags: [],
+      lists: [],
+      listItems: [],
+      history: [],
+    })
   })
 
-  it("不正な ID のデータは BAD_REQUEST になり、マージを呼ばない", async () => {
-    await expect(
-      call({
-        ...empty,
-        items: [
-          {
-            id: "",
-            name: "x",
-            quantity: 1,
-            tagIds: [],
-            createdAt: "2026-01-01T00:00:00Z",
-          },
-        ],
-      }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" })
-    expect(state.merge).not.toHaveBeenCalled()
+  it("形式が不正な 1 件はスキップして errors に入れ、ほかのデータは DataMergeService に渡す", async () => {
+    const goodId = crypto.randomUUID()
+    const item = (itemId: string) => ({
+      id: itemId,
+      name: "x",
+      quantity: 1,
+      tagIds: [],
+      createdAt: "2026-01-01T00:00:00Z",
+    })
+    const result = await call({ ...empty, items: [item(""), item(goodId)] })
+
+    expect(state.merge).toHaveBeenCalledTimes(1)
+    const [, data] = state.merge.mock.calls[0]
+    expect(data.items.map((i: { id: string }) => i.id)).toEqual([goodId])
+    expect(result.mergeResult.success).toBe(false)
+    expect(result.mergeResult.errors).toEqual([
+      expect.stringContaining("アイテム 1 件目"),
+    ])
   })
 
   it("上限を超える件数は BAD_REQUEST になる", async () => {

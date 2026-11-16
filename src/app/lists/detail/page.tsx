@@ -1,5 +1,6 @@
 "use client"
 
+import { TEXT_LIMITS } from "@/shared/schemas/limits"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { ItemSelector, type NewItemInput } from "@/components/features/items/ItemSelector"
@@ -216,6 +217,7 @@ function ShoppingListContent() {
               <input
                 type="text"
                 value={editName}
+                maxLength={TEXT_LIMITS.listName}
                 onChange={(e) => setEditName(e.target.value)}
                 autoFocus
                 data-testid="list-name-input"

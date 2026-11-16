@@ -72,12 +72,23 @@ describe("createItemSchema", () => {
     expect(result.success).toBe(false)
   })
 
-  it("500文字を超えるメモを拒否する", () => {
-    const input = { name: "牛乳", memo: "a".repeat(501) }
+  it("2000文字を超えるメモを拒否する", () => {
+    const input = { name: "牛乳", memo: "a".repeat(2001) }
 
     const result = createItemSchema.safeParse(input)
 
     expect(result.success).toBe(false)
+  })
+
+  it("2000文字ちょうどのメモを受け入れる", () => {
+    const input = { name: "牛乳", memo: "a".repeat(2000) }
+
+    expect(createItemSchema.safeParse(input).success).toBe(true)
+  })
+
+  it("9999を超える数量を拒否する", () => {
+    expect(createItemSchema.safeParse({ name: "牛乳", quantity: 10000 }).success).toBe(false)
+    expect(createItemSchema.safeParse({ name: "牛乳", quantity: 9999 }).success).toBe(true)
   })
 
   it("無効なUUID形式のtagIdを拒否する", () => {
