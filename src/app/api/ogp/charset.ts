@@ -34,7 +34,7 @@ function attributesOf(tag: string): Map<string, string> {
 /**
  * 先頭のバイト列から <meta> の charset を探す。
  * ASCII 互換の文字コードを前提に latin1 で読み、<meta ...> ごとに切り出して属性を調べる（入力長に対して線形）。
- * 値の中の「charset=」（例: http-equiv="refresh" の content）は拾わない
+ * 値の中の「charset=」（例: http-equiv="refresh" の content）、コメントの中の <meta>、<metadata> などは拾わない
  */
 export function charsetFromMeta(bytes: Uint8Array): string | null {
   const head = Buffer.from(bytes.subarray(0, META_PRESCAN_BYTES)).toString("latin1")
@@ -43,6 +43,23 @@ export function charsetFromMeta(bytes: Uint8Array): string | null {
   for (;;) {
     const start = lower.indexOf("<meta", from)
     if (start === -1) return null
+
+    // その前にコメントが始まっていれば、コメントの終わりまで飛ばす（HTML の prescan と同じ）
+    const comment = lower.indexOf("<!--", from)
+    if (comment !== -1 && comment < start) {
+      const commentEnd = lower.indexOf("-->", comment + 4)
+      if (commentEnd === -1) return null
+      from = commentEnd + 3
+      continue
+    }
+
+    // <meta の次は空白か / でなければ、別のタグ（<metadata など）
+    const next = head[start + "<meta".length]
+    if (next !== undefined && !/[\s/]/.test(next)) {
+      from = start + "<meta".length
+      continue
+    }
+
     const end = lower.indexOf(">", start)
     const attrs = attributesOf(head.slice(start + "<meta".length, end === -1 ? head.length : end))
 

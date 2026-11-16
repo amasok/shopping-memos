@@ -25,6 +25,19 @@ describe("charsetFromMeta (#105)", () => {
     expect(charsetFromMeta(bytes('<meta http-equiv="refresh" content="0; charset=euc-jp">'))).toBeNull()
   })
 
+  it("コメントの中の <meta> は飛ばし、その後ろの <meta> を読む", () => {
+    expect(charsetFromMeta(bytes('<!-- <meta charset="Shift_JIS"> --><meta charset="euc-jp">'))).toBe("euc-jp")
+    expect(charsetFromMeta(bytes('<!-- <meta charset="Shift_JIS">'))).toBeNull()
+  })
+
+  it.each([["<metadata charset=\"shift_jis\">"], ["<metal charset=shift_jis>"]])("%s は <meta> と見なさない", (tag) => {
+    expect(charsetFromMeta(bytes(tag))).toBeNull()
+  })
+
+  it("<meta/charset=...> のように / で続く書き方も読む", () => {
+    expect(charsetFromMeta(bytes("<meta/charset=shift_jis>"))).toBe("shift_jis")
+  })
+
   it("閉じていない <meta> の中でも探す", () => {
     expect(charsetFromMeta(bytes('<html><head><meta charset="euc-jp"'))).toBe("euc-jp")
   })
