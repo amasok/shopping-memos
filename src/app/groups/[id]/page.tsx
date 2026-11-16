@@ -77,6 +77,7 @@ export default function GroupDetailPage() {
 
   useEffect(() => {
     if (group) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEditName(group.name)
     }
   }, [group])
