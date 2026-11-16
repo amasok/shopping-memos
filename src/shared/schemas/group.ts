@@ -50,7 +50,11 @@ export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>
 
 // 招待コードでグループに参加
 export const joinByInviteCodeSchema = z.object({
-  inviteCode: z.string().length(6, "招待コードは6文字です"),
+  inviteCode: z
+    .string()
+    .trim()
+    .min(6, "招待コードは6〜8文字です")
+    .max(8, "招待コードは6〜8文字です"),
 })
 
 export type JoinByInviteCodeInput = z.infer<typeof joinByInviteCodeSchema>

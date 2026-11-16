@@ -1,27 +1,23 @@
-import { eq, and, sql } from "drizzle-orm"
+import { eq, and, gt, lt, sql } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   groups,
   groupMembers,
   inviteLinks,
+  inviteCodeAttempts,
   users,
 } from "@/infrastructure/db/drizzle/schema"
 import type { GroupRepository } from "../../domain/repositories/GroupRepository"
 import type { Group, GroupWithMemberCount, CreateGroupInput, UpdateGroupInput } from "../../domain/entities/Group"
 
-/**
- * 6文字の招待コードを生成
- * 紛らわしい文字（0, O, I, L, 1）を除外
- */
-function generateInviteCode(): string {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-  let code = ""
-  for (let i = 0; i < 6; i++) {
-    const randomIndex = Math.floor(Math.random() * chars.length)
-    code += chars[randomIndex]
-  }
-  return code
-}
+import {
+  generateInviteCode,
+  inviteCodeExpiresAt,
+  normalizeInviteCode,
+} from "../../domain/entities/InviteCode"
+
+/** 試行履歴の保持期間（これより古い履歴は試行時に削除する） */
+const ATTEMPT_RETENTION_MS = 24 * 60 * 60 * 1000
 import type {
   GroupMember,
   GroupMemberWithUser,
@@ -43,6 +39,7 @@ export class DrizzleGroupRepository implements GroupRepository {
       id: input.id,
       name: input.name,
       inviteCode: generateInviteCode(),
+      inviteCodeExpiresAt: inviteCodeExpiresAt(now),
       createdAt: now,
       updatedAt: now,
     }).returning()
@@ -68,7 +65,7 @@ export class DrizzleGroupRepository implements GroupRepository {
     const result = await db
       .select()
       .from(groups)
-      .where(eq(groups.inviteCode, inviteCode.toUpperCase()))
+      .where(eq(groups.inviteCode, normalizeInviteCode(inviteCode)))
     return result[0] ?? null
   }
 
@@ -89,6 +86,7 @@ export class DrizzleGroupRepository implements GroupRepository {
         name: groups.name,
         inviteCode: groups.inviteCode,
         inviteEnabled: groups.inviteEnabled,
+        inviteCodeExpiresAt: groups.inviteCodeExpiresAt,
         createdAt: groups.createdAt,
         updatedAt: groups.updatedAt,
         memberCount: memberCountSubquery.count,
@@ -127,11 +125,13 @@ export class DrizzleGroupRepository implements GroupRepository {
   }
 
   async regenerateInviteCode(id: string): Promise<Group> {
+    const now = new Date()
     const [updated] = await db
       .update(groups)
       .set({
         inviteCode: generateInviteCode(),
-        updatedAt: new Date(),
+        inviteCodeExpiresAt: inviteCodeExpiresAt(now),
+        updatedAt: now,
       })
       .where(eq(groups.id, id))
       .returning()
@@ -150,6 +150,38 @@ export class DrizzleGroupRepository implements GroupRepository {
       .returning()
 
     return updated
+  }
+
+  async recordInviteCodeAttempt(userId: string, windowMs: number): Promise<number> {
+    const now = new Date()
+
+    // 先に記録してから数える（同時に送られた試行どうしも互いに数えられる）
+    await db.insert(inviteCodeAttempts).values({
+      id: crypto.randomUUID(),
+      userId,
+      attemptedAt: now,
+    })
+
+    await db
+      .delete(inviteCodeAttempts)
+      .where(
+        and(
+          eq(inviteCodeAttempts.userId, userId),
+          lt(inviteCodeAttempts.attemptedAt, new Date(now.getTime() - ATTEMPT_RETENTION_MS))
+        )
+      )
+
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(inviteCodeAttempts)
+      .where(
+        and(
+          eq(inviteCodeAttempts.userId, userId),
+          gt(inviteCodeAttempts.attemptedAt, new Date(now.getTime() - windowMs))
+        )
+      )
+
+    return row?.count ?? 0
   }
 
   // === メンバー ===

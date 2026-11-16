@@ -36,6 +36,11 @@ export interface GroupRepository {
   /** 招待の有効/無効を設定 */
   setInviteEnabled(id: string, enabled: boolean): Promise<Group>
 
+  /**
+   * 招待コードによる参加の試行を記録し、直近 windowMs 以内の試行回数（今回を含む）を返す
+   */
+  recordInviteCodeAttempt(userId: string, windowMs: number): Promise<number>
+
   // === メンバー ===
 
   /** メンバーを追加 */

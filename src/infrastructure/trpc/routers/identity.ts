@@ -17,6 +17,11 @@ import {
   INVITE_LINK_EXPIRY_DAYS,
   INVITE_TOKEN_LENGTH,
 } from "@/modules/identity/domain/entities/InviteLink"
+import {
+  INVITE_CODE_ATTEMPT_WINDOW_MS,
+  INVITE_CODE_MAX_ATTEMPTS,
+  isInviteCodeExpired,
+} from "@/modules/identity/domain/entities/InviteCode"
 
 /**
  * 安全な招待トークンを生成
@@ -243,6 +248,18 @@ export const identityRouter = router({
   joinByInviteCode: protectedProcedure
     .input(joinByInviteCodeSchema)
     .mutation(async ({ input, ctx }) => {
+      // 総当たり対策: 成否にかかわらず試行を記録し、上限を超えたら拒否する
+      const attempts = await groupRepository.recordInviteCodeAttempt(
+        ctx.userId,
+        INVITE_CODE_ATTEMPT_WINDOW_MS
+      )
+      if (attempts > INVITE_CODE_MAX_ATTEMPTS) {
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: "試行回数が上限に達しました。しばらくしてからお試しください",
+        })
+      }
+
       // 招待コードでグループを検索
       const group = await groupRepository.findByInviteCode(input.inviteCode)
 
@@ -258,6 +275,13 @@ export const identityRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "現在招待を受け付けていません",
+        })
+      }
+
+      if (isInviteCodeExpired(group.inviteCodeExpiresAt)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "招待コードの有効期限が切れています。管理者に新しいコードを発行してもらってください",
         })
       }
 
