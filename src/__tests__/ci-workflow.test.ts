@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { readFileSync } from "fs"
+import { spawnSync } from "child_process"
 import path from "path"
 import { parse } from "yaml"
 import { describe, it, expect } from "vitest"
@@ -186,18 +187,68 @@ describe("本番DBマイグレーション（migrate ジョブ）(#94)", () => {
   })
 })
 
+describe("develop 用 DB のマイグレーション（migrate-develop ジョブ）(#134)", () => {
+  const job = workflow.jobs["migrate-develop"]
+  const migrateStep = () => job.steps.find((s) => s.run?.includes("db:migrate"))
+
+  it("develop への push のときだけ実行する（PR や main では動かない）", () => {
+    expect(job).toBeDefined()
+    expect(job.if).toContain("github.ref == 'refs/heads/develop'")
+    expect(job.if).toContain("github.event_name == 'push'")
+  })
+
+  it("DEVELOP_DATABASE_URL を使い、本番の secret は使わない", () => {
+    expect(migrateStep()?.env?.DATABASE_URL).toBe("${{ secrets.DEVELOP_DATABASE_URL }}")
+    expect(JSON.stringify(job)).not.toContain("NEON_DATABASE_URL")
+    expect(job.environment).toBeUndefined()
+  })
+
+  it("本番と同じく、job 単位の concurrency で 1 本ずつ実行し、実行中のものは取り消さない", () => {
+    expect(job.concurrency?.group).toBe("migrate-develop")
+    expect(job.concurrency?.["cancel-in-progress"]).toBe(false)
+    expect(job.concurrency?.group).not.toBe(workflow.jobs.migrate.concurrency?.group)
+  })
+
+  it("secret が未設定なら、migrate の前に明確なメッセージで失敗する", () => {
+    const check = job.steps.findIndex((s) => s.env?.DATABASE_URL === "${{ secrets.DEVELOP_DATABASE_URL }}" && !s.run?.includes("db:migrate"))
+    expect(check).toBeGreaterThanOrEqual(0)
+    expect(check).toBeLessThan(job.steps.findIndex((s) => s.run?.includes("db:migrate")))
+    const run = job.steps[check].run ?? ""
+    expect(run).toContain('-z "$DATABASE_URL"')
+    expect(run).toContain("DEVELOP_DATABASE_URL")
+    expect(run).toContain("exit 1")
+  })
+
+  it("確認のスクリプトは、secret が空なら失敗してメッセージを出し、設定されていれば通る", () => {
+    const run = job.steps.find((s) => s.name === "Check DEVELOP_DATABASE_URL")?.run ?? ""
+    const exec = (value: string) =>
+      spawnSync("bash", ["-e", "-c", run], { env: { ...process.env, DATABASE_URL: value }, encoding: "utf-8" })
+    const missing = exec("")
+    expect(missing.status).toBe(1)
+    expect(missing.stdout).toContain("::error title=DEVELOP_DATABASE_URL is not set::")
+    expect(exec("postgresql://u:p@host/db").status).toBe(0)
+  })
+
+  it("変更の有無で判定せず毎回 db:migrate を実行し、ビルドが通ってから動く", () => {
+    expect(job.steps.some((s) => s.uses?.startsWith("dorny/paths-filter"))).toBe(false)
+    expect(migrateStep()?.if).toBeUndefined()
+    expect([job.needs ?? []].flat()).toContain("build")
+  })
+})
+
 describe("CI ワークフロー全体の設定", () => {
   it("GITHUB_TOKEN の権限を contents: read に絞る", () => {
     expect(workflow.permissions).toEqual({ contents: "read" })
   })
 
-  it("古い実行を止めるが、main では止めない", () => {
+  it("古い実行を止めるが、main と develop では止めない（migrate の途中で取り消さない。#134）", () => {
     expect(workflow.concurrency?.group).toContain("github.ref")
-    // main は commit ごとに別 group にし、待機中の実行が置き換えで取り消されないようにする
+    // main と develop は commit ごとに別 group にし、待機中の実行が置き換えで取り消されないようにする
     expect(workflow.concurrency?.group).toContain("github.sha")
-    expect(String(workflow.concurrency?.["cancel-in-progress"])).toContain(
-      "refs/heads/main"
-    )
+    const cancel = String(workflow.concurrency?.["cancel-in-progress"])
+    expect(cancel).toContain("github.ref != 'refs/heads/main'")
+    expect(cancel).toContain("github.ref != 'refs/heads/develop'")
+    expect(workflow.concurrency?.group).toContain("refs/heads/develop")
   })
 })
 

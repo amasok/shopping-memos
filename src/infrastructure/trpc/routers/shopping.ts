@@ -23,7 +23,7 @@ import { syncRepository } from "@/modules/sync/infrastructure/repositories/Drizz
 import { CatalogSyncService } from "@/modules/catalog/application/services/CatalogSyncService"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
 import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-objects/ListStatus"
-import { ShoppingService } from "@/modules/shopping/application/services/ShoppingService"
+import { ShoppingService, ShoppingDomainError } from "@/modules/shopping/application/services/ShoppingService"
 import { ShoppingSyncService } from "@/modules/shopping/application/services/ShoppingSyncService"
 import type { ItemWithTags } from "@/modules/catalog/domain/entities/Item"
 import { areTagsInScope, isSameScope } from "@/modules/catalog/application/services/ownership"
@@ -465,7 +465,9 @@ export const shoppingRouter = router({
           input.location
         )
       } catch (error) {
-        if (error instanceof Error) {
+        // 業務ルールの違反だけを BAD_REQUEST にしてメッセージを返す。
+        // DB のエラーなどはそのまま投げ、INTERNAL_SERVER_ERROR として汎用の文言にする（#135）
+        if (error instanceof ShoppingDomainError) {
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: error.message,

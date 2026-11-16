@@ -19,12 +19,13 @@ const handler = async (req: Request) => {
     req: checked.request,
     router: appRouter,
     createContext,
-    onError:
-      process.env.NODE_ENV === "development"
-        ? ({ path, error }) => {
-            console.error(`❌ tRPC failed on ${path ?? "<no-path>"}: ${error.message}`)
-          }
-        : undefined,
+    // 予期しないエラーは、本番でもサーバーのログに残す（応答では汎用の文言にする。#135）。
+    // 開発中は、意図して投げたエラーも含めて出す
+    onError: ({ path, error }) => {
+      if (error.code === "INTERNAL_SERVER_ERROR" || process.env.NODE_ENV === "development") {
+        console.error(`❌ tRPC failed on ${path ?? "<no-path>"} (${error.code}): ${error.message}`, error.cause ?? "")
+      }
+    },
   })
 }
 
