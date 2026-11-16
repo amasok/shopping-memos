@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test"
+import { createList, createListItem } from "../fixtures/test-data"
+import { seedTable } from "../fixtures/test-helpers"
 
 async function waitForControl(page: Page) {
   await page.goto("/")
@@ -114,5 +116,31 @@ test.describe("Service Worker (O1)", () => {
     await expect(page.getByText("オフラインです")).toHaveCount(0)
     await expect(page).toHaveURL(/\/lists\/detail\?id=never-visited-list/)
     await expect(page.locator("body")).not.toBeEmpty()
+  })
+
+  test("O2: ゲストが作ったリストの詳細を、オフラインでも開いて、チェックでき、リロード後も残る", async ({ page, context }) => {
+    await waitForControl(page)
+    const list = createList({ name: "オフライン確認リスト" })
+    const first = createListItem({ listId: list.id, name: "オフライン牛乳" })
+    const second = createListItem({ listId: list.id, name: "オフライン卵" })
+    await seedTable(page, "lists", [list])
+    await seedTable(page, "listItems", [first, second])
+
+    await context.setOffline(true)
+    await page.goto(`/lists/detail?id=${list.id}`)
+
+    await expect(page).not.toHaveURL(/~offline/)
+    await expect(page.getByTestId("list-name")).toHaveText("オフライン確認リスト")
+    await expect(page.getByTestId("unchecked-list")).toContainText("オフライン牛乳")
+    await expect(page.getByTestId("unchecked-list")).toContainText("オフライン卵")
+
+    // オフラインのままチェックすると、チェック済みに移る
+    await page.getByTestId("unchecked-list").locator("label").filter({ hasText: "オフライン牛乳" }).click()
+    await expect(page.getByTestId("checked-list")).toContainText("オフライン牛乳")
+
+    // リロードしても（オフラインのまま）チェック状態が残る
+    await page.reload()
+    await expect(page.getByTestId("checked-list")).toContainText("オフライン牛乳")
+    await expect(page.getByTestId("unchecked-list")).toContainText("オフライン卵")
   })
 })
