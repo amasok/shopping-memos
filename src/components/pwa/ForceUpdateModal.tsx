@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import type { Serwist } from "@serwist/window"
 import {
+  SKIP_WAITING_MESSAGE,
   fetchVersionInfo,
   getClientRelease,
   isBelowMinRelease,
