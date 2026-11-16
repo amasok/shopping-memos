@@ -47,7 +47,7 @@ export const syncPushInputSchema = z.object({
       operation: syncOperationTypeSchema,
       payload: z.record(z.string(), z.unknown()),
       createdAt: z.coerce.date(),
-    })
+    }),
   ),
 })
 
@@ -112,20 +112,37 @@ export const MERGE_LIMITS = {
   history: 500,
   tagIdsPerEntity: 50,
   quantityMax: 9999,
+  itemName: 100,
+  tagName: 50,
+  listName: 100,
+  listItemName: 100,
+  memo: 500,
+  location: 100,
 } as const
+
+/** 文字数の上限に収める（ゲストの画面には入力長の上限がないため、送信前に切り詰める） */
+export function clipText(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value
+}
+
+/** 数量を、サーバーが受け付ける範囲（1〜quantityMax の整数）に収める */
+export function clampQuantity(value: number): number {
+  if (!Number.isFinite(value)) return 1
+  return Math.min(MERGE_LIMITS.quantityMax, Math.max(1, Math.trunc(value)))
+}
 
 // 日付は ISO 文字列（または Date）。Invalid Date は拒否する。null / undefined は coerce せずにそのまま通す
 const mergeDate = z.coerce.date()
 const mergeId = z.string().uuid()
 const mergeTagIds = z.array(mergeId).max(MERGE_LIMITS.tagIdsPerEntity)
 const mergeQuantity = z.number().int().min(1).max(MERGE_LIMITS.quantityMax)
-const mergeMemo = z.string().max(500).nullish()
+const mergeMemo = z.string().max(MERGE_LIMITS.memo).nullish()
 
 // 文字数の上限は、各エンティティの作成スキーマ（item / tag / list）に合わせる。
 // 未知のキーは取り除かれる（クライアントが余分な項目を送っても受け付ける）
 export const mergeItemSchema = z.object({
   id: mergeId,
-  name: z.string().min(1).max(100),
+  name: z.string().min(1).max(MERGE_LIMITS.itemName),
   quantity: mergeQuantity,
   memo: mergeMemo,
   tagIds: mergeTagIds,
@@ -135,24 +152,24 @@ export const mergeItemSchema = z.object({
 
 export const mergeTagSchema = z.object({
   id: mergeId,
-  name: z.string().min(1).max(50),
+  name: z.string().min(1).max(MERGE_LIMITS.tagName),
   createdAt: mergeDate,
 })
 
 export const mergeListSchema = z.object({
   id: mergeId,
-  name: z.string().min(1).max(100),
+  name: z.string().min(1).max(MERGE_LIMITS.listName),
   status: z.enum(["in_progress", "completed"]),
   createdAt: mergeDate,
   completedAt: mergeDate.nullish(),
   purchasedAt: mergeDate.nullish(),
-  location: z.string().max(100).nullish(),
+  location: z.string().max(MERGE_LIMITS.location).nullish(),
 })
 
 export const mergeListItemSchema = z.object({
   id: mergeId,
   listId: mergeId,
-  name: z.string().min(1).max(100),
+  name: z.string().min(1).max(MERGE_LIMITS.listItemName),
   quantity: mergeQuantity,
   memo: mergeMemo,
   tagIds: mergeTagIds,
@@ -163,7 +180,7 @@ export const mergeListItemSchema = z.object({
 export const mergeHistorySchema = z.object({
   id: mergeId,
   listId: mergeId,
-  location: z.string().max(100).nullish(),
+  location: z.string().max(MERGE_LIMITS.location).nullish(),
   purchasedAt: mergeDate,
 })
 

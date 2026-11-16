@@ -118,4 +118,46 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
 
     expect(syncMergeInputSchema.safeParse(payload).success).toBe(true)
   })
+
+  it("上限を超えるゲストのデータは、送信前に上限まで切り詰めて、merge 全体が拒否されないようにする", async () => {
+    const tagId = uuid()
+    const listId = uuid()
+    state.tags = [{ id: tagId, name: "あ".repeat(80), createdAt: NOW, updatedAt: NOW }]
+    state.items = [
+      {
+        id: uuid(),
+        name: "い".repeat(150),
+        quantity: 100000,
+        memo: "う".repeat(900),
+        tagIds: Array.from({ length: 60 }, uuid),
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    ]
+    state.lists = [
+      { id: listId, name: "え".repeat(120), status: "completed", createdAt: NOW, purchasedAt: NOW, location: "お".repeat(200) },
+    ]
+    state.listItems = [
+      { id: uuid(), listId, name: "か".repeat(120), quantity: 0, memo: "き".repeat(700), tagIds: [tagId], checked: false, createdAt: NOW },
+    ]
+
+    const payload = await mergePayload()
+
+    const parsed = syncMergeInputSchema.safeParse(payload)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      const d = parsed.data.data
+      expect(d.tags[0].name).toHaveLength(50)
+      expect(d.items[0].name).toHaveLength(100)
+      expect(d.items[0].memo).toHaveLength(500)
+      expect(d.items[0].quantity).toBe(9999)
+      expect(d.items[0].tagIds).toHaveLength(50)
+      expect(d.lists[0].name).toHaveLength(100)
+      expect(d.lists[0].location).toHaveLength(100)
+      expect(d.history[0].location).toHaveLength(100)
+      expect(d.listItems[0].name).toHaveLength(100)
+      expect(d.listItems[0].memo).toHaveLength(500)
+      expect(d.listItems[0].quantity).toBe(1)
+    }
+  })
 })

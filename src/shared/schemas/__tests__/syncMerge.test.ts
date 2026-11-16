@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest"
-import { MERGE_LIMITS, syncMergeInputSchema } from "../sync"
+import {
+  MERGE_LIMITS,
+  clampQuantity,
+  clipText,
+  syncMergeInputSchema,
+} from "../sync"
 
 const id = () => crypto.randomUUID()
 const iso = "2026-01-01T00:00:00.000Z"
@@ -167,5 +172,19 @@ describe("syncMergeInputSchema（sync.merge の入力検証 #86）", () => {
       ).toBe(false)
       expect(parse({ ...empty, items: "x" }).success).toBe(false)
     })
+  })
+})
+
+describe("送信前の整形（clipText / clampQuantity）", () => {
+  it("clipText は上限を超える分だけを切り詰める", () => {
+    expect(clipText("abc", 5)).toBe("abc")
+    expect(clipText("abcdef", 5)).toBe("abcde")
+  })
+  it("clampQuantity は 1〜上限の整数に収める", () => {
+    expect(clampQuantity(0)).toBe(1)
+    expect(clampQuantity(-3)).toBe(1)
+    expect(clampQuantity(2.9)).toBe(2)
+    expect(clampQuantity(100000)).toBe(MERGE_LIMITS.quantityMax)
+    expect(clampQuantity(Number.NaN)).toBe(1)
   })
 })
