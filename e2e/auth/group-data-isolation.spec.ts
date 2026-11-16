@@ -179,6 +179,11 @@ test.describe("同名アイテムの影響範囲 (#64)", () => {
     return found.find((i) => i.id === id)
   }
 
+  // getItems は「進行中のリストに同名アイテムがあるもの」を除外する。
+  // 差し戻し後は A のリストが進行中に戻るため、A のアイテムは ID 指定で取得する
+  const getItemById = (request: APIRequestContext, id: string) =>
+    trpcQuery<CatalogItem>(request, "catalog.getItem", { id })
+
   /** リストを作成してアイテムをチェックし、買い物を完了する。履歴(リスト)IDを返す */
   const completeShopping = async (
     request: APIRequestContext,
@@ -231,7 +236,7 @@ test.describe("同名アイテムの影響範囲 (#64)", () => {
     const historyId = await completeShopping(page.request, aItem)
     await trpcMutation(page.request, "shopping.revertHistory", { historyId })
 
-    expect((await findItem(page.request, aItem, name))?.purchasedAt).toBeNull()
+    expect((await getItemById(page.request, aItem)).purchasedAt).toBeNull()
     const b = await findItem(bContext.request, bItem, name)
     expect(b).toBeDefined()
     expect(b?.purchasedAt).not.toBeNull()
