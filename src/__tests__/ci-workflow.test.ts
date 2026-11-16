@@ -135,7 +135,8 @@ describe("CI ワークフローの E2E ジョブ", () => {
       "utf-8"
     )
     expect(config).toMatch(/process\.env\.E2E_OFFLINE\s*\?\s*\[\s*\{\s*name: "offline"/)
-    expect(config).toContain("npx next start -p 3100")
+    // ポートは E2E_OFFLINE_PORT（既定 3100）。解決された値は playwright-config.test.ts で確かめる（#142）
+    expect(config).toContain("npx next start -p ${E2E_OFFLINE_PORT}")
   })
 
   it("本番DBマイグレーション（migrate ジョブ）に依存しない", () => {
@@ -143,8 +144,10 @@ describe("CI ワークフローの E2E ジョブ", () => {
     expect(needs).not.toContain("migrate")
   })
 
-  it("PR でも実行され、main マージ前に失敗を検知できる", () => {
-    expect(e2e.if ?? "").toContain("pull_request")
+  it("main への PR と main への push だけで実行する（develop への PR では動かさない。#142）", () => {
+    expect(e2e.if).toBe(
+      "(github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')"
+    )
   })
 
   it("Playwright が対応する OS バージョンに固定されている", () => {
