@@ -2,6 +2,7 @@
 import { readFileSync } from "fs"
 import path from "path"
 import { parse } from "yaml"
+import { describe, it, expect } from "vitest"
 
 /**
  * CI ワークフロー（.github/workflows/ci.yml）の E2E ジョブ構成を検証する。
