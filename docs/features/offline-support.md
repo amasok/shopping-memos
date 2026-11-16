@@ -1,6 +1,6 @@
 # オフライン対応（ログイン中の編集と復帰時の同期、Service Worker キャッシュ）
 
-> ステータス: **設計レビュー待ち**（未承認・未実装）
+> ステータス: **方針承認済み（2026-11-16）・設計レビュー対応中**（未実装）
 > 関連 Issue: #62（本機能）、#44（PWA 対応）、#61（認証方式の変更。オフライン時のセッション扱いで連携）
 > 関連 ADR: [ADR-004 オフライン同期戦略](../adr/004-offline-sync-strategy.md)（承認済み）、[ADR-005 PWA アーキテクチャ](../adr/005-pwa-architecture.md)（提案中）
 > 関連セキュリティ Issue: #69（sync.push / merge の認可不備）、#64（同名アイテムの全ユーザー更新）、#68（itemId / tagId の所有権を検証していない）、#72（入力の上限・ページングがない）、#73-1（WHERE にスコープがない）、#71（セキュリティヘッダ）、#65（Next.js の脆弱性）。「## セキュリティ」節で対応関係を示す
@@ -94,22 +94,33 @@
 
 ### 2. 競合解決
 
-前提は ADR-004 と同じ（主に夫婦 2 人、同時編集はまれ、リアルタイム性は不要）。
+前提は ADR-004 と同じ（主に夫婦 2 人、同時編集はまれ、リアルタイム性は不要）。ただし「店内でオフラインのままチェック → その間に家族が家でメモを編集」は**主な使い方そのもの**なので、別々のフィールドの編集が両方残ることを必須とする。
 
 | 案 | 評価 |
 |----|------|
-| **パッチ送信 + レコード単位の LWW + 削除優先（推奨）** | 更新操作は**変更したフィールドだけ**を送る（例: `{checked: true}`）。サーバーは「操作時刻（クライアント時刻をサーバー時刻で補正したもの）≧ その行の `updated_at`」なら適用し、古ければ却下してサーバーの値を返す。削除は常に勝つ（tombstone）。別々のフィールドを同時に編集した場合（例: A がチェック、B がメモ編集）は、両方とも残りやすい |
+| **パッチ送信 + フィールド単位の LWW + 削除優先（推奨・決定）** | 更新操作は**変更したフィールドだけ**を、フィールドごとの操作時刻つきで送る（例: `{checked: true}` と `{checked: t1}`）。サーバーは行ごとに `field_modified_at`（フィールド → 最後に適用した操作時刻）を持ち、**フィールドごとに**「操作時刻 ≧ そのフィールドの時刻」なら適用し、古いフィールドだけを捨てる。削除は常に勝つ（tombstone） |
+| パッチ送信 + レコード単位の LWW | 実装は少し簡単。ただし、上の例でオフラインのチェック（t1）が、家族の後からのメモ編集（t2 > t1）に負けて**チェックが消える**。不採用 |
 | サーバーの受信順 LWW | 最も簡単。ただし長時間オフラインだった端末の古い編集が、新しい編集を上書きしてしまう |
 | バージョン番号で競合を検出 → ユーザーに選ばせる | 確実だが、UI と実装が重い。買い物メモには過剰 |
 | CRDT（Yjs / Automerge） | 過剰。サーバーの DB 設計とも合わない |
 
+**2 種類の時刻を分ける**
+
+| 列 | 中身 | 用途 |
+|----|------|------|
+| `updated_at` | **サーバーの書き込み時刻**（`now()`。どの操作を適用したときも更新） | pull のカーソル専用。LWW の判定には使わない |
+| `field_modified_at`（jsonb） | フィールド名 → そのフィールドに最後に適用した**操作時刻**（クライアント時刻をサーバー時刻で補正したもの） | LWW の判定専用 |
+
+- `updated_at = now()` を LWW に使うと、古い操作を適用した時点で `updated_at` が「現在」になり、その後に届いた本当は新しい操作が却下される。逆に `updated_at` に操作時刻を入れると、pull のカーソルが過去の時刻で書かれた行を取りこぼす。そのため 2 つを分ける
+
 補足ルール:
 
-- **時刻の補正**: push / pull のレスポンスで `serverTime` を返し、クライアントは `offset = serverTime − 受信時刻` を保持する。操作時刻は `Date.now() + offset` で記録する（端末の時計ずれ対策）
-- **作成**: クライアントの UUID で冪等な upsert にする。同じ ID がすでにあれば、更新として扱う
+- **時刻の補正**: push / pull のレスポンスで `serverTime` を返し、クライアントは `offset = serverTime − 受信時刻` を保持する。操作時刻は `Date.now() + offset` で記録する（端末の時計ずれ対策）。サーバーは、未来の操作時刻を `serverTime` に丸める
+- **作成**: クライアントの UUID で冪等な upsert にする。全フィールドの `field_modified_at` に作成時刻を入れる。同じ ID がすでにあれば、フィールド単位の更新として扱う
+- **削除**: `deleted_at` を入れた行（tombstone）には、以降の update を適用しない（結果は `conflict`。クライアントはローカルの行を消す）。削除 vs 編集は削除が勝つ（ADR-004 どおり）
 - **同名アイテムの作成**: 両方残す（ADR-004 どおり）
-- **`listItems.checked`**: チェック／チェック解除も上記の LWW に従う
-- **買い物完了（finishShopping）**: リストの状態とアイテムの購入日時をまとめて変える複合操作。1 つの操作として送り、サーバーは 1 トランザクションで適用する
+- **`listItems.checked`**: 単独のフィールドとして LWW にする（チェックとメモ・数量の編集が互いに消し合わない）
+- **買い物完了（finishShopping）/ 履歴の取り消し（revertHistory）**: リストの状態とアイテムの購入日時をまとめて変える複合操作。1 つの操作として送り、サーバーは 1 トランザクションで適用する。対象のフィールドの時刻は、その操作の時刻で更新する
 
 ### 3. Service Worker（Serwist）
 
@@ -147,8 +158,15 @@
 - トーストを無視しても、アプリのタブ・ウィンドウをすべて閉じれば、次回の起動時に新しい SW が有効になる（標準の挙動）
 - **更新の確認**: ホーム画面の PWA は長時間開いたままになりやすい。そこで `visibilitychange`（前面に戻ったとき）と、開いている間は 1 時間ごとに `registration.update()` を呼ぶ
 - SW の登録は `updateViaCache: "none"` にし、`/serwist/sw.js` は `Cache-Control: no-cache, no-store, must-revalidate` で配信する（Next.js 公式の PWA ガイドの推奨）。スクリプトの置き場所が `/serwist/` 配下でスコープが `/` なので、`Service-Worker-Allowed: /` ヘッダが付くことを E2E で確認する
-- **既存の `/sw.js` からの移行**: 本番の利用者の端末には、今の素通しの `/sw.js` がスコープ `/` で登録されている。新しい SW を同じスコープ `/` で登録すると、同じ登録のスクリプトが置き換わる。`public/sw.js` は O1 で削除する（まだ古いページを開いている端末が `/sw.js` の更新を確認すると 404 になるが、素通しの SW が残るだけで害はない。次にページを開いたときに新しい SW に置き換わる）
-- **クライアントとサーバーの互換性**: オフラインだった端末は、古いコードのまま数日後に push してくることがある。そこで `sync.push` / `sync.pull` の入力に `protocolVersion` を含める。サーバーは少なくとも 1 つ前のバージョンを受け付け、対応外のバージョンなら専用のエラーを返す。クライアントはそれを受けたら「アプリを更新してください」と表示し、更新を促す
+- **既存の `/sw.js` からの移行**: 本番の利用者の端末には、今の素通しの `/sw.js` がスコープ `/` で登録されている。新しい SW を同じスコープ `/` で登録すると、同じ登録のスクリプトが置き換わる。新しいページをまだ読み込んでいない端末も確実に掃除するため、`public/sw.js` は削除せず、**自分の登録を解除する SW** に書き換えて残す（キャッシュを消し、`registration.unregister()` するだけ）。R3 の安定を確認したら O11 で削除する
+- **新旧クライアントの混在**: 更新は利用者任意なので、古いシェルのまま新しい API を呼ぶ端末が残る。オフラインだった端末は、古いコードのまま数日後に push してくることもある。そこで次のようにする
+  - `sync.push` / `sync.pull` の入力に `protocolVersion` を含める。サーバーは**現在と 1 つ前のバージョンを、少なくとも 30 日間**受け付ける
+  - 対応外のバージョンなら `CLIENT_TOO_OLD` エラーを返す。未送信の操作はキューに残したまま、強制更新（下記）に進む
+- **強制更新（最低バージョン）**: 重大な不具合や API の非互換のときに、利用者の選択を待たずに更新させる
+  - ビルドごとに `NEXT_PUBLIC_APP_VERSION`（コミット SHA と、単調に増えるリリース番号）を埋め込む
+  - サーバーは `GET /api/version` で `{ minClientRelease }`（環境変数 `MIN_CLIENT_RELEASE`）を返す（NetworkOnly）
+  - クライアントは起動時と前面に戻ったときに確認する。自分のリリース番号が下回っていれば、閉じられないモーダル「アプリを更新します」を出し、`registration.update()` → `SKIP_WAITING` → リロードを自動で行う。未送信の操作は IndexedDB に残るので、更新後に送られる
+  - SW 自体が壊れていて新しい JS が届かない場合は、kill switch（下記）を使う
 
 #### キャッシュのバージョン管理
 
@@ -197,7 +215,7 @@ Background Sync API は iOS で使えないため、上記のアプリ側のき�
 
 | テーブル | 追加・変更 |
 |---------|-----------|
-| `items`, `tags`, `shopping_lists`, `list_items` | `updated_at`（ないものに追加。書き込みのたびに `now()`）、`deleted_at`（論理削除）、`(group_id, updated_at)` と `(user_id, updated_at)` のインデックス |
+| `items`, `tags`, `shopping_lists`, `list_items` | `updated_at`（ないものに追加。**サーバーの書き込み時刻**で、カーソル専用）、`field_modified_at jsonb NOT NULL DEFAULT '{}'`（LWW 専用）、`deleted_at`（論理削除）、`(group_id, updated_at)` と `(user_id, updated_at)` のインデックス |
 | `item_tags` | 中間テーブルの削除が pull で伝わらないため、pull では item に `tagIds` を埋め込んで返す（中間テーブル自体は変更しない） |
 | `sync_operations` | 冪等化のため、`id`（クライアントの操作 ID）を一意キーとして使う。処理結果（`applied` / `rejected` / `conflict`）を記録する |
 
@@ -213,23 +231,32 @@ input: {
     entity: "item" | "tag" | "list" | "listItem"
     entityId: string        // クライアントで採番した UUID
     type: "create" | "update" | "delete" | "finishShopping" | "revertHistory"
-    patch?: Record<string, unknown>  // entity ごとの Zod スキーマで検証
-    clientTime: string      // 補正済みの ISO 時刻
+    patch?: Record<string, unknown>      // entity ごとの Zod スキーマで検証（JSON で 8KB まで）
+    fieldTimes?: Record<string, string>  // patch の各フィールドの操作時刻（補正済み ISO）
+    clientTime: string                   // 操作全体の時刻（create / delete / 複合操作で使う）
   }>  // 最大 100 件 / リクエスト
+  protocolVersion: number
 }
 output: {
   serverTime: string
-  results: Array<{ opId: string; status: "applied" | "duplicate" | "conflict" | "rejected"; reason?: string; serverRow?: unknown }>
+  results: Array<{
+    opId: string
+    status: "applied" | "partial" | "duplicate" | "conflict" | "rejected"
+    // partial: 一部のフィールドが新しい値に負けて捨てられた。serverRow で最新の行を返す
+    reason?: string
+    serverRow?: unknown  // 呼び出し元がアクセスできる行に限る（#69）
+  }>
 }
 ```
 
 - 操作ごとに**認可**する（自分の個人データ、または所属しているグループのデータだけ）。既存の catalog / shopping のサービス層を再利用し、tRPC の通常ミューテーションと同じ検証を通す
 - 操作は 1 件ずつのトランザクションで適用し、1 件の失敗で全体を止めない。`opId` が処理済みなら `duplicate` を返す
+- update の適用: 行を `SELECT ... FOR UPDATE` で取り、`fieldTimes[f] >= field_modified_at[f]` のフィールドだけを書き込み、`field_modified_at` を更新する。`updated_at` は `now()` にする
 
 **`sync.pull`（作り直し）**
 
 ```typescript
-input: { cursor?: string }  // 不透明なカーソル（updated_at + id）
+input: { cursor?: string; protocolVersion: number }  // 不透明なカーソル（updated_at + id）
 output: {
   serverTime: string
   changes: { items: Row[]; tags: Row[]; lists: Row[]; listItems: Row[] } // deleted_at を含む
@@ -239,6 +266,7 @@ output: {
 ```
 
 - 対象は、自分の個人データと所属グループのデータ
+- **取りこぼし対策**: 同時に実行されたトランザクションでは、`now()` の時刻順とコミット順がずれることがある。そのため、カーソルの時刻から **5 秒さかのぼって**取り直す（`updated_at > cursor.time - 5s`）。重複して届いた行は、クライアントが冪等に適用する（同じ行を `bulkPut` するだけ）。1 操作 1 トランザクションで処理時間が短いので、5 秒あれば足りる
 - 所属グループの一覧が前回と変わったとき（脱退・追加）は、クライアントがそのグループのローカルデータを削除するか、カーソルなしで再取得する
 
 **ID の受け入れ**: `createItemSchema` などの作成用スキーマに `id: z.string().uuid().optional()` を追加し、既存の tRPC ミューテーションでもクライアント ID を受け付ける。
@@ -248,14 +276,22 @@ output: {
 **Dexie version 9**
 
 - `lists`, `listItems` に `updatedAt` を追加する。ローカルで更新するたびに、全エンティティの `updatedAt` を補正済みの時刻で更新する（現在 `db.items.update` が `updatedAt` を更新していない問題も直す）
-- `syncQueue` を拡張: `{ id(opId), entity, entityId, type, patch, clientTime, retryCount, status: "pending" | "inflight" | "failed", lastError? }`
-- **キューの圧縮**: 同じエンティティへの未送信の操作をまとめる。create + update → create（パッチを統合）、update + update → update（統合）、create + delete → 両方消す、update + delete → delete
+- `syncQueue` を拡張: `{ id(opId), entity, entityId, type, patch, fieldTimes, clientTime, retryCount, status: "pending" | "inflight" | "failed", lastError? }`
+- **キューの圧縮**: 同じエンティティへの `pending` の操作をまとめる
+  - create + update → create（パッチを統合）、update + update → update（統合）、create + delete → 両方消す、update + delete → delete
+  - パッチを統合するとき、`fieldTimes` は**フィールドごとに新しい方**を残す（操作全体の `clientTime` は最新のものにする）
+  - **`inflight`（送信中）の操作は圧縮の対象から外す**。例えば create を送信中に delete が来た場合、両方消すとサーバーには作成だけが残る。そのため、delete は新しい操作として積む
+- **Dexie のバージョン更新（v8 → v9）**: 古いタブが開いていると `blocked` になる。古いタブ側は `versionchange` を受けたら DB を閉じてリロードする。新しいタブ側は `blocked` のときに「他のタブを閉じてください」と表示する
 - ユーザー DB の `meta` テーブル: `cursor`, `serverTimeOffset`, `lastSyncAt`, `groupIds`
 
 **リポジトリ層（新規 `src/infrastructure/local/`）**
 
 - `itemRepository`, `tagRepository`, `listRepository` を作る。書き込みは `db.transaction("rw", [table, db.syncQueue], ...)` で、エンティティとキューを同時に更新する（ゲストではキューに積まない）
-- 既存の hook（`src/hooks/data/*`）の書き込みは、すべてこのリポジトリ経由にする。読み取りは `useLiveQuery` に一本化し、tRPC のクエリ分岐を削除する（`useDataSource` の `useServer` は「同期を有効にするか」の意味に変える）
+- 既存の hook（`src/hooks/data/*`）の書き込みは、すべてこのリポジトリ経由にする。読み取りは `useLiveQuery` を使う
+- **フィーチャーフラグ `NEXT_PUBLIC_LOCAL_FIRST`**（本番で切り戻すための安全策）
+  - `true`（R3 以降の既定）: ログイン中もローカルファーストで動く
+  - `false`: 従来のサーバーファースト（tRPC 直呼び）に戻す。このとき SyncEngine は **push だけを続けて未送信のキューを送り切る**（drain モード）。端末内の未送信の変更を失わずに戻せる
+  - そのため、O7 / O8 では tRPC の分岐を**すぐには消さず**、フラグで切り替えられる形で残す。R3 から 2 週間安定したら、O11 でサーバーファーストの分岐とフラグを削除する
 - グループ管理（`identity.*`）は、tRPC を直接呼ぶオンライン限定のまま残す。`groups` / `groupMembers` は、pull のたびに `identity.getGroups` の結果で上書きして読み取り専用でキャッシュする（オフラインでもグループの切り替えと表示はできる）
 
 **SyncEngine（既存を拡張）**
@@ -310,7 +346,7 @@ output: {
 | 既存の家族（ログイン中） | R3 のリリース後、初回起動時に、自分のデータの全件 pull がユーザー DB に走る（数百件程度の想定で、数秒）。それまではサーバーから直接表示しているので、端末に未送信のデータはない |
 | ゲスト利用者 | R1 からオフラインで起動できるようになる。データの扱いは変わらない |
 | DB | `updated_at` / `deleted_at` / インデックスの追加（列の追加のみ）。削除が論理削除になる |
-| API | `sync.push` / `sync.pull` の仕様が変わる。現在の呼び出し元は `DataMergeContext`（`sync.merge`）だけで、push / pull は未使用なので、既存の端末への影響はない |
+| API | `sync.push` / `sync.pull` の仕様が変わる。現在の呼び出し元は `DataMergeContext`（`sync.merge`）だけで、push / pull は未使用なので、既存の端末への影響はない。R3 以降の変更は `protocolVersion` で後方互換を 30 日間保つ |
 | デプロイとマイグレーションの順序 | Vercel のデプロイと CI の `migrate` ジョブ（main への push 時）は互いを待たない。そのため、**マイグレーションは必ず先に単独でリリースする**（列を足すだけで、古いコードはそのまま動く）。その後で、新しい列を使うコードをリリースする |
 | Vercel Preview | develop にマージすると Preview に SW 入りでデプロイされる。Preview のドメインはデプロイごとに変わるので、SW とキャッシュもドメインごとに分かれ、本番には影響しない |
 
@@ -320,10 +356,10 @@ output: {
 |---------|----------|-------------|
 | R0 | #65（Next.js の更新）、#64 / #68 / #69（認可の修正） | 既存機能の回帰（E2E 全件） |
 | R1 | O1 + O1b + O2（SW とリスト詳細のルート変更） | 実機（iOS / Android）でオフライン起動、更新トースト、旧 URL のリダイレクト。**リリース後 1 週間は様子を見て**、問題がなければ R2 に進む |
-| R2a | O3 のマイグレーションだけ | `migrate` ジョブの成功、既存機能に影響がないこと |
-| R2b | O3 のコード + O4 + O5（サーバーの同期 API） | 既存の画面は tRPC の直接呼び出しのままなので、論理削除の挙動（削除したものが一覧に出ない）を確認する |
+| R2a | O3（expand マイグレーションだけ） | `migrate` ジョブの成功、既存機能に影響がないこと。Preview の DB には、#61 の A2 で追加するジョブで適用される |
+| R2b | O3b + O4 + O5（論理削除、サーバーの同期 API） | 既存の画面は tRPC の直接呼び出しのままなので、論理削除の挙動（削除したものが一覧に出ない）を確認する |
 | R3 | O6 + O7 + O8 + O9（クライアントのローカルファースト化）。**分けずに同時にリリースする** | O7 / O8 だけを出すと、オフライン時にログイン状態が失われ、ゲストの表示に切り替わる（O9 で解消）。家族の端末で、オフラインでの追加・チェック → 復帰後の反映を確認する |
-| R4 | O10（ドキュメント） | |
+| R4 | O10 + O11（ドキュメント、移行用コードの削除） | R3 から 2 週間安定したあと。O11 の後は、フラグによる切り戻しができなくなる |
 
 各リリースの共通手順:
 
@@ -339,28 +375,30 @@ output: {
 | リリース | 戻し方 |
 |---------|-------|
 | R1（SW） | **Vercel の Promote では SW が消えない**ので、kill switch の段階 1 → 必要なら段階 2 を前進デプロイする。ルート変更（O2）だけの問題なら Promote でよい |
-| R2a / R2b | アプリは Promote で戻せる。ただし R2b 以降に論理削除された行は、古いコードでは一覧に再び出てくる。戻す場合は `deleted_at IS NOT NULL` の行を物理削除する SQL を流す（バックアップを取ってから） |
-| R3 | アプリは Promote で戻せる（サーバーファーストの表示に戻る）。端末に残った未送信の変更は、ユーザー DB に保持されたままになり、再び R3 を出したときに送られる。SW のキャッシュが古い JS を出し続ける場合は、R1 の kill switch を併用する |
+| R2a / R2b | R2a は追加だけなので、戻す必要はない。R2b はアプリを Promote で戻せる。ただし R2b 以降に論理削除された行は、古いコードでは一覧に再び出てくる。戻す場合は `deleted_at IS NOT NULL` の行を物理削除する SQL を流す（バックアップを取ってから） |
+| R3 | **`NEXT_PUBLIC_LOCAL_FIRST=false` で前進デプロイする**（Promote より優先）。サーバーファーストの表示に戻り、SyncEngine は drain モードで未送信のキューを送り切るので、端末内の変更を失わない。Promote で戻すと、未送信の変更はユーザー DB に残ったまま送られなくなる（再び R3 を出したときに送られる）。SW のキャッシュが古い JS を出し続ける場合は、強制更新（`MIN_CLIENT_RELEASE`）か kill switch を併用する |
 
 ## 実装ステップ（1 ステップ = 1 PR、500 行以下目安）
 
 | # | PR | 主な内容 | 依存 | 規模目安 |
 |---|----|---------|------|---------|
-| O1 | `feat: Serwist を導入しアプリシェルをオフラインキャッシュ` | `@serwist/turbopack` の導入、`sw.ts`、プリキャッシュ、`/~offline`、`/api/**` を NetworkOnly に、キャッシュのバージョン管理、kill switch（段階 1・2）、SerwistProvider と旧 `/sw.js` の削除、Playwright の `offline` プロジェクト（`next build && next start`、`serviceWorkers: "allow"`）。既存のプロジェクトには `serviceWorkers: "block"` を設定。**この時点で、ゲストはオフラインでも完全に動く** | #65（Next.js 更新） | ~450 |
-| O1b | `feat: SW の更新通知と定期的な更新確認を追加` | `UpdateAvailableToast`、`SKIP_WAITING` のメッセージ、`visibilitychange` / 1 時間ごとの `registration.update()`、`controllerchange` でのリロード | O1 | ~200 |
+| O1 | `feat: Serwist を導入しアプリシェルをオフラインキャッシュ` | `@serwist/turbopack` の導入、`sw.ts`、プリキャッシュ、`/~offline`、`/api/**` を NetworkOnly に、キャッシュのバージョン管理、kill switch（段階 1・2）、SerwistProvider への置き換えと `public/sw.js` の自己解除化、Playwright の `offline` プロジェクト（`E2E_BUILD=true next build && E2E_TEST=true next start`、`serviceWorkers: "allow"`。テスト用 OTP ルートの条件は #61 の設計書と同じ）。既存のプロジェクトには `serviceWorkers: "block"` を設定。**この時点で、ゲストはオフラインでも完全に動く** | #65（Next.js 更新） | ~450 |
+| O1b | `feat: SW の更新通知・強制更新を追加` | `UpdateAvailableToast`、`SKIP_WAITING` のメッセージ、`visibilitychange` / 1 時間ごとの `registration.update()`、`controllerchange` でのリロード、`/api/version` と最低リリース番号による強制更新 | O1 | ~300 |
 | O2 | `refactor: リスト詳細を /lists/detail?id= の静的ルートに変更` | ルートの移動、旧 URL のリダイレクト、遷移元の修正、プリキャッシュ対象への追加、E2E の URL 修正 | O1b | ~200 |
-| O3 | `feat: 同期用に updated_at / deleted_at を追加し論理削除化` | Drizzle のマイグレーション、既存の削除を論理削除に、取得クエリの絞り込み、update / delete の WHERE にスコープ（#73-1）、作成時のクライアント ID 受け入れ | #64 | ~400 |
-| O4 | `feat: sync.push を実データに反映する冪等 API に作り直し` | 操作ごとの認可、パッチの検証と上限、LWW と削除優先、`opId` による冪等化、`serverTime`（#69 の push 部分を解消） | O3、#68、#69（merge 部分） | ~500 |
-| O5 | `feat: sync.pull をカーソル差分取得に作り直し` | カーソル、tombstone、`tagIds` の埋め込み、メンバーシップ、ページング | O3（O4 とは独立だが、ルールに従い O4 のマージ後に着手） | ~350 |
-| O6 | `feat: クライアント同期エンジン（push/pull/キュー圧縮）を実装` | Dexie v9、ユーザーごとの DB、`meta`、リポジトリ層の土台、SyncEngine の push/pull/バックオフ/ロック、SyncProvider の組み込み（この PR では hook はまだ tRPC 直呼びのまま。同期エンジンは「キューが空なら pull するだけ」で動く） | O4, O5 | ~500 |
-| O7 | `refactor: カタログ（items/tags）をローカルファーストに移行` | `useItems` / `useTags` / ミューテーションをリポジトリ経由に。マージ後のゲスト DB 消去と初回の全件 pull | O6 | ~400 |
-| O8 | `refactor: 買い物（lists/listItems/history）をローカルファーストに移行` | `useLists` / `useListMutations` / `useHistory*` の移行、`finishShopping` / `revertHistory` の複合操作 | O7 | ~500 |
-| O9 | `feat: オフライン時のセッション保持と同期状態 UI を追加` | `lastKnownUser`、`status: "offline"`、セッション切れの処理、ログアウト時の消去と確認、OfflineBanner / SyncStatusBadge / FailedOperationsSheet / 手動更新、オンライン限定操作の無効化 | O8、#61 の A2（AuthContext の置き換え） | ~450 |
+| O3 | `feat: 同期用の列を追加（expand マイグレーション）` | `updated_at` / `field_modified_at` / `deleted_at` / インデックスの追加だけ（手書きの SQL。既存行の `updated_at` は `created_at` で埋める）。コードはまだ使わない | #64 | ~150（SQL を除く） |
+| O3b | `feat: 削除を論理削除に変更しクライアントIDを受け入れ` | 既存の削除を論理削除に、取得クエリの `deleted_at IS NULL`、update / delete の WHERE にスコープ（#73-1）、通常の mutation でも `updated_at` / `field_modified_at` を更新、作成時のクライアント ID 受け入れ | O3 | ~400 |
+| O4 | `feat: sync.push を実データに反映する冪等 API に作り直し` | 操作ごとの認可、パッチの検証と上限、フィールド単位の LWW と削除優先、`opId` による冪等化、`serverTime`、`protocolVersion`（#69 の push 部分を解消） | O3b、#68、#69（merge 部分） | ~500 |
+| O5 | `feat: sync.pull をカーソル差分取得に作り直し` | カーソル（5 秒のさかのぼり）、tombstone、`tagIds` の埋め込み、メンバーシップ、ページング、`protocolVersion` | O3b（O4 とは独立だが、ルールに従い O4 のマージ後に着手） | ~350 |
+| O6 | `feat: クライアント同期エンジン（push/pull/キュー圧縮）を実装` | Dexie v9（`versionchange` / `blocked` の処理）、ユーザーごとの DB、`meta`、リポジトリ層の土台、SyncEngine の push/pull/バックオフ/ロック/drain モード、キューの圧縮（`inflight` を除外、`fieldTimes` の統合）、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、SyncProvider の組み込み（この PR では hook はまだ tRPC 直呼びのまま。同期エンジンは「キューが空なら pull するだけ」で動く） | O4, O5 | ~500 |
+| O7 | `refactor: カタログ（items/tags）をローカルファーストに移行` | `useItems` / `useTags` / ミューテーションをリポジトリ経由に（フラグが false なら従来の tRPC の分岐）。マージ後のゲスト DB 消去と初回の全件 pull | O6 | ~400 |
+| O8 | `refactor: 買い物（lists/listItems/history）をローカルファーストに移行` | `useLists` / `useListMutations` / `useHistory*` の移行（フラグで切り替え）、`finishShopping` / `revertHistory` の複合操作 | O7 | ~500 |
+| O9 | `feat: オフライン時のセッション保持と同期状態 UI を追加` | `lastKnownUser`、`status: "offline"`、セッション切れの処理、ログアウト時の消去と確認、OfflineBanner / SyncStatusBadge / FailedOperationsSheet / 手動更新、オンライン限定操作の無効化 | O8、#61 の A3（AuthContext の置き換え） | ~450 |
 | O10 | `docs: ADR-004/005 と同期実装状況を更新` | ADR の更新、`sync-implementation-status.md` の更新 | O9 | ~150 |
+| O11 | `refactor: サーバーファーストの分岐と移行用コードを削除` | hook の tRPC 分岐、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、`public/sw.js`（自己解除用）の削除 | O10、R3 から 2 週間安定 | ~300（削除が中心） |
 
 - **セキュリティ Issue との順序**: #64 / #68 / #69 は既存の API の不具合で、本設計のサーバー側ステップ（O3 / O4）が同じサービス層に乗るため、**先に修正してマージする**。#65（依存更新）は O1 の前に行う
-- **本番リリースの単位**は上の「リリース手順」に従う（R1 = O1〜O2、R2a / R2b = O3〜O5、R3 = O6〜O9 を同時）
-- **#61 との順序**: O1〜O8 は #61 と独立に進められる。O9 だけは #61 の A2 のマージ後に着手する。どちらも `priority:high` だが、**#61（A1〜A2）を先に進め、その後に O1 から始める**ことを推奨する。認証の置き換えが先に済んでいれば、O9 で `AuthContext` を二度書き換えずに済む
+- **本番リリースの単位**は上の「リリース手順」に従う（R1 = O1〜O2、R2a = O3、R2b = O3b〜O5、R3 = O6〜O9 を同時、R4 = O10〜O11）
+- **#61 との順序**: O1〜O8 は #61 と独立に進められる。O9 だけは #61 の A3 のマージ後に着手する。**#61 の切り替え（R1b）を先に本番へ出し、その後に O1 から始める**（決定事項 6）。認証の置き換えが先に済んでいれば、O9 で `AuthContext` を二度書き換えずに済む
 - O1 は単独でも価値が大きい（ゲストのオフライン起動が直る）。O1 だけ先行してもよい
 
 ## テスト計画
@@ -369,14 +407,17 @@ output: {
 
 | 対象 | テスト内容 |
 |------|-----------|
-| キューの圧縮 | create+update / update+update / create+delete / update+delete の各組み合わせ、別のエンティティは圧縮しない |
+| キューの圧縮 | create+update / update+update / create+delete / update+delete の各組み合わせ、別のエンティティは圧縮しない、`inflight` の操作は圧縮しない（送信中の create + 後からの delete で delete が残る）、統合後の `fieldTimes` がフィールドごとに新しい方になる |
 | 時刻の補正 | `serverTime` から offset を計算し、操作時刻に反映する |
 | SyncEngine.push | applied/duplicate はキューから削除、conflict はローカルに上書き、rejected は failed、ネットワークエラーはバックオフ、401 は sessionExpired、100 件ごとの分割 |
-| SyncEngine.pull | ページング、tombstone の削除、未送信の操作があるエンティティは上書きしない、グループ脱退時のデータ削除 |
+| SyncEngine.pull | ページング、tombstone の削除、未送信の操作があるエンティティは上書きしない、グループ脱退時のデータ削除、5 秒のさかのぼりで重複した行を冪等に適用する |
+| drain モード | `NEXT_PUBLIC_LOCAL_FIRST=false` でも未送信のキューを push し続け、空になったら止まる。新しい書き込みはキューに積まない |
+| Dexie のバージョン更新 | `versionchange` で DB を閉じてリロード、`blocked` で案内を表示 |
+| 強制更新 | `minClientRelease` が自分のリリース番号より大きいとモーダルを出し、更新処理を呼ぶ。`CLIENT_TOO_OLD` でも同じ。未送信のキューは消さない |
 | 同期ロック | 同時に呼んでも 1 本しか走らない |
 | リポジトリ | 書き込みとキューの記録がアトミック（失敗時は両方ロールバック）、ゲストではキューに積まない、`updatedAt` の更新 |
-| `sync.push`（サーバー、DB モック） | 正常系の create/update/delete、他人のデータは rejected、所属外グループは rejected、古い clientTime は conflict + serverRow、削除済みへの update は conflict、opId の重複は duplicate、パッチのバリデーションエラー |
-| `sync.pull`（サーバー） | カーソル以降の差分だけ返す、deleted_at を含む、他人・所属外グループのデータを含まない、500 行でのページング |
+| `sync.push`（サーバー、DB を使う） | 正常系の create/update/delete、他人のデータは rejected で serverRow を返さない、所属外グループは rejected、**フィールド単位の LWW**（古い `fieldTimes` のフィールドだけ捨てて partial、別のフィールドは適用される）、古い操作を適用しても後から届いた新しい操作が却下されない（`updated_at` を LWW に使っていないこと）、削除済みへの update は conflict、opId の重複は duplicate、未来の時刻は丸められる、パッチのバリデーションエラーと上限、対応外の `protocolVersion` は `CLIENT_TOO_OLD` |
+| `sync.pull`（サーバー、DB を使う） | カーソル以降の差分だけ返す（5 秒のさかのぼりを含む）、カーソルより前の時刻で後からコミットされた行も次の pull で取れる、deleted_at を含む、他人・所属外グループのデータを含まない、500 行でのページング |
 | 論理削除 | 既存の取得系 API が削除済みの行を返さない |
 | AuthContext のオフライン | ネットワークエラーかつ `lastKnownUser` あり → offline、401 → unauthenticated |
 | SW の設定 | `runtimeCaching` で `/api/**`（trpc / auth / e2e / ogp）が NetworkOnly になる（matcher の単体テスト）、キャッシュ名に `CACHE_VERSION` の接頭辞が付く |
@@ -387,7 +428,7 @@ output: {
 
 ### E2E（Playwright）
 
-オフラインのシナリオは `offline` プロジェクト（本番ビルド、chromium、`serviceWorkers: "allow"`）で実行する。SW が制御するまで待ってから（`navigator.serviceWorker.ready` の後に 1 回リロード）、`context.setOffline(true)` を使う。
+オフラインのシナリオは `offline` プロジェクト（`E2E_BUILD=true next build && E2E_TEST=true next start` の本番ビルド、chromium、`serviceWorkers: "allow"`）で実行する。ログインは #61 のテスト用 OTP ルートを使う。このルートは `NODE_ENV` ではなく、`E2E_BUILD`（ビルド時）と `E2E_TEST`・`VERCEL_ENV`・`E2E_SEED_TOKEN`（実行時）で有効にするので、本番ビルドでもログインできる。SW が制御するまで待ってから（`navigator.serviceWorker.ready` の後に 1 回リロード）、`context.setOffline(true)` を使う。
 
 | ID | シナリオ |
 |----|---------|
@@ -395,14 +436,17 @@ output: {
 | O-2 | （ゲスト）オフラインで未訪問のページ（タグ管理・履歴）に遷移できる。キャッシュにない URL は `/~offline` になる |
 | O-3 | （ログイン）オフラインでアイテムを追加・編集・削除 → 未同期件数が表示される → オンライン復帰 → 件数が 0 になり、別のコンテキスト（user-b）に反映される |
 | O-4 | （ログイン）オフラインでリストを作成 → 詳細を開いてチェック → 買い物完了 → 復帰後にサーバーの履歴に反映される |
-| O-5 | （ログイン 2 ユーザー）同じアイテムを A がオフラインで編集し、B がオンラインで後から編集 → A が復帰すると B の値が残る（LWW） |
+| O-5 | （ログイン 2 ユーザー）**同じフィールド**: A がオフラインで名前を編集し、B がオンラインで後から名前を編集 → A が復帰すると B の名前が残る（LWW） |
+| O-5b | （ログイン 2 ユーザー）**別のフィールド**: A が店内でオフラインのままリストのアイテムをチェックし、B が家でオンラインのまま後から同じアイテムのメモを編集 → A が復帰すると、**チェックとメモの両方が残る** |
 | O-6 | （ログイン）A がオフラインで編集中に B が削除 → A が復帰すると削除される（削除優先） |
 | O-7 | （ログイン）オフライン中はグループ作成ボタンが無効 |
 | O-8 | （ログイン）未送信の変更があるままログアウト → 確認ダイアログ → 破棄 → ゲストモードに戻り、ユーザーのデータが残っていない |
 | O-9 | SW の更新: 新しいビルドで更新トーストが出て、［更新］でリロードされる（可能なら。難しければ手動テストにする） |
 | O-10 | kill switch: 通常の SW が有効な状態 → `SW_KILL_SWITCH=true` のビルドに切り替え → 登録が解除され、`sm-` のキャッシュが空になり、ページが通常どおり読める。`NEXT_PUBLIC_SW_ENABLED=false` でも同様 |
 | O-11 | `/serwist/sw.js` のレスポンスに `Service-Worker-Allowed: /` と `Cache-Control: no-cache` が付き、`/api/trpc` のレスポンスに `Cache-Control: private, no-store` が付く |
-| O-12 | 既存の `/sw.js` が登録された状態から、新しい SW に置き換わる（旧 SW を登録した状態を作ってから、新しいビルドを開く） |
+| O-12 | 既存の `/sw.js` が登録された状態から、新しい SW に置き換わる（旧 SW を登録した状態を作ってから、新しいビルドを開く）。`/sw.js` だけが登録された端末は、自己解除の SW で登録が解除される |
+| O-13 | フラグでの切り戻し: オフラインで変更 → `NEXT_PUBLIC_LOCAL_FIRST=false` のビルドで復帰 → 未送信の変更がサーバーに送られ、サーバーファーストの表示に反映される |
+| O-14 | 強制更新: `MIN_CLIENT_RELEASE` を現在より大きくしたサーバーで起動 → 更新のモーダルが出てリロードされ、未送信の変更が失われない |
 | 既存 | 既存の spec（`serviceWorkers: "block"`）が全件パスする（ローカルファースト化の回帰確認） |
 
 ### 手動テスト（実機）
@@ -439,13 +483,16 @@ output: {
 - **マージ（初回ログイン）との関係**: 既存の `sync.merge` と `DataMergeContext` は維持する。将来、マージを「ゲスト DB のデータを push に積み直す」形に統一できるが、本 Issue の対象外とする
 - **パフォーマンス**: 読み取りを Dexie に一本化することで、画面の表示はサーバーファーストより速くなる。pull はカーソルによる差分取得なので、通信量は小さい
 - **ADR の更新**: ADR-004 の「現在の実装状況：C: 現状維持」を「A: ローカルファースト移行」に、ADR-005 の `@serwist/next` を `@serwist/turbopack` に更新する（O10）
+- **本番で同期の不具合が出たとき**: (1) `NEXT_PUBLIC_LOCAL_FIRST=false` で前進デプロイし、サーバーファーストに戻す（未送信のキューは drain される）。(2) サーバーが不正な操作を受けている場合は、`MIN_CLIENT_RELEASE` を上げて古いクライアントを強制更新する。(3) SW が原因なら kill switch。(4) `sync_operations` の `rejected` / `conflict` の件数をログで確認し、原因を調べる
 - **本番の既存データ**: O3 のマイグレーションは列の追加だけにし、既存のデータを保持する。R3 のリリース直後は、既存のログインユーザーのユーザー DB が空なので、初回の全件 pull が走る（「## 本番環境への影響とリリース手順」参照）
 
-## ユーザーに確認したいこと
+## 決定事項（2026-11-16 ユーザー承認）
 
-1. **ログイン中もこの端末の IndexedDB を正として動かす「ローカルファースト」方式に移行してよいですか？**（推奨。オフラインで作ったリストでそのまま買い物できる。hook の書き換えが大きく、PR は約 10 本の見込み。代替の TanStack Query 永続化は、変更量は少ないが、オフラインでの新規作成と、その後の連続操作に弱い）
-2. **競合は「変更したフィールドだけ送る + 新しい操作が勝つ + 削除が優先」で自動解決し、他の端末の変更で上書きされたときはトーストで知らせるだけ、でよいですか？**（どちらを残すか選ばせる UI は作らない）
-3. **リスト詳細の URL を `/lists/<id>` から `/lists/detail?id=<id>` に変更してよいですか？**（オフラインで作ったリストを開くために必要。旧 URL はリダイレクトで残す）
-4. **グループの作成・参加・メンバー管理・招待コードの再生成は「オンライン時のみ」でよいですか？**（アイテム・タグ・リスト・履歴はオフラインで可能）
-5. **同期はイベント駆動（書き込み後・オンライン復帰時・アプリを前面に戻したとき・手動更新）だけでよいですか？ 定期的な自動取得（例: 60 秒ごと）は必要ですか？**（推奨は定期取得なし）
-6. **#61（認証の変更）を先に進め、その後で本 Issue に着手する順番でよいですか？**（O1 の SW キャッシュだけは、ゲストのオフライン起動が直るので先行してもよい）
+| # | 項目 | 決定 |
+|---|------|------|
+| 1 | ログイン中のデータアーキテクチャ | 端末の IndexedDB を正とする**ローカルファースト + outbox** に移行する（TanStack Query の永続化は採用しない） |
+| 2 | 競合解決 | **パッチ送信 + 新しい操作が勝つ（LWW）+ 削除優先**で自動解決し、他の端末の変更で上書きされたときはトーストで知らせるだけ。選ばせる UI は作らない。設計レビューを受けて、LWW は**フィールド単位**で比べる（別々のフィールドの編集が両方残る） |
+| 3 | リスト詳細の URL | `/lists/<id>` から **`/lists/detail?id=<id>`** に変更する。旧 URL はリダイレクトで残す |
+| 4 | グループ管理 | グループの作成・参加・メンバー管理・招待コードの再生成は**オンライン時のみ** |
+| 5 | 同期のタイミング | **イベント駆動のみ**（書き込み後・オンライン復帰時・前面に戻ったとき・手動更新）。定期的な自動取得はしない |
+| 6 | #61 との順序 | **#61 を先に進め**、その後で本 Issue に着手する（O1 の SW キャッシュだけは先行してもよい） |
