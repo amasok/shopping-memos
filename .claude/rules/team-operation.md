@@ -28,3 +28,8 @@
 - コード全文を貼らない。パスと行番号で示す
 - 報告は数行にする
 - 同じ調査を繰り返さない。結果は相手に渡して共有する
+
+## Vercel のデプロイ上限対策
+
+- Vercel は main と develop だけデプロイする（`vercel.json` の `git.deploymentEnabled`）。docs・.claude・e2e・テスト・CI だけの変更はビルドを省く（`ignoreCommand`）
+- push はまとめて行う。空コミットでの再デプロイはしない
