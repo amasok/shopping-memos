@@ -70,14 +70,27 @@ async function isE2EUserId(userId: string): Promise<boolean> {
   return isE2EEmail(user?.email)
 }
 
-/** オーナーが E2E 用ドメインのユーザーであるグループか */
-async function isE2EGroup(groupId: string): Promise<boolean> {
+/**
+ * 指定したグループのうち、オーナーが全員 E2E 用ドメインのユーザーであるものだけを返す。
+ * E2E ユーザーが参加しているだけの、ほかのユーザーのグループは含めない
+ */
+async function filterE2EGroupIds(groupIds: string[]): Promise<string[]> {
+  if (groupIds.length === 0) return []
   const owners = await db
-    .select({ email: users.email })
+    .select({ groupId: groupMembers.groupId, email: users.email })
     .from(groupMembers)
     .innerJoin(users, eq(groupMembers.userId, users.id))
-    .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.role, "owner")))
-  return owners.length > 0 && owners.every((o) => isE2EEmail(o.email))
+    .where(and(inArray(groupMembers.groupId, groupIds), eq(groupMembers.role, "owner")))
+  const allE2E = new Map<string, boolean>()
+  for (const o of owners) {
+    allE2E.set(o.groupId, (allE2E.get(o.groupId) ?? true) && isE2EEmail(o.email))
+  }
+  return groupIds.filter((id) => allE2E.get(id) === true)
+}
+
+/** オーナーが E2E 用ドメインのユーザーであるグループか */
+async function isE2EGroup(groupId: string): Promise<boolean> {
+  return (await filterE2EGroupIds([groupId])).length === 1
 }
 
 export async function POST(request: Request) {
@@ -110,7 +123,11 @@ export async function POST(request: Request) {
             .select({ groupId: groupMembers.groupId })
             .from(groupMembers)
             .where(inArray(groupMembers.userId, userIds))
-          const groupIds = [...new Set(memberRecords.map((m) => m.groupId))]
+          // 消すのは E2E ユーザーがオーナーのグループだけ。ほかのグループでの
+          // メンバーシップは、ユーザーの削除（cascade）で消える
+          const groupIds = await filterE2EGroupIds([
+            ...new Set(memberRecords.map((m) => m.groupId)),
+          ])
 
           // リスト → リストアイテム → アイテム → タグ → グループメンバー → グループ → ユーザー の順で削除
           if (groupIds.length > 0) {
@@ -199,7 +216,12 @@ export async function POST(request: Request) {
             .select({ groupId: groupMembers.groupId })
             .from(groupMembers)
             .where(inArray(groupMembers.userId, e2eUserIds))
-          const grpIds = [...new Set(memberRecs.map((m) => m.groupId))]
+          // 消すのは E2E ユーザーがオーナーのグループだけ
+          const grpIds = await filterE2EGroupIds([
+            ...new Set(memberRecs.map((m) => m.groupId)),
+          ])
+          // ほかのユーザーのグループからは、E2E ユーザーのメンバーシップだけを外す
+          await db.delete(groupMembers).where(inArray(groupMembers.userId, e2eUserIds))
 
           if (grpIds.length > 0) {
             // アイテム（グループ紐付き）削除

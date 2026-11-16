@@ -55,6 +55,7 @@ npm run test:run              # Vitest 1回実行
 npm run test:coverage         # カバレッジ付き
 npm run test:e2e              # Playwright（E2E_BUILD=true E2E_TEST=true で dev サーバーを自動起動。E2E_SEED_TOKEN は自動生成）
 npm run test:e2e:ui           # Playwright UI モード
+# 自分で起動したサーバーを使い回す場合は、サーバーを E2E_BUILD=true E2E_TEST=true E2E_SEED_TOKEN=<32文字以上> で起動し、テストにも同じ E2E_SEED_TOKEN を渡す
 
 # Docker
 docker compose down           # 停止

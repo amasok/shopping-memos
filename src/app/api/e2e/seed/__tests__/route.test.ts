@@ -42,10 +42,13 @@ vi.mock("@/infrastructure/db/drizzle/client", () => {
 })
 
 import { POST } from "../route.e2e"
+import { groupMembers, groups } from "@/infrastructure/db/drizzle/schema"
 
 const TOKEN = "t".repeat(64)
 const E2E_USER = [{ email: "user-a@e2e-test.local" }]
 const REAL_USER = [{ email: "someone@example.com" }]
+/** グループのオーナーを引く select の結果 */
+const owner = (groupId: string, email: string) => [{ groupId, email }]
 
 function post(body: unknown, token: string | null = TOKEN) {
   return POST(
@@ -168,7 +171,7 @@ describe("POST /api/e2e/seed のアクション", () => {
   })
 
   it("add-group-member はオーナーが E2E 用ユーザーでないグループには追加できない", async () => {
-    selectResults.push(E2E_USER, REAL_USER)
+    selectResults.push(E2E_USER, owner("real-group", "someone@example.com"))
     const res = await post({ action: "add-group-member", data: { groupId: "real-group", userId: "u1" } })
     expect(res.status).toBe(403)
     expect(inserts).toHaveLength(0)
@@ -181,7 +184,7 @@ describe("POST /api/e2e/seed のアクション", () => {
   })
 
   it("add-group-member は E2E 用ユーザーと E2E 用グループなら追加する", async () => {
-    selectResults.push(E2E_USER, E2E_USER)
+    selectResults.push(E2E_USER, owner("g1", "user-a@e2e-test.local"))
     const res = await post({ action: "add-group-member", data: { groupId: "g1", userId: "u2" } })
     expect(res.status).toBe(200)
     expect(inserts).toHaveLength(1)
@@ -197,7 +200,7 @@ describe("POST /api/e2e/seed のアクション", () => {
   })
 
   it("seed-items は E2E 用以外のグループにアイテムを作れない", async () => {
-    selectResults.push(E2E_USER, REAL_USER)
+    selectResults.push(E2E_USER, owner("real-group", "someone@example.com"))
     const res = await post({
       action: "seed-items",
       data: { userId: "u1", groupId: "real-group", items: [{ id: "i1", name: "牛乳" }] },
@@ -206,13 +209,44 @@ describe("POST /api/e2e/seed のアクション", () => {
   })
 
   it("seed-items は E2E 用ユーザーのアイテムを作成する", async () => {
-    selectResults.push(E2E_USER, E2E_USER)
+    selectResults.push(E2E_USER, owner("g1", "user-a@e2e-test.local"))
     const res = await post({
       action: "seed-items",
       data: { userId: "u1", groupId: "g1", items: [{ id: "i1", name: "牛乳" }, { id: "i2", name: "卵" }] },
     })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ success: true, count: 2 })
+  })
+
+  it("cleanup は E2E ユーザーが参加しているだけのほかのユーザーのグループを消さない", async () => {
+    // e2e ユーザー → 所属グループ → オーナー（E2E ではない）→ リスト・アイテム
+    selectResults.push([{ id: "u1" }], [{ groupId: "real-group" }], owner("real-group", "someone@example.com"))
+    const res = await post({ action: "cleanup" })
+    expect(res.status).toBe(200)
+    expect(deletes).not.toContain(groups)
+    expect(deletes).not.toContain(groupMembers)
+  })
+
+  it("cleanup は E2E ユーザーがオーナーのグループを消す", async () => {
+    selectResults.push([{ id: "u1" }], [{ groupId: "g1" }], owner("g1", "user-a@e2e-test.local"))
+    const res = await post({ action: "cleanup" })
+    expect(res.status).toBe(200)
+    expect(deletes).toContain(groups)
+  })
+
+  it("cleanup-groups はほかのユーザーのグループを消さず、E2E ユーザーのメンバーシップだけを外す", async () => {
+    selectResults.push([{ id: "u1" }], [{ groupId: "real-group" }], owner("real-group", "someone@example.com"))
+    const res = await post({ action: "cleanup-groups" })
+    expect(res.status).toBe(200)
+    expect(deletes).not.toContain(groups)
+    expect(deletes).toContain(groupMembers)
+  })
+
+  it("cleanup-groups は E2E ユーザーがオーナーのグループを消す", async () => {
+    selectResults.push([{ id: "u1" }], [{ groupId: "g1" }], owner("g1", "user-a@e2e-test.local"))
+    const res = await post({ action: "cleanup-groups" })
+    expect(res.status).toBe(200)
+    expect(deletes).toContain(groups)
   })
 
   it("DB のエラー内容をレスポンスに含めない", async () => {
