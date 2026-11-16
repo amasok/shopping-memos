@@ -51,4 +51,20 @@ describe("SW のキャッシュ設定", () => {
       expect(m(mk("/api/auth/session", { dest: "document", rsc: true }))).toBe(false)
     }
   })
+
+  it("画像・フォントは同一オリジンのものだけキャッシュする（opaque レスポンスを保存しない）", () => {
+    const mk = (dest: string, sameOrigin: boolean) =>
+      ({
+        url: new URL("https://example.com/a"),
+        request: { destination: dest, headers: new Headers() },
+        sameOrigin,
+      }) as never
+    for (const dest of ["image", "font"]) {
+      const rt = runtimeCaching.find((r) =>
+        (r.matcher as (o: never) => boolean)(mk(dest, true))
+      )
+      expect(rt).toBeDefined()
+      expect((rt!.matcher as (o: never) => boolean)(mk(dest, false))).toBe(false)
+    }
+  })
 })

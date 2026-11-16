@@ -42,14 +42,17 @@ export const runtimeCaching: RuntimeCaching[] = [
     }),
   },
   {
-    matcher: ({ request }) => request.destination === "image",
+    // 他オリジンの画像は opaque レスポンス（容量を大きく数える）になるためキャッシュしない
+    matcher: ({ request, sameOrigin }) =>
+      sameOrigin && request.destination === "image",
     handler: new StaleWhileRevalidate({
       cacheName: CACHE_NAMES.images,
       plugins: [new ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 30 * DAY })],
     }),
   },
   {
-    matcher: ({ request }) => request.destination === "font",
+    matcher: ({ request, sameOrigin }) =>
+      sameOrigin && request.destination === "font",
     handler: new CacheFirst({
       cacheName: CACHE_NAMES.fonts,
       plugins: [new ExpirationPlugin({ maxEntries: 10, maxAgeSeconds: 365 * DAY })],
