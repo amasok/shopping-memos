@@ -222,3 +222,50 @@ describe("parseOGP: og:image の解決 (#66)", () => {
     expect(parseOGP(`<meta property="og:image" content="data:image/png;base64,AAAA">`, URL_)).toBeNull()
   })
 })
+
+describe("parseOGP: 読み込み上限（2MiB）いっぱいの入力 (#108 の回帰)", () => {
+  const MAX = 2 * 1024 * 1024
+  const LIMIT_MS = 1000
+
+  const time = (fn: () => void): number => {
+    const start = performance.now()
+    fn()
+    return performance.now() - start
+  }
+
+  it("巨大なスクリプトの後ろに og タグがある 2MiB 近い <head>（YouTube 型）を、すぐ解析できる", () => {
+    const script = `<script>var d = "${"x".repeat(MAX - 4096)}";</script>`
+    const html = `<html><head>${script}<meta property="og:title" content="タイトル"></head>`
+    let result: ReturnType<typeof parseOGP> = null
+
+    const ms = time(() => {
+      result = parseOGP(html, URL_)
+    })
+
+    expect(result).toMatchObject({ title: "タイトル" })
+    expect(ms).toBeLessThan(LIMIT_MS)
+  })
+
+  it("2MiB の <meta を閉じずに繰り返す入力でもすぐ返る", () => {
+    const html = "<meta ".repeat(Math.floor(MAX / 6))
+
+    expect(time(() => parseOGP(html, URL_))).toBeLessThan(LIMIT_MS)
+  })
+
+  it("2MiB の閉じていない <title と、閉じ引用符のない属性でもすぐ返る", () => {
+    expect(time(() => parseOGP("<title>" + "<title>".repeat(Math.floor(MAX / 7)), URL_))).toBeLessThan(LIMIT_MS)
+    expect(time(() => parseOGP(`<meta property="og:title" content="` + "x".repeat(MAX), URL_))).toBeLessThan(LIMIT_MS)
+  })
+
+  it("2MiB の巨大なスクリプトの中に <meta のような文字列が大量にあっても、og タグを正しく取れる", () => {
+    const script = `<script>${'"<meta name=x>"+'.repeat(Math.floor((MAX - 4096) / 16))}0</script>`
+    const html = `<html><head>${script}<meta property="og:title" content="本物"></head>`
+
+    const ms = time(() => {
+      expect(parseOGP(html, URL_)?.title).toBe("本物")
+    })
+
+    expect(ms).toBeLessThan(LIMIT_MS * 2)
+  })
+})
+
