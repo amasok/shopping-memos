@@ -524,7 +524,8 @@ Preview の URL は、develop ブランチの固定 URL（`shopping-memos-git-de
 |---|------|------|
 | 1 | 認証ライブラリ | Auth.js から **Better Auth** に移行する |
 | 2 | メール認証方式 | **6 桁のワンタイムコード（OTP）**。マジックリンクは使わない |
-| 3 | メール送信サービス | **Resend**（承認済み）。**送信元にできる独自ドメインの有無は回答待ち**（下記「未確定事項 1」） |
+| 3 | メール送信サービス | **Resend**（承認済み）。送信元は `noreply@mail.counoco.net`（下記「決定事項 8」） |
+| 8 | 独自ドメイン | ユーザー所有の **`counoco.net`（Cloudflare DNS）** を使う。本番アプリは **`shopping.counoco.net`**（Vercel のカスタムドメイン、Cloudflare は DNS only の CNAME）。パスキーの RP ID も `shopping.counoco.net`。メール送信は **`mail.counoco.net`** サブドメインを Resend で検証（SPF / DKIM / DMARC を Cloudflare に登録）し、ルートドメインの評判と分離する。`shopping-memos.vercel.app` は `shopping.counoco.net` へリダイレクトする（A5 より前に切り替え、既存の Google ログインのリダイレクト URI にも新ドメインを追加） |
 | 7 | ボット対策 | **Cloudflare Turnstile を採用**する（A3 に含める）。OTP の送信上限に達しても止めずに、対話型のチャレンジ必須に切り替える |
 | 4 | パスキーの位置づけ・復旧 | パスキーは**任意**（ログイン後に登録を提案）。復旧手段はメールのコード。Vercel のプレビュー環境ではパスキーを無効にする |
 | 5 | 表示名 | 初回ログイン時に**表示名の入力を必須**にする |
@@ -534,6 +535,7 @@ Preview の URL は、develop ブランチの固定 URL（`shopping-memos-git-de
 
 設計レビューで新たに出た項目。上の決定事項とは別に、該当する PR の着手前に決める。
 
-1. **【回答待ち】独自ドメインの有無**: 現在の本番ドメインは `shopping-memos.vercel.app`。独自ドメインの有無はユーザーに確認中で、次の 2 点がこれで決まる
-   - **パスキーの RP ID**: `*.vercel.app` のままパスキーを導入すると、独自ドメインに移ったときに全員のパスキーが使えなくなる。そのため、**独自ドメインを使うかどうかが決まるまで、A5（パスキー）には着手しない**
-   - **メールの送信元**: Resend は、送信元ドメインを検証（SPF / DKIM）しないと、アカウントの持ち主の自分宛てにしか送れない。そのため OTP の送信（A1、R1a 以降）には独自ドメインが必要。無い場合の代替案は、独自ドメインを取得する（年 1,500〜2,000 円程度。推奨。本番ドメインと兼ねられる）か、別の送信手段（例: Gmail の SMTP をアプリパスワード経由で使う。送信元が個人の Gmail になり、送信数の上限も厳しいため非推奨）
+1. **【解決済み】独自ドメイン**: `counoco.net` を使う（決定事項 8）。R1a より前に、ユーザー作業として次を行う
+   - Vercel に `shopping.counoco.net` を追加し、Cloudflare に CNAME（`cname.vercel-dns.com`、プロキシ OFF）を登録
+   - Resend に `mail.counoco.net` を追加し、表示される SPF / DKIM レコードと DMARC（`p=none` から開始）を Cloudflare に登録
+   - Turnstile のウィジェットを `shopping.counoco.net` と Preview 用ホストで作成
