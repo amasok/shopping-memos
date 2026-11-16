@@ -154,4 +154,65 @@ test.describe("OGPプレビュー", () => {
     await page.waitForTimeout(500)
     expect([...requestedUrls]).toEqual(["https://first.com"])
   })
+
+  test("L-8: ItemFormでOGP取得に失敗したときはドメインとURLだけのカードが表示される（#140）", async ({ page }) => {
+    await mockOGPFailure(page)
+
+    await page.locator("[data-testid='fab-add-item']").click()
+    await waitForBottomSheet(page)
+
+    await page.locator("[data-testid='item-memo-input']").fill("https://example.com/item/1")
+
+    const fallback = page.locator("[data-testid='ogp-link-fallback']")
+    await expect(fallback).toBeVisible()
+    await expect(fallback).toContainText("example.com")
+    await expect(fallback).toHaveAttribute("href", "https://example.com/item/1")
+    await expect(page.locator("[data-testid='ogp-preview']")).not.toBeVisible()
+  })
+
+  test("L-9: ホームでOGP取得に失敗したときはリンクだけのカードも表示されない（#140）", async ({ page }) => {
+    await mockOGPFailure(page)
+
+    const item = createItem({ name: "商品", memo: "https://example.com" })
+    await seedTable(page, "items", [item])
+    const ogpResponse = page.waitForResponse("**/api/ogp**")
+    await page.reload()
+    await ogpResponse
+
+    await expect(page.locator(`a[href='https://example.com']`).first()).toBeVisible()
+    // 失敗の応答を受けてスケルトンが消えたあとも、リンクだけのカードは出ない
+    await expect(page.locator(".animate-pulse")).toHaveCount(0)
+    await expect(page.locator("[data-testid='ogp-link-fallback']")).toHaveCount(0)
+  })
+
+  test("L-10: 画像ファイルのURLは、ホームでも画像付きのカードとして表示される（#140）", async ({ page }) => {
+    const imageUrl = "https://example.com/uploads/photo.jpg"
+    await page.route("**/api/ogp**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ url: imageUrl, image: imageUrl, title: "photo.jpg" }),
+      })
+    )
+    // 外部の画像は読みに行かず、1x1 の PNG を返す
+    await page.route(imageUrl, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+          "base64"
+        ),
+      })
+    )
+
+    const item = createItem({ name: "写真", memo: imageUrl })
+    await seedTable(page, "items", [item])
+    await page.reload()
+
+    const card = page.locator("[data-testid='ogp-preview']")
+    await expect(card).toBeVisible()
+    await expect(card).toContainText("photo.jpg")
+    await expect(card.locator("img")).toHaveAttribute("src", imageUrl)
+  })
 })
