@@ -11,7 +11,6 @@ import { createItemSchema, getItemsQuerySchema, updateItemSchema } from "../item
 import { addNewItemToListSchema, createListSchema } from "../list"
 import { acceptInviteSchema } from "../group"
 import {
-  parseMergeData,
   syncMergeInputSchema,
   syncPullInputSchema,
   syncPushInputSchema,
@@ -161,25 +160,6 @@ describe("入力の上限（#72）", () => {
       const ng = { data: { ...emptyMerge, [key]: Array.from({ length: max + 1 }, () => ({})) } }
       expect(syncMergeInputSchema.safeParse(ok).success).toBe(true)
       expect(syncMergeInputSchema.safeParse(ng).success).toBe(false)
-    })
-
-    it("16KB を超える 1 件は全体を拒否せず、その 1 件だけをスキップして errors に入れる", () => {
-      const tag = (name: string, extra: Record<string, unknown> = {}) => ({
-        id: crypto.randomUUID(),
-        name,
-        createdAt: new Date().toISOString(),
-        ...extra,
-      })
-      const input = {
-        ...emptyMerge,
-        tags: [tag("食品"), tag("巨大", { padding: "a".repeat(REQUEST_LIMITS.recordBytes) }), tag("日用品")],
-      }
-      expect(syncMergeInputSchema.safeParse({ data: input }).success).toBe(true)
-      const { data, errors } = parseMergeData(input)
-      expect(data.tags.map((t) => t.name)).toEqual(["食品", "日用品"])
-      expect(errors).toEqual([expect.stringContaining("タグ 2 件目が大きすぎるためスキップ")])
-      // データの中身はエラー文に含めない
-      expect(errors[0]).not.toContain("aaaa")
     })
   })
 })

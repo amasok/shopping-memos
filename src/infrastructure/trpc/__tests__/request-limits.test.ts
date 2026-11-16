@@ -112,9 +112,10 @@ describe("enforceRequestLimits", () => {
     expect("response" in result && result.response.status).toBe(413)
   })
 
-  it("既定の上限: 通常は 2MB、sync.merge 単独は 10MB", () => {
+  it("既定の上限: 通常は 2MB、sync.merge 単独は 4MB（Vercel の 4.5MB より下）", () => {
     expect(REQUEST_LIMITS.bodyBytes).toBe(2 * 1024 * 1024)
-    expect(REQUEST_LIMITS.mergeBodyBytes).toBe(10 * 1024 * 1024)
+    expect(REQUEST_LIMITS.mergeBodyBytes).toBe(4 * 1024 * 1024)
+    expect(REQUEST_LIMITS.mergeBodyBytes).toBeLessThan(4.5 * 1024 * 1024)
   })
 
   it("GET は本文を読まずに通す", async () => {
