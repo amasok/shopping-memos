@@ -12,9 +12,15 @@ export const TEXT_LIMITS = {
   quantityMax: 9999,
 } as const
 
-/** 文字数の上限に収める */
+/**
+ * 文字数の上限に収める。数え方は Zod の `.max()` と同じ UTF-16 の単位。
+ * 切る位置がサロゲートペア（絵文字など）の途中なら、1 文字手前で切る
+ */
 export function clipText(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value
+  if (value.length <= max) return value
+  const lastKept = value.charCodeAt(max - 1)
+  const isHighSurrogate = lastKept >= 0xd800 && lastKept <= 0xdbff
+  return value.slice(0, isHighSurrogate ? max - 1 : max)
 }
 
 /** 数量を、1〜上限の整数に収める */

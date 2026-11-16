@@ -160,4 +160,29 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
       expect(d.listItems[0].quantity).toBe(1)
     }
   })
+
+  it("取り込めなかったデータがあれば、リロードをまたいで通知できるよう件数を保存する", async () => {
+    state.tags = [{ id: uuid(), name: "食品", createdAt: NOW, updatedAt: NOW }]
+    state.items = []
+    state.lists = []
+    state.listItems = []
+    state.mutateAsync.mockResolvedValue({
+      mergeResult: { success: false, mergedCounts: {}, errors: ["a", "b"] },
+    })
+
+    await mergePayload()
+
+    await waitFor(() => expect(localStorage.getItem("data-merge-skipped-user-1")).toBe("2"))
+  })
+
+  it("取り込めなかったデータがなければ、件数を保存しない", async () => {
+    state.tags = [{ id: uuid(), name: "食品", createdAt: NOW, updatedAt: NOW }]
+    state.items = []
+    state.lists = []
+    state.listItems = []
+
+    await mergePayload()
+
+    expect(localStorage.getItem("data-merge-skipped-user-1")).toBeNull()
+  })
 })

@@ -184,6 +184,14 @@ describe("送信前の整形（clipText / clampQuantity）", () => {
     expect(clipText("abc", 5)).toBe("abc")
     expect(clipText("abcdef", 5)).toBe("abcde")
   })
+  it("clipText は絵文字（サロゲートペア）の途中で切らない", () => {
+    // 😀 は UTF-16 で 2 単位。5 単位で切ると 3 つ目の絵文字の前半で切れるので、1 文字手前（4 単位）で切る
+    const clipped = clipText("😀".repeat(3), 5)
+    expect(clipped).toBe("😀😀")
+    expect(clipped.length).toBeLessThanOrEqual(5)
+    // ちょうど境界なら、そのまま
+    expect(clipText("😀😀", 4)).toBe("😀😀")
+  })
   it("clampQuantity は 1〜上限の整数に収める", () => {
     expect(clampQuantity(0)).toBe(1)
     expect(clampQuantity(-3)).toBe(1)

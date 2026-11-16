@@ -19,6 +19,8 @@ const clipNullable = (value: string | null | undefined, max: number) =>
   value == null ? null : clipText(value, max)
 
 const MERGE_COMPLETED_KEY = "data-merge-completed"
+/** 取り込めなかった件数（リロードをまたいで表示するため localStorage に保存する） */
+const MERGE_SKIPPED_KEY = "data-merge-skipped"
 const SELECTED_GROUP_KEY = "selectedGroupId"
 
 interface MergedCounts {
@@ -40,6 +42,10 @@ interface DataMergeContextValue {
   mergedCounts: MergedCounts | null
   /** マージをリトライする */
   retryMerge: () => void
+  /** 取り込めなかった件数（0 なら通知しない） */
+  skippedCount: number
+  /** 取り込めなかった件数の通知を閉じる */
+  dismissSkipped: () => void
 }
 
 const DataMergeContext = createContext<DataMergeContextValue | null>(null)
@@ -54,6 +60,7 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
   const [isMergeCompleted, setIsMergeCompleted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mergedCounts, setMergedCounts] = useState<MergedCounts | null>(null)
+  const [skippedCount, setSkippedCount] = useState(0)
   const mergeAttempted = useRef(false)
 
   const mergeMutation = trpc.sync.merge.useMutation()
@@ -71,6 +78,14 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     if (completed) {
       setIsMergeCompleted(true)
     }
+    // マージ後のリロードをまたいで、取り込めなかった件数を通知する
+    const skipped = Number(localStorage.getItem(`${MERGE_SKIPPED_KEY}-${user.id}`) ?? 0)
+    setSkippedCount(Number.isFinite(skipped) && skipped > 0 ? skipped : 0)
+  }, [user])
+
+  const dismissSkipped = useCallback(() => {
+    if (user) localStorage.removeItem(`${MERGE_SKIPPED_KEY}-${user.id}`)
+    setSkippedCount(0)
   }, [user])
 
   const executeMerge = useCallback(async () => {
@@ -164,6 +179,12 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
 
       console.log("Data merge completed:", result.mergeResult)
 
+      // 取り込めなかったデータ（形式が不正・重複など）があれば、リロード後に件数を通知する
+      const skipped = result.mergeResult.errors.length
+      if (skipped > 0) {
+        localStorage.setItem(`${MERGE_SKIPPED_KEY}-${user.id}`, String(skipped))
+      }
+
       // マージされたアイテムが個人アイテム（groupId = undefined）を含む場合、
       // selectedGroupId を undefined にリセットして個人モードに切り替える
       // これにより、マージ後に個人アイテムが表示される
@@ -210,6 +231,8 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
         error,
         mergedCounts,
         retryMerge,
+        skippedCount,
+        dismissSkipped,
       }}
     >
       {children}
