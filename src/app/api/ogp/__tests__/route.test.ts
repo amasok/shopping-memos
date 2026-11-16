@@ -272,28 +272,42 @@ describe("GET /api/ogp: 圧縮された応答", () => {
     expect((await res.json()).title).toBe("圧縮されたページ")
   })
 
-  it("展開すると巨大になる応答（zip bomb）は展開後 2MiB で読むのをやめる", async () => {
-    // 64MiB の空白を圧縮すると数十 KB になる。og タグは上限より後ろにあるので読まれない
-    const bomb = zlib.gzipSync(
-      Buffer.concat([Buffer.from("<html><head>"), Buffer.alloc(64 * 1024 * 1024, " "), Buffer.from(HTML)])
-    )
-    mockFetch.mockResolvedValueOnce(encodedResponse(bomb, "gzip"))
-    const inflated: number[] = []
-    const createGunzip = zlib.createGunzip
-    const spy = vi.spyOn(zlib, "createGunzip").mockImplementation((...args) => {
-      const stream = createGunzip(...args)
-      stream.on("data", (chunk: Buffer) => inflated.push(chunk.byteLength))
-      return stream
-    })
+  it.each([
+    ["gzip", "createGunzip", (b: Buffer) => zlib.gzipSync(b)],
+    [
+      "br",
+      "createBrotliDecompress",
+      (b: Buffer) =>
+        zlib.brotliCompressSync(b, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } }),
+    ],
+  ] as const)(
+    "展開すると巨大になる %s の応答（zip bomb）は、展開後 2MiB で読むのも展開もやめる",
+    async (encoding, factory, compress) => {
+      // 64MiB の空白を圧縮すると、gzip で数十 KB、br ではさらに小さくなる。og タグは上限より後ろにあるので読まれない
+      const bomb = compress(
+        Buffer.concat([Buffer.from("<html><head>"), Buffer.alloc(64 * 1024 * 1024, " "), Buffer.from(HTML)])
+      )
+      mockFetch.mockResolvedValueOnce(encodedResponse(bomb, encoding))
+      // decoder が実際に出力した量を数える（読むのをやめた後に展開が続いていないこと）
+      const inflated: number[] = []
+      const original = zlib[factory] as (...args: unknown[]) => import("stream").Transform
+      const spy = vi.spyOn(zlib, factory).mockImplementation(((...args: unknown[]) => {
+        const stream = original(...args)
+        stream.on("data", (chunk: Buffer) => inflated.push(chunk.byteLength))
+        return stream
+      }) as never)
 
-    const res = await GET(makeRequest("https://example.com/bomb"))
-    spy.mockRestore()
+      const res = await GET(makeRequest("https://example.com/bomb"))
+      // destroy の後に非同期の展開が残っていないかを見るため、少し待ってから数える
+      await new Promise((r) => setTimeout(r, 50))
+      spy.mockRestore()
 
-    expect(res.status).toBe(422)
-    const total = inflated.reduce((a, b) => a + b, 0)
-    expect(total).toBeGreaterThanOrEqual(2 * 1024 * 1024)
-    expect(total).toBeLessThan(4 * 1024 * 1024)
-  })
+      expect(res.status).toBe(422)
+      const total = inflated.reduce((a, b) => a + b, 0)
+      expect(total).toBeGreaterThanOrEqual(2 * 1024 * 1024)
+      expect(total).toBeLessThan(4 * 1024 * 1024)
+    }
+  )
 
   it.each([["GZIP"], [" gzip "], ["Br"], ["X-GZIP"]])(
     "Content-Encoding の大文字小文字と前後の空白は区別しない（%j）",
