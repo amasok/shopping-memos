@@ -109,14 +109,16 @@ test.describe("Preview 確認項目（ログイン中）", () => {
     await seedItems({ userId: userA.id, items: names.map((n) => ({ id: testUUID(), name: n })) })
     await openPersonal(page, userA.id)
     await createListFrom(page, names)
+    // 履歴の id はリストの id。ほかのテストの履歴と区別するため、控える
+    const listId = new URL(page.url()).searchParams.get("id")!
 
     await checkAllAndComplete(page)
 
-    const first = page.getByTestId("history-list").locator("li").first()
-    await expect(first).toContainText("2点")
-    await first.locator("button").first().click()
+    const record = page.getByTestId(`history-item-${listId}`)
+    await expect(record).toContainText("2点")
+    await record.locator("button").first().click()
     for (const n of names) {
-      await expect(first).toContainText(n)
+      await expect(record).toContainText(n)
     }
   })
 
@@ -129,9 +131,9 @@ test.describe("Preview 確認項目（ログイン中）", () => {
     const listId = new URL(page.url()).searchParams.get("id")!
     await checkAllAndComplete(page)
 
-    const first = page.getByTestId("history-list").locator("li").first()
-    await first.locator("button").first().click()
-    await first.locator("button", { hasText: "リストに戻す" }).click()
+    const record = page.getByTestId(`history-item-${listId}`)
+    await record.locator("button").first().click()
+    await record.locator("button", { hasText: "リストに戻す" }).click()
 
     await expect(page).toHaveURL(/\/lists/, { timeout: 15000 })
     // 戻したリストが一覧にあり、開くとアイテムが入っている
@@ -145,16 +147,16 @@ test.describe("Preview 確認項目（ログイン中）", () => {
     await seedItems({ userId: userA.id, items: names.map((n) => ({ id: testUUID(), name: n })) })
     await openPersonal(page, userA.id)
     await createListFrom(page, names)
+    const listId = new URL(page.url()).searchParams.get("id")!
     await checkAllAndComplete(page)
 
-    const first = page.getByTestId("history-list").locator("li").first()
-    const testId = await first.getAttribute("data-testid")
-    expect(testId).toMatch(/^history-item-/)
-    await first.locator("button").first().click()
-    await first.locator("[data-testid^='history-delete-']").click()
+    const record = page.getByTestId(`history-item-${listId}`)
+    await expect(record).toBeVisible()
+    await record.locator("button").first().click()
+    await record.locator("[data-testid^='history-delete-']").click()
     await page.getByTestId("history-delete-confirm").click()
 
-    await expect(page.getByTestId(testId!)).toHaveCount(0)
+    await expect(page.getByTestId(`history-item-${listId}`)).toHaveCount(0)
   })
 
   /** グループ（画面から作る）。#7・#8・#9 で共有する */
