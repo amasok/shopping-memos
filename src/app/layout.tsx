@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import { Providers } from "./providers"
-import { RegisterSW } from "@/components/pwa/RegisterSW"
+import { AppServiceWorker } from "@/components/pwa/AppServiceWorker"
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -44,8 +44,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Providers>{children}</Providers>
-        <RegisterSW />
+        <AppServiceWorker>
+          <Providers>{children}</Providers>
+        </AppServiceWorker>
       </body>
     </html>
   )

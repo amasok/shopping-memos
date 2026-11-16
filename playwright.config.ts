@@ -9,6 +9,8 @@ export default defineConfig({
   reporter: "html",
   use: {
     baseURL: "http://localhost:3000",
+    // 既存テストは SW の影響を受けない（SW は offline プロジェクトだけで有効にする）
+    serviceWorkers: "block",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -22,12 +24,12 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      testIgnore: /auth\//,
+      testIgnore: [/auth\//, /offline\//],
     },
     {
       name: "Mobile Chrome",
       use: { ...devices["Pixel 5"] },
-      testIgnore: /auth\//,
+      testIgnore: [/auth\//, /offline\//],
     },
     // ログイン済みテスト
     {
@@ -40,8 +42,33 @@ export default defineConfig({
       testDir: "./e2e/auth",
       testIgnore: /auth\.setup\.ts/,
     },
+    // SW・オフライン（本番ビルドが必要。E2E_OFFLINE=true のときだけ有効: npm run build 後に実行）
+    ...(process.env.E2E_OFFLINE
+      ? [
+        {
+          name: "offline",
+          use: {
+            ...devices["Desktop Chrome"],
+            baseURL: "http://localhost:3100",
+            serviceWorkers: "allow" as const,
+          },
+          testDir: "./e2e/offline",
+        },
+        ]
+      : []),
   ],
-  webServer: {
+  webServer: [
+    ...(process.env.E2E_OFFLINE
+      ? [
+          {
+            command: "AUTH_TRUST_HOST=true E2E_TEST=true npx next start -p 3100",
+            url: "http://localhost:3100",
+            reuseExistingServer: !process.env.CI,
+            timeout: 120 * 1000,
+          },
+        ]
+      : []),
+    {
     // CI は事前に npm run build 済みの本番ビルドで起動する（dev の初回コンパイル待ちによるタイムアウトを避ける）
     command: process.env.CI
       ? "E2E_TEST=true npm run start"
@@ -49,5 +76,6 @@ export default defineConfig({
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
-  },
+    },
+  ],
 })
