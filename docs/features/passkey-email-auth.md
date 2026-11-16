@@ -310,7 +310,7 @@ Resend の無料枠（100 通/日）を使い切られると、パスキー未�
 
 | 削除 | 追加 |
 |------|------|
-| `NEXTAUTH_URL`, `NEXTAUTH_SECRET`（`AUTH_SECRET`）, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`（**A6 の contract まで残す**。それまでは旧デプロイへの Promote で Google ログインが動く必要があるため） | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `RESEND_API_KEY`, `EMAIL_FROM`, `PASSKEY_RP_ID`, `NEXT_PUBLIC_PASSKEY_ENABLED`, `OTP_ALERT_EMAIL`、（Turnstile を採用する場合）`TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`。E2E 用の `E2E_BUILD` / `E2E_TEST` / `E2E_SEED_TOKEN` は CI とローカルだけで使い、Vercel には**設定しない** |
+| `NEXTAUTH_URL`, `NEXTAUTH_SECRET`（`AUTH_SECRET`）, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`（**A6 の contract まで残す**。それまでは旧デプロイへの Promote で Google ログインが動く必要があるため） | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `RESEND_API_KEY`, `EMAIL_FROM`, `PASSKEY_RP_ID`, `NEXT_PUBLIC_PASSKEY_ENABLED`, `OTP_ALERT_EMAIL`、`EMAIL_RECIPIENT_ALLOWLIST`（Preview のみ）、（Turnstile を採用する場合）`TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`。E2E 用の `E2E_BUILD` / `E2E_TEST` / `E2E_SEED_TOKEN` は CI とローカルだけで使い、Vercel には**設定しない** |
 
 ## 既存ユーザーの移行
 
@@ -343,27 +343,74 @@ Resend の無料枠（100 通/日）を使い切られると、パスキー未�
 | DB | R1a で追加だけのマイグレーション（expand）を行う。旧テーブルの削除（contract）は R3 で行う |
 | 環境変数（Vercel Production / Preview） | R1a より前に Better Auth / Resend の変数を追加する。Google の変数は R3 まで残す |
 | 外部サービス | Resend のアカウントと、送信ドメインの DNS（SPF / DKIM）。DNS の反映待ちがあるので R1a より前に済ませる。Turnstile を採用する場合は、そのサイトキーも用意する |
-| Preview 環境 | Preview は本番とは**別の DB**（Neon の develop ブランチ）を使う。develop へのマージで自動デプロイされるが、マイグレーションは自動では適用されない。そこで A2 で CI に「develop への push で Preview の DB にマイグレーションを適用する」ジョブを追加する（それまでは、PR をマージした人が `DATABASE_URL=<Preview の URL> npm run db:migrate` を手で実行する）。メールは実際に送られるので、Preview でも Resend を使う。`E2E_BUILD` / `E2E_TEST` は Preview に**設定しない**（#70） |
+| Preview 環境 | Preview は本番とは**別の DB**（Neon の develop ブランチ）を使う。develop へのマージで自動デプロイされるが、マイグレーションは自動では適用されない。そこで A2 で CI に「develop への push で Preview の DB にマイグレーションを適用する」ジョブを追加する（それまでは、PR をマージした人が `DATABASE_URL=<Preview の URL> npm run db:migrate` を手で実行する）。メールは実際に送られるので、Preview でも Resend を使う。Preview の URL は公開されていて、本番と同じ Resend の枠（100 通/日）を使ってしまうため、**Preview では送信先を許可リストに限定する**（環境変数 `EMAIL_RECIPIENT_ALLOWLIST` に自分と家族のアドレス。リストにないアドレスには送らず、レスポンスは同じにする）。あわせて Vercel の Deployment Protection（Vercel Authentication）で Preview を保護する。`E2E_BUILD` / `E2E_TEST` は Preview に**設定しない**（#70） |
 | デプロイとマイグレーションの順序 | CI の `migrate` ジョブ（main への push で本番 DB に適用）と Vercel の本番デプロイは**並行して**進む。そのため、マイグレーション（R1a）と、それを使うコード（R1b）を**別々のリリース**にする。R1a の時点では旧コードのまま新しいテーブルが増えるだけで、R1b の時点ではテーブルがすでにある |
 
 ### リリース手順（develop → main）
 
-| リリース | 含める PR | 内容・確認すること |
-|---------|----------|------------------|
-| R0 | #65（依存パッケージの更新）、#67（招待コード対策）、#70、#72 の該当分、A0（告知バナー） | 認証移行の前提になるセキュリティ修正（Issue #61 の依存）。告知バナーが出ることを確認する。家族に連絡する |
-| R1a | A1 + A2（メール送信基盤、expand マイグレーション、Preview の DB へのマイグレーションジョブ） | 本番では Auth.js のまま動き、新しいテーブルが増えるだけ。`migrate` ジョブの成功と、Google ログインが従来どおり動くことを確認する |
-| R1b | A3 + A4（Better Auth への切り替え、OTP ログイン、表示名の設定） | **一括切り替え**。家族が使わない時間帯に出す。自分のアカウントで OTP ログインし、既存のデータが見えることを確認してから家族に案内する |
+**本番（main）へは、develop の内容をユーザーが Vercel Preview で確認し、OK を出してからマージする。**
+
+```
+develop に PR をマージ
+  → Vercel が Preview に自動デプロイ ＋ CI が Preview の DB にマイグレーション（A2 以降）
+  → ユーザーが Preview で「確認チェックリスト」を実施
+  → OK → develop → main の PR をマージ → 本番デプロイ ＋ 本番 DB にマイグレーション
+  → NG → develop で修正して、Preview の確認からやり直す
+```
+
+| リリース | 含める PR | 内容 |
+|---------|----------|------|
+| R0 | #65（依存パッケージの更新）、#67（招待コード対策）、#70、#72 の該当分、A0（告知バナー） | 認証移行の前提になるセキュリティ修正（Issue #61 の依存）と、切り替え前の告知 |
+| R1a | A1 + A2（メール送信基盤、expand マイグレーション、Preview の DB へのマイグレーションジョブ） | 本番では Auth.js のまま動き、新しいテーブルが増えるだけ |
+| R1b | A3 + A4（Better Auth への切り替え、OTP ログイン、表示名の設定） | **一括切り替え**。家族が使わない時間帯に main へマージする |
 | R2 | A5（パスキー） | 本番ドメインの確定が前提。家族にパスキーを登録してもらう |
 | R3 | A6（contract、ドキュメント） | R1b から 2 週間問題がなければ出す。Google の OAuth クライアントと環境変数を削除する |
 
-各リリースの共通手順（実施者: リリース担当＝ユーザー本人。Claude は PR の作成と確認項目の準備まで）:
+#### Preview での確認チェックリスト（ユーザーが実施）
+
+Preview の URL は、develop ブランチの固定 URL（`shopping-memos-git-develop-<team>.vercel.app`）を使う。Preview の DB には、本番相当のテストデータ（Google で作られた形の `users` / `accounts` 行、グループ、アイテム）を用意しておく（A2 の PR で用意する手順を書く）。
+
+**R0**
+- [ ] Google でログインできる（従来どおり）
+- [ ] ログイン中の画面に告知バナーが出て、閉じると再表示されない
+- [ ] グループへの参加（招待コード）が従来どおりできる。誤ったコードを続けて入れると制限される（#67）
+- [ ] アイテムの追加・リスト作成・買い物完了・履歴が従来どおり動く
+
+**R1a**
+- [ ] Preview の DB にマイグレーションが適用されている（CI のジョブが成功している）
+- [ ] Google でログインでき、既存のデータが見える（旧コードのまま動く）
+- [ ] アイテム・リスト・グループの操作が従来どおり動く
+
+**R1b**
+- [ ] ログイン画面に Google のボタンがなく、移行の案内が出る
+- [ ] 既存ユーザーの Gmail アドレス（許可リストに入れたもの）にコードが届き、ログインできる
+- [ ] ログイン後、既存のグループ・アイテム・リスト・履歴がそのまま見える（同じユーザーとして紐付いている）
+- [ ] 表示名の設定画面は、既存ユーザーには出ない。新しいアドレスでログインすると出る
+- [ ] 誤ったコードを 3 回入れると無効になり、再送できる。再送ボタンは 60 秒間押せない
+- [ ] ログアウトするとゲストモードに戻る。「すべての端末からログアウト」で、別の端末も（最大 5 分で）ログアウトされる
+- [ ] iPhone のホーム画面に追加した状態でも、コード入力でログインが完結する
+- [ ] 許可リスト外のアドレスでは、メールが届かない（画面の表示は同じ）
+
+**R2**
+- [ ] ※ パスキーは本番ドメインでしか有効にしないため、Preview ではパスキーの UI が出ないことだけを確認する
+- [ ] Preview でパスキーのボタン・登録の提案・設定のパスキー欄が表示されない
+- [ ] 本番のリリース直後に、自分の端末で「パスキーを登録 → ログアウト → パスキーでログイン → 設定で削除」を確認する（本番でのチェック項目）
+
+**R3**
+- [ ] Preview の DB に contract が適用された後も、OTP ログインと既存データの表示ができる
+- [ ] 設定・グループの画面に Google の文言・アバターが残っていない
+
+#### 各リリースの共通手順
+
+実施者: Preview の確認と main へのマージの判断はユーザー本人。Claude は PR の作成、チェックリストの準備、CI の確認まで。
 
 1. develop と main の差分を確認する（`git log origin/main..origin/develop`）。対象外の未リリースのコミットがあれば、先に別のリリースとして出す
-2. Preview（develop）で、上表の確認項目を手動で確認する。マイグレーションを含むリリースでは、Preview の DB に適用済みであることを先に確認する。Preview の DB に、本番相当のテストユーザー（Google で作られた形の `users` / `accounts` 行とグループ）を用意しておく
-3. Neon で本番ブランチのバックアップ（`backup-before-r1a` など）を作る（最後の手段の保険）
-4. develop → main の PR を作り、CI（lint / test / build / E2E）が通ることを確認してマージする
-5. CI の `migrate` ジョブの成功と、Vercel の本番デプロイの完了を確認する
-6. 本番で動作を確認し、家族に案内する
+2. develop への PR をマージし、Preview の自動デプロイと、Preview の DB へのマイグレーション（A2 以降の CI ジョブ。A2 より前は `DATABASE_URL=<Preview の URL> npm run db:migrate` を手動で実行）の完了を確認する
+3. **ユーザーが Preview で上のチェックリストを実施する。すべて OK になるまで main へは進まない**
+4. Neon で本番ブランチのバックアップ（`backup-before-r1a` など）を作る（最後の手段の保険）
+5. develop → main の PR を作り、CI（lint / test / build / E2E）が通ることを確認してマージする
+6. CI の `migrate` ジョブの成功と、Vercel の本番デプロイの完了を確認する
+7. 本番で、自分のアカウントで動作を確認し、家族に案内する
 
 ### ロールバック
 
@@ -400,6 +447,7 @@ Resend の無料枠（100 通/日）を使い切られると、パスキー未�
 
 | 対象 | テスト内容 |
 |------|-----------|
+| 送信先の許可リスト | `EMAIL_RECIPIENT_ALLOWLIST` が設定されていると、リスト外のアドレスには送らず、レスポンスは送信時と同じ。本番（未設定）では制限しない |
 | `EmailSender` 各実装 | Resend SDK をモックし、宛先・件名・本文（コード・有効期限を含み、URL を含まない）を検証。送信失敗時に例外を正しく伝えること |
 | OTP メールテンプレート | 日本語の本文、コードの桁数、HTML エスケープ |
 | 環境変数の検証 | 本番で `RESEND_API_KEY` / `BETTER_AUTH_SECRET` が欠けていたら起動時エラー、開発時は Console 送信にフォールバック |
@@ -439,9 +487,8 @@ Resend の無料枠（100 通/日）を使い切られると、パスキー未�
 - CSRF: Better Auth の Origin 検証と `trustedOrigins`、Cookie は `Secure` / `HttpOnly` / `SameSite=Lax`
 - パスキー: `userVerification: "required"`（パスキーだけでログインが完結するため、PIN や生体認証のないセキュリティキーの「持っているだけ」のログインを許さない）。署名カウンタの検証はライブラリに任せる。RP ID は環境変数で固定し、リクエストの Host ヘッダから決めない
 - E2E 用のテストルートは、ビルド時の除外（`E2E_BUILD` のときだけ `pageExtensions` に含める）と、実行時の多重条件（`E2E_TEST`・`VERCEL_ENV`・共有シークレット）で守る（「### E2E のログイン」）
-- **メールアドレスの正規化**は「Unicode 正規化（NFKC）→ trim・小文字化 → 形式の検証」の順に行う（#65）
 - OTP はハッシュ化して保存し、照合は定数時間、使用後はすぐ無効にする
-- **メールアドレスの正規化の詳細**（#65 で指摘された Auth.js のホモグリフ問題を、移行後に再発させない）: 送信・照合の前に正規化する。ASCII 以外を含むアドレス（IDN を含む）は当面拒否する。正規化後の値で `users.email` を一意にする
+- **メールアドレスの正規化**（#65 で指摘された Auth.js のホモグリフ問題を、移行後に再発させない）: 送信・照合の前に「Unicode 正規化（NFKC）→ trim・小文字化 → 形式の検証（Zod）」の順に行う。ASCII 以外を含むアドレス（IDN を含む）は当面拒否する。正規化後の値で `users.email` を一意にする
 
 ### セキュリティ Issue との対応
 
@@ -472,7 +519,7 @@ Resend の無料枠（100 通/日）を使い切られると、パスキー未�
 |---|------|------|
 | 1 | 認証ライブラリ | Auth.js から **Better Auth** に移行する |
 | 2 | メール認証方式 | **6 桁のワンタイムコード（OTP）**。マジックリンクは使わない |
-| 3 | メール送信サービス | **Resend** |
+| 3 | メール送信サービス | **Resend**（承認済み）。**送信元にできる独自ドメインの有無は回答待ち**（下記「未確定事項 1」） |
 | 4 | パスキーの位置づけ・復旧 | パスキーは**任意**（ログイン後に登録を提案）。復旧手段はメールのコード。Vercel のプレビュー環境ではパスキーを無効にする |
 | 5 | 表示名 | 初回ログイン時に**表示名の入力を必須**にする |
 | 6 | 既存ユーザーの移行 | 本番の Google ユーザーは **1 家族のみ**。**併用期間なしの一括切り替え**で、同じメールアドレスなら既存の `users` 行に紐付け、1 回の再ログインで移行する |
@@ -481,5 +528,5 @@ Resend の無料枠（100 通/日）を使い切られると、パスキー未�
 
 設計レビューで新たに出た項目。上の決定事項とは別に、該当する PR の着手前に決める。
 
-1. **本番ドメインと送信元ドメイン**: Resend の送信元（SPF / DKIM の設定先）と、パスキーの RP ID になる本番ドメイン。`*.vercel.app` のままパスキーを導入すると、独自ドメインに移ったときに全員のパスキーが使えなくなる。**A1（送信元）と A5（RP ID）の前に確定が必要**
+1. **【回答待ち】独自ドメインの有無（本番ドメインと送信元ドメイン）**: Resend の送信元（SPF / DKIM の設定先）と、パスキーの RP ID になる本番ドメイン。`*.vercel.app` のままパスキーを導入すると、独自ドメインに移ったときに全員のパスキーが使えなくなる。**A1（送信元）と A5（RP ID）の前に確定が必要**
 2. **Turnstile の採否**: 推奨は採用（A3 に含める）。IP を変えて OTP 送信を乱用されると Resend の 100 通/日が尽き、パスキー未登録のユーザーがログインできなくなるため。不採用の場合は、送信上限と監視だけで運用し、乱用が観測されたら追加する
