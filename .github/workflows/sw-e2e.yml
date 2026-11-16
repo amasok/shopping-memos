@@ -1,0 +1,64 @@
+name: SW Lifecycle E2E
+
+# SW の更新・kill switch の E2E（ビルドを 4 回切り替えるため 5〜7 分かかる）。
+# PR のたびには実行せず、SW 関連のファイルが変わったときと手動実行のときだけ動かす
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "src/app/sw*.ts"
+      - "src/lib/sw/**"
+      - "src/components/pwa/**"
+      - "src/app/serwist/**"
+      - "next.config.ts"
+      - "scripts/e2e-sw-lifecycle.sh"
+      - "e2e/offline/**"
+      - ".github/workflows/sw-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sw-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sw-lifecycle:
+    name: SW Lifecycle E2E
+    # ubuntu-latest(26.04) は Playwright 1.58 が未対応のため、対応OSに固定する
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    env:
+      # ビルド時にDB接続は不要（スキーマのみ使用）
+      DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
+      AUTH_SECRET: "e2e-ci-only-secret-not-for-production"
+      AUTH_TRUST_HOST: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run SW lifecycle E2E
+        run: npm run test:e2e:sw-lifecycle
+
+      - name: Upload E2E report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-sw-lifecycle
+          path: playwright-report/
+          retention-days: 7

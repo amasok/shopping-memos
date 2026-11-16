@@ -137,3 +137,41 @@ describe("CI ワークフロー全体の設定", () => {
     )
   })
 })
+
+describe("SW ライフサイクル E2E のワークフロー（sw-e2e.yml）", () => {
+  const swWorkflow = parse(
+    readFileSync(
+      path.resolve(__dirname, "../../.github/workflows/sw-e2e.yml"),
+      "utf-8"
+    )
+  ) as {
+    on: {
+      pull_request?: { paths?: string[] }
+      push?: unknown
+      workflow_dispatch?: unknown
+    }
+    jobs: Record<string, Job>
+  }
+
+  it("SW 関連のファイルが変わった PR と手動実行のときだけ動く（push や全 PR では動かない）", () => {
+    expect(swWorkflow.on.push).toBeUndefined()
+    expect(swWorkflow.on).toHaveProperty("workflow_dispatch")
+    const paths = swWorkflow.on.pull_request?.paths ?? []
+    for (const p of [
+      "src/app/sw*.ts",
+      "src/lib/sw/**",
+      "src/components/pwa/**",
+      "src/app/serwist/**",
+      "next.config.ts",
+    ]) {
+      expect(paths).toContain(p)
+    }
+  })
+
+  it("npm run test:e2e:sw-lifecycle を実行し、タイムアウトと OS 固定がある", () => {
+    const job = Object.values(swWorkflow.jobs)[0]
+    expect(job.steps.some((s) => s.run?.includes("test:e2e:sw-lifecycle"))).toBe(true)
+    expect(job["timeout-minutes"]).toBeGreaterThan(0)
+    expect(job["runs-on"]).toMatch(/^ubuntu-\d{2}\.\d{2}$/)
+  })
+})
