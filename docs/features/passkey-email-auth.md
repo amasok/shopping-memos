@@ -210,13 +210,17 @@ Resend の無料枠（100 通/日）を使い切られると、パスキー未�
 | 制限 | 値 | 目的 |
 |------|----|------|
 | 再送間隔（メールアドレス単位） | 60 秒 | 連打の防止 |
-| 1 日の送信上限（メールアドレス単位） | 5 通 / 24 時間 | 特定のアドレスへのメール爆撃と、1 アドレスあたりの試行回数を抑える（1 日最大 5 コード × 3 回 = 15 回。成功確率は約 0.0015%/日） |
+| 1 日の送信上限（**メールアドレス × IP** 単位） | 5 通 / 24 時間 | 同じ場所からの連続送信と、1 か所あたりの試行回数を抑える（1 日最大 5 コード × 3 回 = 15 回）。キーに IP を含めるので、攻撃者が家族のアドレスを指定しても、**家族自身の端末（別の IP）からの送信は止まらない** |
+| 1 日の送信上限（メールアドレス単位・緩い上限） | 20 通 / 24 時間。超えたら完全には止めず、**Turnstile を必須にする段階**に入る（Turnstile を採用しない場合は、超えた時点で本人に通知メールを送り、送信は「メールアドレス × IP」の上限だけで続ける） | 多数の IP から 1 つのアドレスを狙われた場合の歯止め。止めることで、本人がログインできなくなるのを避ける |
 | 送信上限（IP 単位） | 3 通 / 分、20 通 / 24 時間 | 多数のアドレスへの送信を抑える |
-| 累積ロック（メールアドレス単位） | 検証の失敗が 24 時間で 10 回に達したら、そのアドレスの OTP ログインを 24 時間停止する。**コードを再発行しても失敗回数はリセットしない** | 再発行を繰り返す総当たりの防止。パスキーでのログインは止めない |
+| 累積ロック（**メールアドレス × IP** 単位） | 検証の失敗が 24 時間で 10 回に達したら、その「アドレス × IP」からの OTP ログインを 24 時間停止する。**コードを再発行しても失敗回数はリセットしない** | 再発行を繰り返す総当たりの防止。別の IP（家族の端末）からのログインと、パスキーでのログインは止めない |
+| ロック時の通知と解除 | ロックが発生したら、本人のアドレスに通知する（「ログインの試行が繰り返されたため一時的に制限しました。心当たりがなければ問題ありません」。1 日 1 通まで）。本人がパスキーまたは別の IP からの OTP でログインに成功したら、そのアドレスのロックと失敗回数をすべて解除する | 攻撃者に家族のログインを止めさせない。止められても本人が自分で解除できる |
 | 全体の送信数の監視 | 1 日の送信数が 70 通を超えたら、管理者にアラートを 1 回送る（ログに警告を出し、管理者のアドレスにメールする） | 枠を使い切る前に気づく |
 | ボット対策 | Cloudflare Turnstile（非表示モード）を OTP 送信フォームに付け、サーバー側で検証する | IP を変えた乱用に対する最後の防御。**採否は「## 未確定事項」** |
 
-- 実装: Better Auth の rateLimit（`storage: "database"`）で IP 単位の制限をかける。メールアドレス単位の上限・累積ロック・全体の監視は、送信と失敗を記録する `otp_events` テーブルを作り、Better Auth の `hooks.before`（OTP 送信・OTP サインインのパス）で確認する。メールアドレスは HMAC でハッシュ化して保存する
+- 実装: Better Auth の rateLimit（`storage: "database"`）で IP 単位の制限をかける。メールアドレス（× IP）単位の上限・累積ロック・全体の監視は、送信と失敗を記録する `otp_events` テーブルを作り、Better Auth の `hooks.before`（OTP 送信・OTP サインインのパス）で確認する。ロックの解除は `hooks.after`（サインイン成功時）で行う
+- メールアドレスは、環境変数 `OTP_EVENT_HMAC_KEY` を鍵にした HMAC-SHA256 でハッシュ化して保存する（DB が漏れても、アドレスの一覧が分からないようにする）
+- `otp_events` の保持期間は **30 日**。判定には直近 24 時間しか使わない。古い行は、書き込みのついでに 1 日 1 回まとめて削除する（定期ジョブを足さない）
 - **IP アドレスの取得**: Vercel では、Vercel が設定する `x-real-ip` / `x-vercel-forwarded-for` を使う（`advanced.ipAddress.ipAddressHeaders`）。クライアントが送ってくる `x-forwarded-for` の先頭の値は使わない。偽装したヘッダでは制限のキーが変わらないことをユニットテストで確認する（ヘッダ名と、Vercel が上書きするかどうかは実装時に Vercel のドキュメントで確認する）
 
 #### パスキー経由の乗っ取り対策
@@ -240,7 +244,7 @@ Resend の無料枠（100 通/日）を使い切られると、パスキー未�
 | `auth_verifications`（新規） | `id`, `identifier`, `value`（OTP のハッシュ）, `expires_at`, `created_at`, `updated_at` |
 | `passkeys`（新規） | `id`, `name`, `public_key`, `user_id`(FK cascade), `credential_id`(unique), `counter`, `device_type`, `backed_up`, `transports`, `aaguid`, `created_at` |
 | `rate_limits`（新規） | `storage: "database"` 用（`key`, `count`, `last_request`） |
-| `otp_events`（新規） | `id`, `email_hash`, `ip`, `kind`（`sent` / `failed`）, `created_at`、インデックス `(email_hash, created_at)` |
+| `otp_events`（新規） | `id`, `email_hash`, `ip`, `kind`（`sent` / `failed` / `locked` / `unlocked`）, `created_at`、インデックス `(email_hash, created_at)` と `(email_hash, ip, created_at)`。保持は 30 日 |
 | `sessions`, `accounts`, `verification_tokens` | **変更しない**（Auth.js 用。contract で削除） |
 
 - passkeys テーブルは A2 の expand でまとめて作る（A5 で別のマイグレーションを出すと、リリースの手間が増えるため）
@@ -310,7 +314,7 @@ Resend の無料枠（100 通/日）を使い切られると、パスキー未�
 
 | 削除 | 追加 |
 |------|------|
-| `NEXTAUTH_URL`, `NEXTAUTH_SECRET`（`AUTH_SECRET`）, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`（**A6 の contract まで残す**。それまでは旧デプロイへの Promote で Google ログインが動く必要があるため） | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `RESEND_API_KEY`, `EMAIL_FROM`, `PASSKEY_RP_ID`, `NEXT_PUBLIC_PASSKEY_ENABLED`, `OTP_ALERT_EMAIL`、`EMAIL_RECIPIENT_ALLOWLIST`（Preview のみ）、（Turnstile を採用する場合）`TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`。E2E 用の `E2E_BUILD` / `E2E_TEST` / `E2E_SEED_TOKEN` は CI とローカルだけで使い、Vercel には**設定しない** |
+| `NEXTAUTH_URL`, `NEXTAUTH_SECRET`（`AUTH_SECRET`）, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`（**A6 の contract まで残す**。それまでは旧デプロイへの Promote で Google ログインが動く必要があるため） | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `RESEND_API_KEY`, `EMAIL_FROM`, `PASSKEY_RP_ID`, `NEXT_PUBLIC_PASSKEY_ENABLED`, `OTP_ALERT_EMAIL`、`OTP_EVENT_HMAC_KEY`、`EMAIL_RECIPIENT_ALLOWLIST`（Preview のみ）、（Turnstile を採用する場合）`TURNSTILE_SECRET_KEY`, `NEXT_PUBLIC_TURNSTILE_SITE_KEY`。E2E 用の `E2E_BUILD` / `E2E_TEST` / `E2E_SEED_TOKEN` は CI とローカルだけで使い、Vercel には**設定しない** |
 
 ## 既存ユーザーの移行
 
@@ -453,7 +457,7 @@ Preview の URL は、develop ブランチの固定 URL（`shopping-memos-git-de
 | 環境変数の検証 | 本番で `RESEND_API_KEY` / `BETTER_AUTH_SECRET` が欠けていたら起動時エラー、開発時は Console 送信にフォールバック |
 | `/api/test/otp` ルート | `E2E_TEST` が未設定、`VERCEL_ENV` が production / preview、`x-e2e-token` が不一致・なし、のそれぞれで 404。条件がそろったときだけ直近のコードを返す。`NODE_ENV=production` でも条件がそろえば応答する（オフライン E2E 用） |
 | `pageExtensions` の設定 | `E2E_BUILD` が未設定なら `e2e.ts` を含まない |
-| OTP 乱用対策 | 再送間隔 60 秒、メールアドレスあたり 5 通/日、IP あたり 3 通/分・20 通/日の各上限で拒否する。累積 10 回の失敗でロックし、再発行してもリセットされない。ロック中もパスキーのログインは通る。1 日 70 通を超えたらアラートを 1 回だけ送る |
+| OTP 乱用対策 | 再送間隔 60 秒、「アドレス × IP」あたり 5 通/日、IP あたり 3 通/分・20 通/日の各上限で拒否する。アドレスあたり 20 通を超えると Turnstile 必須（不採用なら通知）になり、完全には止まらない。「アドレス × IP」で累積 10 回失敗するとロックし、再発行してもリセットされない。**別の IP からは同じアドレスで送信・ログインできる**。ロック時に本人へ通知が 1 日 1 通だけ送られ、パスキーまたは別 IP からの成功でロックが解除される。1 日 70 通を超えたらアラートを 1 回だけ送る。30 日より古い `otp_events` が削除される |
 | 列挙対策 | 登録済み・未登録・上限到達・ロック中のアドレスで、OTP 送信のレスポンス（ステータス・本文）が同じ |
 | IP の取得 | 設定したヘッダ（`x-real-ip` 等）だけを使い、クライアントが付けた `x-forwarded-for` を変えても制限のキーが変わらない |
 | OTP の保存 | DB にはハッシュだけが入り、平文のコードが残らない。使用後に削除される |
@@ -476,13 +480,13 @@ Preview の URL は、develop ブランチの固定 URL（`shopping-memos-git-de
 | L-5 | パスキー登録（仮想認証器）→ ログアウト → パスキーでログイン（chromium のみ） |
 | L-6 | 設定画面でパスキーを削除 → パスキーでログインできず、OTP ではログインできる |
 | L-7 | 既存の `e2e/auth/**`（グループ共有など）が新しいログインヘルパーで全件パスする |
-| L-9 | 同じメールアドレスに 6 回目の送信をすると、上限の文言（未登録の場合と同じ）が出る |
+| L-9 | 同じブラウザから同じメールアドレスに 6 回目の送信をすると、上限の文言（未登録の場合と同じ）が出る。別のコンテキスト（別 IP を模したヘッダ）からは送信できる |
 | L-10 | 旧デプロイへの互換: expand を適用した DB で、旧コード（現在の main）の E2E（Credentials ログイン・グループ共有）が全件パスする。CI で 1 回だけ実行し、結果を PR に記録する |
 | L-8 | 既存ユーザーの移行: Google ログインで作られた想定の `users` 行（name・Gmail アドレスあり）とグループ・アイテムを seed → 同じアドレスで OTP ログイン → 同じ `users.id` で既存データが見え、表示名の設定画面が出ない |
 
 ## セキュリティ
 
-- OTP の総当たり対策: 試行 3 回で無効化、5 分で失効、メールアドレスごとの 1 日の送信上限と累積ロック、IP ごとのレート制限（「#### OTP 送信の乱用対策」）
+- OTP の総当たり対策: 試行 3 回で無効化、5 分で失効、「メールアドレス × IP」ごとの 1 日の送信上限と累積ロック（攻撃者が家族のアドレスを指定しても、家族のログインは止まらない。ロック時は本人に通知し、ログイン成功で解除）、IP ごとのレート制限（「#### OTP 送信の乱用対策」）
 - メールアドレスの列挙対策: OTP 送信の結果を登録有無で変えない
 - CSRF: Better Auth の Origin 検証と `trustedOrigins`、Cookie は `Secure` / `HttpOnly` / `SameSite=Lax`
 - パスキー: `userVerification: "required"`（パスキーだけでログインが完結するため、PIN や生体認証のないセキュリティキーの「持っているだけ」のログインを許さない）。署名カウンタの検証はライブラリに任せる。RP ID は環境変数で固定し、リクエストの Host ヘッダから決めない
@@ -497,7 +501,7 @@ Preview の URL は、develop ブランチの固定 URL（`shopping-memos-git-de
 | #65 | next-auth / @auth/core / Next.js の既知脆弱性 | **A3 で next-auth を削除するため、Auth.js 側は解消する**。ただし、それまでに時間がかかるのと、ロールバック先（R1a のデプロイ）も Auth.js なので、#65 の依存更新（next-auth beta.32 以上、Next.js 16.4.x 以上）は**本 Issue より先に**行う（R0）。メール正規化は上記で対応 |
 | #70 | `E2E_TEST` の環境変数 1 つでパスワードなしログインが有効になる | **A3 で Credentials プロバイダを削除する**。代わりの `/api/test/otp` は、`E2E_BUILD` のときだけビルドに含め、実行時も `E2E_TEST`・`VERCEL_ENV`・`E2E_SEED_TOKEN` ヘッダで守る（`NODE_ENV` には頼らない。#62 のオフライン E2E を本番ビルドで動かすため）。`/api/e2e/seed` の修正は #70 側で行う |
 | #67 | 招待コードを総当たりで推測できる | メール認証でアカウントを量産しやすくなると悪化する。**切り替えより前（R0）に #67 を本番へ出す** |
-| #72 | レート制限がない | 認証系のエンドポイントは、Better Auth の rateLimit（IP 単位）と、`otp_events` によるメールアドレス単位の上限・累積ロックで、A3 から制限する。#72 で Upstash Redis などを導入する場合は、Better Auth の `secondaryStorage` を同じ Redis に向け、`storage: "secondary-storage"` に切り替える |
+| #72 | レート制限がない | 認証系のエンドポイントは、Better Auth の rateLimit（IP 単位）と、`otp_events` による「メールアドレス × IP」単位の上限・累積ロックで、A3 から制限する。#72 で Upstash Redis などを導入する場合は、Better Auth の `secondaryStorage` を同じ Redis に向け、`storage: "secondary-storage"` に切り替える |
 | #73-8 | JWT セッションを個別に失効できない | **DB セッションに変えることで解消する**。設定画面に「すべての端末からログアウト」を置く（A4）。cookieCache により、他の端末への反映は最大 5 分遅れる |
 | #71 | セキュリティヘッダがない。tRPC で Origin を確認していない | A3 で tRPC mutation の `Origin` / `Sec-Fetch-Site` 確認を入れる。Better Auth の `trustedOrigins` には本番 URL だけを設定する（Preview は環境変数で追加する）。#71 で Permissions-Policy を入れる際、`publickey-credentials-get` / `publickey-credentials-create` を `self` で許可する（塞ぐとパスキーが動かない） |
 

@@ -109,7 +109,7 @@
 | 列 | 中身 | 用途 |
 |----|------|------|
 | `updated_at` | **サーバーの書き込み時刻**（`now()`。どの操作を適用したときも更新） | pull のカーソル専用。LWW の判定には使わない |
-| `field_modified_at`（jsonb） | フィールド名 → そのフィールドに最後に適用した**操作時刻**（クライアント時刻をサーバー時刻で補正したもの） | LWW の判定専用 |
+| `field_modified_at`（jsonb） | フィールド名 → そのフィールドに最後に適用した**操作時刻**（クライアント時刻をサーバー時刻で補正したもの） | LWW の判定専用。**キーがないフィールドは「最も古い時刻」として扱い、届いた操作を常に適用する**（O3 のマイグレーション前からある行や、まだ一度も更新されていないフィールド）。O3b 以降は、通常の tRPC の mutation でも、書き込んだフィールドのキーをサーバー時刻で更新するので、キーがないまま新しい値で上書きされることはない |
 
 - `updated_at = now()` を LWW に使うと、古い操作を適用した時点で `updated_at` が「現在」になり、その後に届いた本当は新しい操作が却下される。逆に `updated_at` に操作時刻を入れると、pull のカーソルが過去の時刻で書かれた行を取りこぼす。そのため 2 つを分ける
 
@@ -163,9 +163,10 @@
   - `sync.push` / `sync.pull` の入力に `protocolVersion` を含める。サーバーは**現在と 1 つ前のバージョンを、少なくとも 30 日間**受け付ける
   - 対応外のバージョンなら `CLIENT_TOO_OLD` エラーを返す。未送信の操作はキューに残したまま、強制更新（下記）に進む
 - **強制更新（最低バージョン）**: 重大な不具合や API の非互換のときに、利用者の選択を待たずに更新させる
-  - ビルドごとに `NEXT_PUBLIC_APP_VERSION`（コミット SHA と、単調に増えるリリース番号）を埋め込む
-  - サーバーは `GET /api/version` で `{ minClientRelease }`（環境変数 `MIN_CLIENT_RELEASE`）を返す（NetworkOnly）
-  - クライアントは起動時と前面に戻ったときに確認する。自分のリリース番号が下回っていれば、閉じられないモーダル「アプリを更新します」を出し、`registration.update()` → `SKIP_WAITING` → リロードを自動で行う。未送信の操作は IndexedDB に残るので、更新後に送られる
+  - ビルドごとに `NEXT_PUBLIC_APP_VERSION`（コミット SHA）と `NEXT_PUBLIC_BUILD_TIME`（`next.config.ts` でビルド時の `Date.now()` を埋め込む）を持たせる。**リリース番号にはビルド時刻を使う**（Vercel のビルドは shallow clone なので、`git rev-list --count` でのコミット数は使えない。ビルド時刻なら、新しいデプロイほど必ず大きい）
+  - `MIN_CLIENT_RELEASE` には、強制したいビルドの `NEXT_PUBLIC_BUILD_TIME`（デプロイのログか `/api/version` の `buildTime` で確認できる）を設定する。Promote で古いデプロイに戻した場合、そのビルド時刻は小さいので、`MIN_CLIENT_RELEASE` も合わせて下げる
+  - サーバーは `GET /api/version` で `{ buildTime, minClientRelease }`（`minClientRelease` は環境変数 `MIN_CLIENT_RELEASE`）を返す（NetworkOnly）
+  - クライアントは起動時と前面に戻ったときに確認する。自分の `NEXT_PUBLIC_BUILD_TIME` が `minClientRelease` を下回っていれば、閉じられないモーダル「アプリを更新します」を出し、`registration.update()` → `SKIP_WAITING` → リロードを自動で行う。未送信の操作は IndexedDB に残るので、更新後に送られる
   - SW 自体が壊れていて新しい JS が届かない場合は、kill switch（下記）を使う
 
 #### キャッシュのバージョン管理
@@ -266,7 +267,7 @@ output: {
 ```
 
 - 対象は、自分の個人データと所属グループのデータ
-- **取りこぼし対策**: 同時に実行されたトランザクションでは、`now()` の時刻順とコミット順がずれることがある。そのため、カーソルの時刻から **5 秒さかのぼって**取り直す（`updated_at > cursor.time - 5s`）。重複して届いた行は、クライアントが冪等に適用する（同じ行を `bulkPut` するだけ）。1 操作 1 トランザクションで処理時間が短いので、5 秒あれば足りる
+- **取りこぼし対策**: Postgres の `now()` は**トランザクションの開始時刻**なので、時刻順とコミット順がずれることがある（長いトランザクションほど大きくずれる）。そのため、カーソルの時刻から **60 秒さかのぼって**取り直す（`updated_at > cursor.time - 60s`）。重複して届いた行は、クライアントが冪等に適用する（同じ行を `bulkPut` するだけ）。同期の書き込みは 1 操作 1 トランザクションにし、ステートメントタイムアウトを 30 秒にして、60 秒を超えるトランザクションが起きないようにする
 - 所属グループの一覧が前回と変わったとき（脱退・追加）は、クライアントがそのグループのローカルデータを削除するか、カーソルなしで再取得する
 
 **ID の受け入れ**: `createItemSchema` などの作成用スキーマに `id: z.string().uuid().optional()` を追加し、既存の tRPC ミューテーションでもクライアント ID を受け付ける。
@@ -441,7 +442,7 @@ develop に PR をマージ
 | O3 | `feat: 同期用の列を追加（expand マイグレーション）` | `updated_at` / `field_modified_at` / `deleted_at` / インデックスの追加だけ（手書きの SQL。既存行の `updated_at` は `created_at` で埋める）。コードはまだ使わない | #64 | ~150（SQL を除く） |
 | O3b | `feat: 削除を論理削除に変更しクライアントIDを受け入れ` | 既存の削除を論理削除に、取得クエリの `deleted_at IS NULL`、update / delete の WHERE にスコープ（#73-1）、通常の mutation でも `updated_at` / `field_modified_at` を更新、作成時のクライアント ID 受け入れ | O3 | ~400 |
 | O4 | `feat: sync.push を実データに反映する冪等 API に作り直し` | 操作ごとの認可、パッチの検証と上限、フィールド単位の LWW と削除優先、`opId` による冪等化、`serverTime`、`protocolVersion`（#69 の push 部分を解消） | O3b、#68、#69（merge 部分） | ~500 |
-| O5 | `feat: sync.pull をカーソル差分取得に作り直し` | カーソル（5 秒のさかのぼり）、tombstone、`tagIds` の埋め込み、メンバーシップ、ページング、`protocolVersion` | O3b（O4 とは独立だが、ルールに従い O4 のマージ後に着手） | ~350 |
+| O5 | `feat: sync.pull をカーソル差分取得に作り直し` | カーソル（60 秒のさかのぼり、ステートメントタイムアウト）、tombstone、`tagIds` の埋め込み、メンバーシップ、ページング、`protocolVersion` | O3b（O4 とは独立だが、ルールに従い O4 のマージ後に着手） | ~350 |
 | O6 | `feat: クライアント同期エンジン（push/pull/キュー圧縮）を実装` | Dexie v9（`versionchange` / `blocked` の処理）、ユーザーごとの DB、`meta`、リポジトリ層の土台、SyncEngine の push/pull/バックオフ/ロック/drain モード、キューの圧縮（`inflight` を除外、`fieldTimes` の統合）、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、SyncProvider の組み込み（この PR では hook はまだ tRPC 直呼びのまま。同期エンジンは「キューが空なら pull するだけ」で動く） | O4, O5 | ~500 |
 | O7 | `refactor: カタログ（items/tags）をローカルファーストに移行` | `useItems` / `useTags` / ミューテーションをリポジトリ経由に（フラグが false なら従来の tRPC の分岐）。マージ後のゲスト DB 消去と初回の全件 pull | O6 | ~400 |
 | O8 | `refactor: 買い物（lists/listItems/history）をローカルファーストに移行` | `useLists` / `useListMutations` / `useHistory*` の移行（フラグで切り替え）、`finishShopping` / `revertHistory` の複合操作 | O7 | ~500 |
@@ -463,14 +464,14 @@ develop に PR をマージ
 | キューの圧縮 | create+update / update+update / create+delete / update+delete の各組み合わせ、別のエンティティは圧縮しない、`inflight` の操作は圧縮しない（送信中の create + 後からの delete で delete が残る）、統合後の `fieldTimes` がフィールドごとに新しい方になる |
 | 時刻の補正 | `serverTime` から offset を計算し、操作時刻に反映する |
 | SyncEngine.push | applied/duplicate はキューから削除、conflict はローカルに上書き、rejected は failed、ネットワークエラーはバックオフ、401 は sessionExpired、100 件ごとの分割 |
-| SyncEngine.pull | ページング、tombstone の削除、未送信の操作があるエンティティは上書きしない、グループ脱退時のデータ削除、5 秒のさかのぼりで重複した行を冪等に適用する |
+| SyncEngine.pull | ページング、tombstone の削除、未送信の操作があるエンティティは上書きしない、グループ脱退時のデータ削除、60 秒のさかのぼりで重複した行を冪等に適用する |
 | drain モード | `NEXT_PUBLIC_LOCAL_FIRST=false` でも未送信のキューを push し続け、空になったら止まる。新しい書き込みはキューに積まない |
 | Dexie のバージョン更新 | `versionchange` で DB を閉じてリロード、`blocked` で案内を表示 |
 | 強制更新 | `minClientRelease` が自分のリリース番号より大きいとモーダルを出し、更新処理を呼ぶ。`CLIENT_TOO_OLD` でも同じ。未送信のキューは消さない |
 | 同期ロック | 同時に呼んでも 1 本しか走らない |
 | リポジトリ | 書き込みとキューの記録がアトミック（失敗時は両方ロールバック）、ゲストではキューに積まない、`updatedAt` の更新 |
-| `sync.push`（サーバー、DB を使う） | 正常系の create/update/delete、他人のデータは rejected で serverRow を返さない、所属外グループは rejected、**フィールド単位の LWW**（古い `fieldTimes` のフィールドだけ捨てて partial、別のフィールドは適用される）、古い操作を適用しても後から届いた新しい操作が却下されない（`updated_at` を LWW に使っていないこと）、削除済みへの update は conflict、opId の重複は duplicate、未来の時刻は丸められる、パッチのバリデーションエラーと上限、対応外の `protocolVersion` は `CLIENT_TOO_OLD` |
-| `sync.pull`（サーバー、DB を使う） | カーソル以降の差分だけ返す（5 秒のさかのぼりを含む）、カーソルより前の時刻で後からコミットされた行も次の pull で取れる、deleted_at を含む、他人・所属外グループのデータを含まない、500 行でのページング |
+| `sync.push`（サーバー、DB を使う） | 正常系の create/update/delete、`field_modified_at` にキーがないフィールドは常に適用される、他人のデータは rejected で serverRow を返さない、所属外グループは rejected、**フィールド単位の LWW**（古い `fieldTimes` のフィールドだけ捨てて partial、別のフィールドは適用される）、古い操作を適用しても後から届いた新しい操作が却下されない（`updated_at` を LWW に使っていないこと）、削除済みへの update は conflict、opId の重複は duplicate、未来の時刻は丸められる、パッチのバリデーションエラーと上限、対応外の `protocolVersion` は `CLIENT_TOO_OLD` |
+| `sync.pull`（サーバー、DB を使う） | カーソル以降の差分だけ返す（60 秒のさかのぼりを含む）、カーソルより前の時刻で後からコミットされた行も次の pull で取れる、deleted_at を含む、他人・所属外グループのデータを含まない、500 行でのページング |
 | 論理削除 | 既存の取得系 API が削除済みの行を返さない |
 | AuthContext のオフライン | ネットワークエラーかつ `lastKnownUser` あり → offline、401 → unauthenticated |
 | SW の設定 | `runtimeCaching` で `/api/**`（trpc / auth / e2e / ogp）が NetworkOnly になる（matcher の単体テスト）、キャッシュ名に `CACHE_VERSION` の接頭辞が付く |
