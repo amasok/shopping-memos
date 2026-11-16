@@ -226,4 +226,25 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
     expect(syncMergeInputSchema.safeParse({ data: { ...payload.data, items: [payload.data.items[0]] } }).success).toBe(true)
     expect(syncMergeInputSchema.safeParse({ data: { ...payload.data, items: [payload.data.items[1]] } }).success).toBe(false)
   })
+
+  it("中身が不正な Date があっても、merge 全体は止めず、その 1 件だけが検証で落ちる（null を許す項目でも黙って null にしない）", async () => {
+    const invalid = new Date("not a date")
+    state.tags = [{ id: uuid(), name: "お気に入り", createdAt: NOW, updatedAt: NOW }]
+    state.items = [
+      { id: uuid(), name: "牛乳", quantity: 1, tagIds: [], createdAt: NOW, updatedAt: NOW },
+      { id: uuid(), name: "作成日が不正", quantity: 1, tagIds: [], createdAt: invalid, updatedAt: NOW },
+      { id: uuid(), name: "購入日が不正", quantity: 1, tagIds: [], createdAt: NOW, updatedAt: NOW, purchasedAt: invalid },
+    ]
+    state.lists = []
+    state.listItems = []
+
+    const payload = await mergePayload()
+
+    expect(payload.data.items).toHaveLength(3)
+    expect(payload.data.items[2].purchasedAt).toBe("Invalid Date")
+    const only = (i: number) => ({ data: { ...payload.data, items: [payload.data.items[i]] } })
+    expect(syncMergeInputSchema.safeParse(only(0)).success).toBe(true)
+    expect(syncMergeInputSchema.safeParse(only(1)).success).toBe(false)
+    expect(syncMergeInputSchema.safeParse(only(2)).success).toBe(false)
+  })
 })

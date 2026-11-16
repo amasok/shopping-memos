@@ -33,7 +33,10 @@ const clipNullable = (value: string | null | undefined, max: number) =>
  * merge 全体を例外で止めない。不正な値はそのまま送り、サーバーの検証でその 1 件だけがスキップされる（#86）
  */
 function toIso(value: unknown): string {
-  return value instanceof Date ? value.toISOString() : (value as string)
+  if (!(value instanceof Date)) return value as string
+  // 中身が不正な Date（new Date("x")）は toISOString() が RangeError を投げる。null にすると、null を許す項目
+  // （purchasedAt など）で意味が黙って変わるので、"Invalid Date" として送り、サーバーの検証でその 1 件だけをスキップさせる
+  return Number.isNaN(value.getTime()) ? String(value) : value.toISOString()
 }
 function toIsoNullable(value: unknown): string | null {
   return value == null ? null : toIso(value)
