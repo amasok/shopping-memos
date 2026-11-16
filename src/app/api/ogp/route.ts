@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { pipeline, type Readable, type Transform } from "stream"
 import zlib from "zlib"
 import { requestPinned } from "./http-client"
+import { decodeHtml } from "./charset"
 import { parseOGP } from "./parse-ogp"
 import { getClientIp, ogpRateLimiter } from "./rate-limit"
 import {
@@ -140,7 +141,7 @@ function decodeBody(res: IncomingMessage): Readable {
  * <head> までを読む。上限は展開後の大きさで数える（zip bomb 対策）。
  * 上限に達したら読むのをやめ、展開も接続も止める
  */
-async function readHead(res: IncomingMessage): Promise<string> {
+async function readHead(res: IncomingMessage, contentType: string): Promise<string> {
   const chunks: Buffer[] = []
   let total = 0
   let body: Readable = res
@@ -164,7 +165,8 @@ async function readHead(res: IncomingMessage): Promise<string> {
     body.destroy()
     res.destroy()
   }
-  return new TextDecoder().decode(Buffer.concat(chunks))
+  // UTF-8 固定ではなく、Content-Type と <meta> の charset でデコードする（#105。Shift_JIS・EUC-JP のページ）
+  return decodeHtml(Buffer.concat(chunks), contentType)
 }
 
 /**
@@ -257,7 +259,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "URL is not an HTML page" }, { status: 422 })
     }
 
-    const html = await readHead(response)
+    const html = await readHead(response, contentType)
     const ogpData = parseOGP(html, url, finalUrl.href)
 
     if (!ogpData) {
