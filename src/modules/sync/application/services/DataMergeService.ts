@@ -1,5 +1,6 @@
-import { and, eq } from "drizzle-orm"
+import { and, eq, isNull } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
+import { describeDbError, formatDbErrorKind, type DbErrorKind } from "@/infrastructure/db/errors"
 import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
 import {
   canAccessScope,
@@ -87,33 +88,40 @@ export interface MergeResult {
   alreadyMergedCount: number
   /** トランザクション全体が失敗した（何も取り込まれていない） */
   fatal: boolean
+  /**
+   * ID を付け替えたタグ（ゲストのタグの ID が、ほかのユーザーのタグと重なった場合）。
+   * クライアントは、後から送るアイテム・リストアイテムの tagIds をこれで付け替える
+   */
+  idMappings: Array<{ entity: "tag"; localId: string; serverId: string }>
   errors: string[]
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
+type SavepointResult = { ok: true } | { ok: false; error: DbErrorKind }
+
 /**
  * 1 件分の書き込みを SAVEPOINT で囲んで実行する。
  * PostgreSQL では、トランザクション内で 1 文が失敗すると、以降の文がすべて
  * "current transaction is aborted" で失敗する。SAVEPOINT 単位で囲めば、失敗した分だけが
- * ロールバックされ、ほかのデータのマージを続けられる。成功したら true を返す。
+ * ロールバックされ、ほかのデータのマージを続けられる。
+ * 失敗したときは、ログに残してよいエラーの種類（PG の code・制約名・テーブル名）を返す。
+ * ログは、取り込み済みかどうかを判定した後で、呼び出し側が出す
  */
-async function inSavepoint(
-  tx: Tx,
-  label: string,
-  fn: (sp: Tx) => Promise<void>
-): Promise<boolean> {
+async function inSavepoint(tx: Tx, fn: (sp: Tx) => Promise<void>): Promise<SavepointResult> {
   try {
     await tx.transaction(async (sp) => {
       await fn(sp as unknown as Tx)
     })
-    return true
+    return { ok: true }
   } catch (error) {
-    // 原因の調査用。データの中身は出さず、対象（エンティティと ID）とエラーコードだけを記録する
-    const code = (error as { code?: string } | null)?.code ?? "unknown"
-    console.error(`[DataMerge] ${label} のマージに失敗 (code: ${code})`)
-    return false
+    return { ok: false, error: describeDbError(error) }
   }
+}
+
+/** 原因の調査用のログ。データの中身や値（detail・params）は出さず、対象とエラーの種類だけを記録する */
+function logMergeFailure(label: string, error: DbErrorKind) {
+  console.error(`[DataMerge] ${label} のマージに失敗 (${formatDbErrorKind(error)})`)
 }
 
 /**
@@ -133,6 +141,10 @@ export class DataMergeService {
     targetGroupId?: string
   ): Promise<MergeResult> {
     const errors: string[] = []
+    const idMappings: MergeResult["idMappings"] = []
+    // ゲストのタグの ID → サーバーで使う ID（付け替えたものだけ）
+    const tagIdMap = new Map<string, string>()
+    const resolveTagId = (id: string) => tagIdMap.get(id) ?? id
     let failedCount = 0
     let alreadyMergedCount = 0
     const mergedCounts = {
@@ -181,17 +193,19 @@ export class DataMergeService {
       }
     }
 
-    /** INSERT に失敗したレコードを、取り込み済みか失敗かに振り分ける */
+    /** INSERT に失敗したレコードを、取り込み済みか失敗かに振り分ける（失敗のときだけログに残す） */
     const handleInsertFailure = async (
       executor: DbExecutor,
       entity: SyncEntity,
       id: string,
-      message: string
+      message: string,
+      error: DbErrorKind
     ) => {
       if (await isAlreadyMerged(executor, entity, id)) {
         alreadyMergedCount++
         return
       }
+      logMergeFailure(`${entity}:${id}`, error)
       failedCount++
       errors.push(message)
     }
@@ -202,45 +216,95 @@ export class DataMergeService {
       errors.push(message)
     }
 
+    /** タグを 1 件 INSERT する（同期ログも記録する） */
+    const insertTag = (tx: Tx, tag: LocalTag, id: string) =>
+      inSavepoint(tx, async (sp) => {
+        await sp.insert(tags).values({
+          id,
+          name: tag.name,
+          userId, // 作成者を設定
+          groupId,
+          createdAt: tag.createdAt,
+          updatedAt: now,
+        })
+
+        // 同期ログを記録
+        await sp.insert(syncOperations).values({
+          id: crypto.randomUUID(),
+          userId,
+          entity: "tag",
+          entityId: id,
+          operation: "create",
+          payload: JSON.stringify({ ...tag, id, groupId }),
+          createdAt: now,
+        })
+      })
+
+    /**
+     * ゲストのタグの ID が、ほかのユーザー（またはグループ）のタグと重なったときの扱い。
+     * 同じブラウザで別のアカウントが先に取り込んだ場合に起きる（ゲストの初期タグの ID はブラウザごとに 1 回だけ作られ、
+     * merge の後も IndexedDB に残るため）。失敗にせず、このユーザーの同じ名前の個人タグがあればそれにまとめ、
+     * なければ新しい ID で作る。どちらの場合も、アイテム・リストアイテムのタグの参照を付け替える
+     */
+    const remapForeignTag = async (tx: Tx, tag: LocalTag): Promise<boolean> => {
+      const [existing] = await tx
+        .select({ id: tags.id })
+        .from(tags)
+        .where(
+          and(
+            eq(tags.userId, userId),
+            groupId ? eq(tags.groupId, groupId) : isNull(tags.groupId),
+            eq(tags.name, tag.name)
+          )
+        )
+        .limit(1)
+      let serverId = existing?.id
+      if (!serverId) {
+        const newId = crypto.randomUUID()
+        const created = await insertTag(tx, tag, newId)
+        if (!created.ok) {
+          logMergeFailure(`tag:${tag.id}（新しい ID での作成）`, created.error)
+          return false
+        }
+        mergedCounts.tags++
+        serverId = newId
+      }
+      tagIdMap.set(tag.id, serverId)
+      mergedTagIds.add(serverId)
+      idMappings.push({ entity: "tag", localId: tag.id, serverId })
+      return true
+    }
+
     // トランザクションでまとめて実行
     try {
       await db.transaction(async (tx) => {
         // 1. タグをマージ（アイテムより先に）
         for (const tag of data.tags) {
-          const ok = await inSavepoint(tx, `tag:${tag.id}`, async (sp) => {
-            await sp.insert(tags).values({
-              id: tag.id,
-              name: tag.name,
-              userId, // 作成者を設定
-              groupId,
-              createdAt: tag.createdAt,
-              updatedAt: now,
-            })
-
-            // 同期ログを記録
-            await sp.insert(syncOperations).values({
-              id: crypto.randomUUID(),
-              userId,
-              entity: "tag",
-              entityId: tag.id,
-              operation: "create",
-              payload: JSON.stringify({ ...tag, groupId }),
-              createdAt: now,
-            })
-          })
-          if (ok) {
+          const result = await insertTag(tx, tag, tag.id)
+          if (result.ok) {
             // ロールバックされた場合に残らないよう、成功してから記録する
             mergedTagIds.add(tag.id)
             mergedCounts.tags++
-          } else {
-            // 重複などで失敗した分だけをスキップ（取り込み済みなら失敗に数えない）
-            await handleInsertFailure(tx, "tag", tag.id, `タグ "${tag.name}" のマージに失敗`)
+            continue
           }
+          // 同じユーザーが取り込み済み（分割送信の再試行など）なら、失敗に数えない
+          if (await isAlreadyMerged(tx, "tag", tag.id)) {
+            alreadyMergedCount++
+            continue
+          }
+          // ID がほかのユーザーのタグと重なった（主キーの重複で、その ID の行がある）なら、付け替える
+          const isForeignId =
+            result.error.code === "23505" && (await findEntityScope(tx, "tag", tag.id).catch(() => null)) !== null
+          if (isForeignId && (await remapForeignTag(tx, tag))) continue
+
+          await handleInsertFailure(tx, "tag", tag.id, `タグ "${tag.name}" のマージに失敗`, result.error)
         }
 
         // 2. アイテムをマージ
         for (const item of data.items) {
-          const ok = await inSavepoint(tx, `item:${item.id}`, async (sp) => {
+          // ID を付け替えたタグを参照していれば、付け替え後の ID にする
+          const itemTagIds = item.tagIds.map(resolveTagId)
+          const result = await inSavepoint(tx, async (sp) => {
             await sp.insert(items).values({
               id: item.id,
               name: item.name,
@@ -256,7 +320,7 @@ export class DataMergeService {
             // タグの関連を中間テーブルに挿入
             // 今回作成したタグ、またはアイテムと同じスコープの既存タグのみ関連付ける
             const allowedTagIds: string[] = []
-            for (const tagId of item.tagIds) {
+            for (const tagId of itemTagIds) {
               const allowed = await areTagsInScope([tagId], { userId, groupId }, {
                 executor: sp,
                 allowedTagIds: mergedTagIds,
@@ -269,12 +333,13 @@ export class DataMergeService {
             }
             for (const tagId of allowedTagIds) {
               // タグが存在しない場合などはその関連だけスキップ（失敗しても SAVEPOINT 内を汚さない）
-              await inSavepoint(sp, `itemTag:${item.id}:${tagId}`, async (inner) => {
+              const linked = await inSavepoint(sp, async (inner) => {
                 await inner.insert(itemTags).values({
                   itemId: item.id,
                   tagId,
                 })
               })
+              if (!linked.ok) logMergeFailure(`itemTag:${item.id}:${tagId}`, linked.error)
             }
 
             await sp.insert(syncOperations).values({
@@ -283,20 +348,20 @@ export class DataMergeService {
               entity: "item",
               entityId: item.id,
               operation: "create",
-              payload: JSON.stringify({ ...item, groupId }),
+              payload: JSON.stringify({ ...item, tagIds: itemTagIds, groupId }),
               createdAt: now,
             })
           })
-          if (ok) {
+          if (result.ok) {
             mergedCounts.items++
           } else {
-            await handleInsertFailure(tx, "item", item.id, `アイテム "${item.name}" のマージに失敗`)
+            await handleInsertFailure(tx, "item", item.id, `アイテム "${item.name}" のマージに失敗`, result.error)
           }
         }
 
         // 3. リストをマージ
         for (const list of data.lists) {
-          const ok = await inSavepoint(tx, `list:${list.id}`, async (sp) => {
+          const result = await inSavepoint(tx, async (sp) => {
             await sp.insert(shoppingLists).values({
               id: list.id,
               name: list.name,
@@ -319,11 +384,11 @@ export class DataMergeService {
               createdAt: now,
             })
           })
-          if (ok) {
+          if (result.ok) {
             mergedListIds.add(list.id)
             mergedCounts.lists++
           } else {
-            await handleInsertFailure(tx, "list", list.id, `リスト "${list.name}" のマージに失敗`)
+            await handleInsertFailure(tx, "list", list.id, `リスト "${list.name}" のマージに失敗`, result.error)
           }
         }
 
@@ -333,14 +398,15 @@ export class DataMergeService {
             recordFailure(`リストアイテム "${listItem.name}" のマージに失敗（リストにアクセスできません）`)
             continue
           }
-          const ok = await inSavepoint(tx, `listItem:${listItem.id}`, async (sp) => {
+          const listItemTagIds = listItem.tagIds.map(resolveTagId)
+          const result = await inSavepoint(tx, async (sp) => {
             await sp.insert(listItems).values({
               id: listItem.id,
               listId: listItem.listId,
               name: listItem.name,
               quantity: listItem.quantity,
               memo: listItem.memo ?? null,
-              tagIds: listItem.tagIds,
+              tagIds: listItemTagIds,
               userId, // 作成者を設定
               groupId,
               checked: listItem.checked,
@@ -353,18 +419,19 @@ export class DataMergeService {
               entity: "listItem",
               entityId: listItem.id,
               operation: "create",
-              payload: JSON.stringify({ ...listItem, groupId }),
+              payload: JSON.stringify({ ...listItem, tagIds: listItemTagIds, groupId }),
               createdAt: now,
             })
           })
-          if (ok) {
+          if (result.ok) {
             mergedCounts.listItems++
           } else {
             await handleInsertFailure(
               tx,
               "listItem",
               listItem.id,
-              `リストアイテム "${listItem.name}" のマージに失敗`
+              `リストアイテム "${listItem.name}" のマージに失敗`,
+              result.error
             )
           }
         }
@@ -376,7 +443,7 @@ export class DataMergeService {
             continue
           }
           let notFound = false
-          const ok = await inSavepoint(tx, `history:${history.id}`, async (sp) => {
+          const result = await inSavepoint(tx, async (sp) => {
             // 履歴データをリストのpurchasedAt/locationとして反映
             // 他人のリストを上書きしないよう、今回作成したリスト以外は作成者本人のリストに限定する
             const updated = await sp
@@ -414,9 +481,10 @@ export class DataMergeService {
           // 履歴は UPDATE なので、送り直しても同じ値で上書きされるだけ（重複にならない）
           if (notFound) {
             recordFailure(`履歴のマージに失敗（リストにアクセスできません）`)
-          } else if (ok) {
+          } else if (result.ok) {
             mergedCounts.history++
           } else {
+            logMergeFailure(`history:${history.id}`, result.error)
             recordFailure(`履歴のマージに失敗`)
           }
         }
@@ -428,6 +496,7 @@ export class DataMergeService {
         failedCount,
         alreadyMergedCount,
         fatal: false,
+        idMappings,
         errors,
       }
     } catch (error) {
@@ -438,6 +507,7 @@ export class DataMergeService {
         failedCount: 0,
         alreadyMergedCount: 0,
         fatal: true,
+        idMappings: [],
         errors: [`マージ処理に失敗しました: ${error}`],
       }
     }

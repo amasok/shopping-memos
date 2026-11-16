@@ -15,6 +15,7 @@ import { trpc } from "@/infrastructure/trpc/client"
 import { MERGE_LIMITS } from "@/shared/schemas/sync"
 import { REQUEST_LIMITS, TEXT_LIMITS, clampQuantity, clipText } from "@/shared/schemas/limits"
 import { hasMergeData, splitMergeData } from "@/lib/merge/splitMergeData"
+import { applyTagIdMappings } from "@/lib/merge/applyTagIdMappings"
 
 const clipNullable = (value: string | null | undefined, max: number) =>
   value == null ? null : clipText(value, max)
@@ -191,8 +192,13 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
           })
         : []
       let skipped = 0
+      // サーバーが付け替えたタグの ID（ほかのユーザーのタグと ID が重なった場合）。後から送る分に反映する
+      const tagIdMap = new Map<string, string>()
       for (const [index, chunk] of chunks.entries()) {
-        const result = await mergeMutation.mutateAsync({ data: chunk })
+        const result = await mergeMutation.mutateAsync({ data: applyTagIdMappings(chunk, tagIdMap) })
+        for (const mapping of result.idMappings ?? []) {
+          if (mapping.entity === "tag") tagIdMap.set(mapping.localId, mapping.serverId)
+        }
         // 検証でスキップした件数と、レコード単位で取り込めなかった件数だけを数える
         skipped += result.mergeResult.notImportedCount
         console.log(`Data merge ${index + 1}/${chunks.length} completed:`, result.mergeResult)
