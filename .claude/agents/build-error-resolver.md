@@ -2,8 +2,10 @@
 name: build-error-resolver
 description: ビルド・TypeScriptエラー解決スペシャリスト。ビルド失敗や型エラー発生時にPROACTIVEに使用。最小限の変更でビルドを通すことに特化。アーキテクチャ変更は行わない。
 tools: ["Read", "Edit", "Bash", "Grep", "Glob"]
-model: opus
+model: sonnet
 ---
+
+> 原因が分からないエラーや、設計に関わる修正が必要な場合は Opus に切り替える（`.claude/rules/performance.md`）。
 
 # ビルドエラー解決スペシャリスト
 
