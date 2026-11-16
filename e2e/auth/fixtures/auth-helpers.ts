@@ -62,6 +62,9 @@ export async function loginAndSaveState(
   // 3. ホームに遷移してセッション確認
   await page.goto("/")
   await page.waitForLoadState("networkidle")
+  // 以前の仕組みからの移行（ゲストのデータの扱いのバージョン）が済むのを待つ。
+  // 済む前に印を付けて保存すると、各テストの最初の読み込みで、印が以前の意味の印として扱われる
+  await page.waitForFunction(() => localStorage.getItem("guest-data-version") === "2")
 
   // 4. ユーザーIDを取得（seed APIを使用）
   const { id: userId } = await getUser(email)

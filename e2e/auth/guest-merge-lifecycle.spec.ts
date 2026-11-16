@@ -15,22 +15,35 @@ const EMAIL = "guest-lifecycle@e2e-test.local"
 // ログインしていない（ゲストの）状態から始める
 test.use({ storageState: { cookies: [], origins: [] } })
 
-/** ゲストの DB（IndexedDB）のテーブルの件数 */
+/**
+ * ゲストの DB（IndexedDB）のテーブルの件数。DB やテーブルがまだなければ -1。
+ * アプリが DB を作る前に開いても、空の DB を作らない（onupgradeneeded で中止する）。
+ * 例外は捕まえて -1 にし、expect.poll が待ち続けないようにする
+ */
 async function countGuestRows(page: Page, table: string): Promise<number> {
   return page.evaluate(
     (name) =>
-      new Promise<number>((resolve, reject) => {
+      new Promise<number>((resolve) => {
         const req = indexedDB.open("ShoppingMemosDB")
+        req.onupgradeneeded = () => req.transaction?.abort()
+        req.onerror = () => resolve(-1)
         req.onsuccess = () => {
           const db = req.result
-          const count = db.transaction(name, "readonly").objectStore(name).count()
-          count.onsuccess = () => {
+          try {
+            const count = db.transaction(name, "readonly").objectStore(name).count()
+            count.onsuccess = () => {
+              db.close()
+              resolve(count.result)
+            }
+            count.onerror = () => {
+              db.close()
+              resolve(-1)
+            }
+          } catch {
             db.close()
-            resolve(count.result)
+            resolve(-1)
           }
-          count.onerror = () => reject(count.error)
         }
-        req.onerror = () => reject(req.error)
       }),
     table
   )
