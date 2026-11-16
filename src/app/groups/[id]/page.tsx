@@ -90,6 +90,8 @@ export default function GroupDetailPage() {
 
   useEffect(() => {
     if (group) {
+      // group の読み込み後に編集欄の初期値を入れるため。TODO: key か派生 state に置き換える
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEditName(group.name)
     }
   }, [group])
