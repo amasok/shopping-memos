@@ -1,3 +1,4 @@
+import { TRPCError } from "@trpc/server"
 import { router, protectedProcedure } from "../server"
 import {
   syncPushInputSchema,
@@ -145,11 +146,20 @@ export const syncRouter = router({
       // 形式が不正な要素は 1 件ずつスキップし、ほかのデータは取り込む
       const { data: validData, errors: validationErrors } = parseMergeData(data)
       const serviceResult = await dataMergeService.merge(ctx.userId, validData)
+      // トランザクション全体が失敗したときは何も取り込まれていない。
+      // 完了扱いにせず、クライアントに再試行させる（#116）
+      if (serviceResult.fatal) {
+        console.error("Merge failed:", serviceResult.errors)
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "マージに失敗しました" })
+      }
       const mergeResult = {
         ...serviceResult,
         success: serviceResult.success && validationErrors.length === 0,
         errors: [...validationErrors, ...serviceResult.errors],
       }
+      // 取り込めなかった件数（#116）: 検証でスキップした件数（1 件につき 1 つのエラー）と、
+      // レコード単位の失敗だけを数える。タグの関連付けのスキップや、取り込み済みの送り直しは数えない
+      const notImportedCount = validationErrors.length + serviceResult.failedCount
 
       if (!mergeResult.success && mergeResult.errors.length > 0) {
         console.error("Merge errors:", mergeResult.errors)
@@ -176,6 +186,8 @@ export const syncRouter = router({
         mergeResult: {
           success: mergeResult.success,
           mergedCounts: mergeResult.mergedCounts,
+          notImportedCount,
+          alreadyMergedCount: serviceResult.alreadyMergedCount,
           errors: mergeResult.errors,
         },
       }

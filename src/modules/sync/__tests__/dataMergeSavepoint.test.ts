@@ -13,6 +13,16 @@ vi.mock("@/infrastructure/db/drizzle/client", () => ({
   db: new Proxy({}, { get: (_t, prop) => (state.db as never)[prop] }),
 }))
 
+/** 既存レコードの所有者（findEntityScope の結果）。既定では見つからない（null） */
+const owners = vi.hoisted(() => new Map<string, { userId: string | null; groupId: string | null }>())
+vi.mock("@/modules/sync/infrastructure/entityAccess", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/modules/sync/infrastructure/entityAccess")>()
+  return {
+    ...actual,
+    findEntityScope: vi.fn(async (_executor: unknown, _entity: string, id: string) => owners.get(id) ?? null),
+  }
+})
+
 import { DataMergeService, type MergeData } from "../application/services/DataMergeService"
 
 type Row = { table: string; id?: string; values: Record<string, unknown> }
@@ -186,5 +196,102 @@ describe("DataMergeService.merge: 1 件の失敗が全体を壊さない (#90)",
       errors: [],
       mergedCounts: { tags: 1, items: 1 },
     })
+  })
+})
+
+describe("DataMergeService.merge: 分割送信の再試行と件数 (#116)", () => {
+  it("同じユーザーが取り込み済みの同じ ID は、失敗に数えず取り込み済みとして数える", async () => {
+    owners.clear()
+    owners.set("tag-done", { userId: "user-me", groupId: null })
+    owners.set("item-done", { userId: "user-me", groupId: null })
+    const fake = createPgLikeDb([
+      { table: "tags", id: "tag-done" },
+      { table: "items", id: "item-done" },
+    ])
+    state.db = fake.db
+
+    const result = await new DataMergeService().merge("user-me", {
+      ...emptyData,
+      tags: [tag("tag-done", "食品"), tag("tag-new", "日用品")],
+      items: [item("item-done", "牛乳")],
+    })
+
+    expect(result).toMatchObject({
+      success: true,
+      failedCount: 0,
+      alreadyMergedCount: 2,
+      fatal: false,
+      errors: [],
+      mergedCounts: { tags: 1, items: 0 },
+    })
+  })
+
+  it("ほかのユーザーのレコードと ID が重なったときは、失敗として数える", async () => {
+    owners.clear()
+    owners.set("tag-other", { userId: "user-other", groupId: null })
+    owners.set("item-group", { userId: "user-me", groupId: "group-1" })
+    const fake = createPgLikeDb([
+      { table: "tags", id: "tag-other" },
+      { table: "items", id: "item-group" },
+    ])
+    state.db = fake.db
+
+    const result = await new DataMergeService().merge("user-me", {
+      ...emptyData,
+      tags: [tag("tag-other", "食品")],
+      items: [item("item-group", "牛乳")],
+    })
+
+    expect(result.failedCount).toBe(2)
+    expect(result.alreadyMergedCount).toBe(0)
+    expect(result.errors).toHaveLength(2)
+  })
+
+  it("タグの関連付けだけのスキップは、レコード単位の失敗に数えない", async () => {
+    owners.clear()
+    const fake = createPgLikeDb([])
+    state.db = fake.db
+
+    const result = await new DataMergeService().merge("user-me", {
+      ...emptyData,
+      items: [item("i1", "牛乳", ["tag-missing"])],
+    })
+
+    expect(result.mergedCounts.items).toBe(1)
+    expect(result.failedCount).toBe(0)
+    expect(result.errors).toEqual([expect.stringContaining("タグの関連付けをスキップ")])
+  })
+
+  it("リストにアクセスできないリストアイテムは、レコード単位の失敗に数える", async () => {
+    owners.clear()
+    const fake = createPgLikeDb([])
+    state.db = fake.db
+
+    const result = await new DataMergeService().merge("user-me", {
+      ...emptyData,
+      listItems: [
+        { id: "li-1", listId: "list-missing", name: "x", quantity: 1, tagIds: [], checked: false, createdAt: NOW },
+      ],
+    })
+
+    expect(result.failedCount).toBe(1)
+  })
+
+  it("トランザクション全体が失敗したら fatal にし、取り込んだ件数は 0 にする", async () => {
+    owners.clear()
+    state.db = {
+      transaction: async () => {
+        throw new Error("connection lost")
+      },
+    }
+    vi.spyOn(console, "error").mockImplementation(() => {})
+
+    const result = await new DataMergeService().merge("user-me", {
+      ...emptyData,
+      tags: [tag("t1", "食品")],
+    })
+
+    expect(result.fatal).toBe(true)
+    expect(result.mergedCounts).toEqual({ items: 0, tags: 0, lists: 0, listItems: 0, history: 0 })
   })
 })

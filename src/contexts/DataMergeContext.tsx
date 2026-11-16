@@ -13,7 +13,8 @@ import { useAuth } from "@/contexts/AuthContext"
 import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
 import { MERGE_LIMITS } from "@/shared/schemas/sync"
-import { TEXT_LIMITS, clampQuantity, clipText } from "@/shared/schemas/limits"
+import { REQUEST_LIMITS, TEXT_LIMITS, clampQuantity, clipText } from "@/shared/schemas/limits"
+import { hasMergeData, splitMergeData } from "@/lib/merge/splitMergeData"
 
 const clipNullable = (value: string | null | undefined, max: number) =>
   value == null ? null : clipText(value, max)
@@ -22,6 +23,11 @@ const MERGE_COMPLETED_KEY = "data-merge-completed"
 /** 取り込めなかった件数（リロードをまたいで表示するため localStorage に保存する） */
 const MERGE_SKIPPED_KEY = "data-merge-skipped"
 const SELECTED_GROUP_KEY = "selectedGroupId"
+/**
+ * 1 回の sync.merge のボディの目安。サーバーの上限（sync.merge 単独で 4MB）より少し小さくして、
+ * 見積もりの誤差があっても 413 にならないようにする（#116）
+ */
+const MERGE_CHUNK_MAX_BYTES = Math.floor(REQUEST_LIMITS.mergeBodyBytes * 0.875)
 
 interface MergedCounts {
   items: number
@@ -128,59 +134,70 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      // サーバーにマージ
-      const result = await mergeMutation.mutateAsync({
-        data: {
-          items: localItems.map((item) => ({
-            id: item.id,
-            name: clipText(item.name, TEXT_LIMITS.itemName),
-            quantity: clampQuantity(item.quantity),
-            memo: clipNullable(item.memo, TEXT_LIMITS.memo),
-            tagIds: item.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
-            purchasedAt: item.purchasedAt?.toISOString() ?? null,
-            createdAt: item.createdAt.toISOString(),
-          })),
-          tags: localTags.map((tag) => ({
-            id: tag.id,
-            name: clipText(tag.name, TEXT_LIMITS.tagName),
-            createdAt: tag.createdAt.toISOString(),
-          })),
-          lists: localLists.map((list) => ({
-            id: list.id,
-            name: clipText(list.name, TEXT_LIMITS.listName),
-            status: list.status,
-            createdAt: list.createdAt.toISOString(),
-            completedAt: list.completedAt?.toISOString() ?? null,
-            purchasedAt: list.purchasedAt?.toISOString() ?? null,
-            location: clipNullable(list.location, TEXT_LIMITS.location),
-          })),
-          listItems: localListItems.map((listItem) => ({
-            id: listItem.id,
-            listId: listItem.listId,
-            name: clipText(listItem.name, TEXT_LIMITS.listItemName),
-            quantity: clampQuantity(listItem.quantity),
-            memo: clipNullable(listItem.memo, TEXT_LIMITS.memo),
-            tagIds: listItem.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
-            checked: listItem.checked,
-            createdAt: listItem.createdAt.toISOString(),
-          })),
-          // 履歴はlistsのpurchasedAtが設定されているもの（listId = list.id）
-          history: localHistory.map((list) => ({
-            id: list.id,
-            listId: list.id,
-            location: clipNullable(list.location, TEXT_LIMITS.location),
-            purchasedAt: list.purchasedAt!.toISOString(),
-          })),
-        },
-      })
+      const payload = {
+        items: localItems.map((item) => ({
+          id: item.id,
+          name: clipText(item.name, TEXT_LIMITS.itemName),
+          quantity: clampQuantity(item.quantity),
+          memo: clipNullable(item.memo, TEXT_LIMITS.memo),
+          tagIds: item.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
+          purchasedAt: item.purchasedAt?.toISOString() ?? null,
+          createdAt: item.createdAt.toISOString(),
+        })),
+        tags: localTags.map((tag) => ({
+          id: tag.id,
+          name: clipText(tag.name, TEXT_LIMITS.tagName),
+          createdAt: tag.createdAt.toISOString(),
+        })),
+        lists: localLists.map((list) => ({
+          id: list.id,
+          name: clipText(list.name, TEXT_LIMITS.listName),
+          status: list.status,
+          createdAt: list.createdAt.toISOString(),
+          completedAt: list.completedAt?.toISOString() ?? null,
+          purchasedAt: list.purchasedAt?.toISOString() ?? null,
+          location: clipNullable(list.location, TEXT_LIMITS.location),
+        })),
+        listItems: localListItems.map((listItem) => ({
+          id: listItem.id,
+          listId: listItem.listId,
+          name: clipText(listItem.name, TEXT_LIMITS.listItemName),
+          quantity: clampQuantity(listItem.quantity),
+          memo: clipNullable(listItem.memo, TEXT_LIMITS.memo),
+          tagIds: listItem.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
+          checked: listItem.checked,
+          createdAt: listItem.createdAt.toISOString(),
+        })),
+        // 履歴はlistsのpurchasedAtが設定されているもの（listId = list.id）
+        history: localHistory.map((list) => ({
+          id: list.id,
+          listId: list.id,
+          location: clipNullable(list.location, TEXT_LIMITS.location),
+          purchasedAt: list.purchasedAt!.toISOString(),
+        })),
+      }
 
-      // マージ完了をマーク
+      // 件数とボディの上限に収まるように分け、参照される側（タグ → … → 履歴）から順に送る（#116）。
+      // 途中で失敗したら、完了の印を付けずにエラーにする。再試行では最初から送り直すが、
+      // サーバーは取り込み済みのレコードを失敗に数えないので、件数が重複しない
+      const chunks = hasMergeData(payload)
+        ? splitMergeData(payload, {
+            limits: MERGE_LIMITS,
+            maxBytes: MERGE_CHUNK_MAX_BYTES,
+          })
+        : []
+      let skipped = 0
+      for (const [index, chunk] of chunks.entries()) {
+        const result = await mergeMutation.mutateAsync({ data: chunk })
+        // 検証でスキップした件数と、レコード単位で取り込めなかった件数だけを数える
+        skipped += result.mergeResult.notImportedCount
+        console.log(`Data merge ${index + 1}/${chunks.length} completed:`, result.mergeResult)
+      }
+
+      // 最後の分まで成功してから、マージ完了をマーク
       localStorage.setItem(mergeKey, "true")
 
-      console.log("Data merge completed:", result.mergeResult)
-
-      // 取り込めなかったデータ（形式が不正・重複など）があれば、リロード後に件数を通知する
-      const skipped = result.mergeResult.errors.length
+      // 取り込めなかったデータ（形式が不正など）があれば、リロード後に件数を通知する
       if (skipped > 0) {
         localStorage.setItem(`${MERGE_SKIPPED_KEY}-${user.id}`, String(skipped))
       }
