@@ -1,5 +1,6 @@
-import { eq, and, gt, lt, sql } from "drizzle-orm"
+import { eq, and, gt, isNull, lt, sql } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
+import { isUniqueViolation } from "@/infrastructure/db/errors"
 import {
   groups,
   groupMembers,
@@ -18,6 +19,8 @@ import {
 
 /** 試行履歴の保持期間（これより古い履歴は試行時に削除する） */
 const ATTEMPT_RETENTION_MS = 24 * 60 * 60 * 1000
+/** グループ作成時に、招待コードが重複したら作り直す回数（#73-3） */
+const CREATE_GROUP_MAX_ATTEMPTS = 3
 import type {
   GroupMember,
   GroupMemberWithUser,
@@ -32,28 +35,37 @@ export class DrizzleGroupRepository implements GroupRepository {
   // === グループ ===
 
   async createWithOwner(input: CreateGroupInput): Promise<Group> {
-    const now = new Date()
+    for (let attempt = 1; ; attempt++) {
+      try {
+        // グループとオーナーを 1 つのトランザクションで作る（#73-3）。
+        // オーナーの追加に失敗したら、オーナーのいないグループを残さない
+        return await db.transaction(async (tx) => {
+          const now = new Date()
+          const [group] = await tx.insert(groups).values({
+            id: input.id,
+            name: input.name,
+            inviteCode: generateInviteCode(),
+            inviteCodeExpiresAt: inviteCodeExpiresAt(now),
+            createdAt: now,
+            updatedAt: now,
+          }).returning()
 
-    // トランザクションでグループとオーナーを同時作成
-    const [group] = await db.insert(groups).values({
-      id: input.id,
-      name: input.name,
-      inviteCode: generateInviteCode(),
-      inviteCodeExpiresAt: inviteCodeExpiresAt(now),
-      createdAt: now,
-      updatedAt: now,
-    }).returning()
+          await tx.insert(groupMembers).values({
+            id: crypto.randomUUID(),
+            groupId: input.id,
+            userId: input.ownerId,
+            role: "owner",
+            joinedAt: now,
+          })
 
-    // オーナーとして追加
-    await db.insert(groupMembers).values({
-      id: crypto.randomUUID(),
-      groupId: input.id,
-      userId: input.ownerId,
-      role: "owner",
-      joinedAt: now,
-    })
-
-    return group
+          return group
+        })
+      } catch (error) {
+        // 招待コードがほかのグループと重なったときだけ、コードを作り直して再試行する
+        if (attempt < CREATE_GROUP_MAX_ATTEMPTS && isUniqueViolation(error, "invite_code")) continue
+        throw error
+      }
+    }
   }
 
   async findById(id: string): Promise<Group | null> {
@@ -276,14 +288,42 @@ export class DrizzleGroupRepository implements GroupRepository {
     return result[0] ?? null
   }
 
-  async markInviteAsUsed(id: string, userId: string): Promise<void> {
-    await db
-      .update(inviteLinks)
-      .set({
-        usedAt: new Date(),
-        usedBy: userId,
+  /**
+   * 招待リンクを使ってメンバーになる（#73-2）。
+   * 未使用で期限内のときだけ「使用済み」にして確保し、同じトランザクションでメンバーを追加する。
+   * 確保できなければ（同時に別のユーザーが使った、期限切れ）false を返し、何も変えない。
+   * メンバーの追加に失敗したら、招待リンクも未使用のまま戻る
+   */
+  async acceptInvite(input: {
+    inviteId: string
+    groupId: string
+    userId: string
+    memberId: string
+  }): Promise<boolean> {
+    return db.transaction(async (tx) => {
+      const now = new Date()
+      const claimed = await tx
+        .update(inviteLinks)
+        .set({ usedAt: now, usedBy: input.userId })
+        .where(
+          and(
+            eq(inviteLinks.id, input.inviteId),
+            isNull(inviteLinks.usedAt),
+            gt(inviteLinks.expiresAt, now)
+          )
+        )
+        .returning({ id: inviteLinks.id })
+      if (claimed.length === 0) return false
+
+      await tx.insert(groupMembers).values({
+        id: input.memberId,
+        groupId: input.groupId,
+        userId: input.userId,
+        role: "member",
+        joinedAt: now,
       })
-      .where(eq(inviteLinks.id, id))
+      return true
+    })
   }
 }
 

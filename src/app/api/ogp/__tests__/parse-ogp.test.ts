@@ -161,7 +161,6 @@ describe("resolveImageUrl (#66)", () => {
     ["../up.png", "https://example.com/up.png"],
     ["//cdn.example/x.png", "https://cdn.example/x.png"],
     ["https://other.example/a.png?x=1", "https://other.example/a.png?x=1"],
-    ["http://other.example/a.png", "http://other.example/a.png"],
   ])("%s を絶対URLにする", (raw, expected) => {
     expect(resolveImageUrl(raw, base)).toBe(expected)
   })
@@ -173,8 +172,14 @@ describe("resolveImageUrl (#66)", () => {
     ["file:///etc/passwd"],
     ["ftp://example.com/a.png"],
     ["blob:https://example.com/uuid"],
+    // http の画像は混在コンテンツになるので捨てる（#73-4）
+    ["http://other.example/a.png"],
   ])("%s は捨てる", (raw) => {
     expect(resolveImageUrl(raw, base)).toBeUndefined()
+  })
+
+  it("ページが http でも、相対パスの画像は http になるので捨てる (#73-4)", () => {
+    expect(resolveImageUrl("/img.png", "http://example.com/page")).toBeUndefined()
   })
 
   it("空・未指定は undefined", () => {

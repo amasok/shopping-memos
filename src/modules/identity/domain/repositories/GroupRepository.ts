@@ -66,6 +66,14 @@ export interface GroupRepository {
   /** トークンで招待リンクを取得 */
   findInviteByToken(token: string): Promise<InviteLink | null>
 
-  /** 招待リンクを使用済みにする */
-  markInviteAsUsed(id: string, userId: string): Promise<void>
+  /**
+   * 招待リンクを確保してメンバーになる（使用済みにする処理とメンバーの追加を 1 つのトランザクションで行う）。
+   * 未使用・期限内でなければ false を返し、何も変えない
+   */
+  acceptInvite(input: {
+    inviteId: string
+    groupId: string
+    userId: string
+    memberId: string
+  }): Promise<boolean>
 }

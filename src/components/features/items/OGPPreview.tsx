@@ -16,6 +16,19 @@ interface OGPPreviewProps {
   checked?: boolean
 }
 
+/**
+ * 表示してよい画像の URL か（#73-4）。サーバーも https 以外を捨てるが、
+ * 古いサーバーの応答やキャッシュに http の画像が残っていても、混在コンテンツとして読み込まない
+ */
+export function isDisplayableImageUrl(value: string | undefined): value is string {
+  if (!value) return false
+  try {
+    return new URL(value).protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
 async function fetchOGP(url: string): Promise<OGPData> {
   const res = await fetch(`/api/ogp?url=${encodeURIComponent(url)}`)
   if (!res.ok) throw new Error("OGP fetch failed")
@@ -68,7 +81,7 @@ export function OGPPreview({ url, checked = false }: OGPPreviewProps) {
         checked && "opacity-50"
       )}
     >
-      {data.image && (
+      {isDisplayableImageUrl(data.image) && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={data.image}
