@@ -6,7 +6,7 @@ import {
   SKIP_WAITING_MESSAGE,
   fetchVersionInfo,
   getClientRelease,
-  isBelowMinRelease,
+  shouldForceUpdate,
 } from "@/lib/sw/version"
 
 const RELOAD_GUARD_KEY = "sm-force-update-at"
@@ -19,10 +19,7 @@ export function ForceUpdateModal({ serwist }: { serwist: Serwist | null }) {
   useEffect(() => {
     const check = async () => {
       const info = await fetchVersionInfo()
-      if (
-        info &&
-        isBelowMinRelease(getClientRelease(), info.minClientRelease)
-      ) {
+      if (info && shouldForceUpdate(getClientRelease(), info)) {
         setForced(true)
       }
     }

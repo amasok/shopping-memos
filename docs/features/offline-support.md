@@ -164,7 +164,7 @@
   - 対応外のバージョンなら `CLIENT_TOO_OLD` エラーを返す。未送信の操作はキューに残したまま、強制更新（下記）に進む
 - **強制更新（最低バージョン）**: 重大な不具合や API の非互換のときに、利用者の選択を待たずに更新させる
   - ビルドごとに `NEXT_PUBLIC_APP_VERSION`（コミット SHA）と `NEXT_PUBLIC_BUILD_TIME`（`next.config.ts` でビルド時の `Date.now()` を埋め込む）を持たせる。**リリース番号にはビルド時刻を使う**（Vercel のビルドは shallow clone なので、`git rev-list --count` でのコミット数は使えない。ビルド時刻なら、新しいデプロイほど必ず大きい）
-  - `MIN_CLIENT_RELEASE` には、強制したいビルドの `NEXT_PUBLIC_BUILD_TIME`（デプロイのログか `/api/version` の `buildTime` で確認できる）を設定する。Promote で古いデプロイに戻した場合、そのビルド時刻は小さいので、`MIN_CLIENT_RELEASE` も合わせて下げる
+  - `MIN_CLIENT_RELEASE` には、強制したいビルドの `NEXT_PUBLIC_BUILD_TIME`（デプロイのログか `/api/version` の `buildTime` で確認できる）を設定する。Promote で古いデプロイに戻した場合、そのビルド時刻は小さいので、`MIN_CLIENT_RELEASE` も合わせて下げる。設定ミスでアプリが使えなくなるのを防ぐため、クライアントは `minClientRelease` が `/api/version` の `buildTime`（サーバー自身のビルド）より大きい場合は無視する
   - サーバーは `GET /api/version` で `{ buildTime, minClientRelease }`（`minClientRelease` は環境変数 `MIN_CLIENT_RELEASE`）を返す（NetworkOnly）
   - クライアントは起動時と前面に戻ったときに確認する。自分の `NEXT_PUBLIC_BUILD_TIME` が `minClientRelease` を下回っていれば、閉じられないモーダル「アプリを更新します」を出し、`registration.update()` → `SKIP_WAITING` → リロードを自動で行う。未送信の操作は IndexedDB に残るので、更新後に送られる
   - SW 自体が壊れていて新しい JS が届かない場合は、kill switch（下記）を使う

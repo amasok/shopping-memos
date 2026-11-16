@@ -19,6 +19,15 @@ export function isBelowMinRelease(
   return minClientRelease > 0 && clientRelease < minClientRelease
 }
 
+/**
+ * 強制更新すべきか。サーバー自身のビルド（buildTime）より新しい最低リリース番号は、
+ * 設定ミス（桁の誤り・Promote 後の下げ忘れ）とみなして無視する。誰も満たせず、全員が更新ループに入るのを防ぐ
+ */
+export function shouldForceUpdate(clientRelease: number, info: VersionInfo): boolean {
+  if (info.minClientRelease > info.buildTime) return false
+  return isBelowMinRelease(clientRelease, info.minClientRelease)
+}
+
 export function parseVersionInfo(data: unknown): VersionInfo | null {
   if (typeof data !== "object" || data === null) return null
   const { buildTime, minClientRelease } = data as Record<string, unknown>

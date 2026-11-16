@@ -4,6 +4,7 @@ import {
   getClientRelease,
   isBelowMinRelease,
   parseVersionInfo,
+  shouldForceUpdate,
 } from "../version"
 
 afterEach(() => {
@@ -57,5 +58,17 @@ describe("/api/version の取得", () => {
       })
     )
     await expect(fetchVersionInfo()).resolves.toEqual({ buildTime: 5, minClientRelease: 3 })
+  })
+})
+
+describe("shouldForceUpdate", () => {
+  it("自分が最低リリース番号を下回り、サーバーのビルドが満たしていれば true", () => {
+    expect(shouldForceUpdate(100, { buildTime: 300, minClientRelease: 200 })).toBe(true)
+  })
+  it("最低リリース番号がサーバー自身のビルドより新しいとき（設定ミス）は強制しない", () => {
+    expect(shouldForceUpdate(100, { buildTime: 300, minClientRelease: 999 })).toBe(false)
+  })
+  it("自分が満たしていれば false", () => {
+    expect(shouldForceUpdate(300, { buildTime: 300, minClientRelease: 200 })).toBe(false)
   })
 })
