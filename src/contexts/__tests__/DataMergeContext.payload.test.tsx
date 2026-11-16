@@ -44,7 +44,7 @@ async function mergePayload() {
 beforeEach(() => {
   localStorage.clear()
   state.mutateAsync.mockReset().mockResolvedValue({
-    mergeResult: { success: true, mergedCounts: {}, errors: [] },
+    mergeResult: { success: true, mergedCounts: {}, notImportedCount: 0, errors: [] },
   })
   Object.defineProperty(window, "location", {
     configurable: true,
@@ -167,7 +167,7 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
     state.lists = []
     state.listItems = []
     state.mutateAsync.mockResolvedValue({
-      mergeResult: { success: false, mergedCounts: {}, errors: ["a", "b"] },
+      mergeResult: { success: false, mergedCounts: {}, notImportedCount: 2, errors: ["a", "b", "c"] },
     })
 
     await mergePayload()

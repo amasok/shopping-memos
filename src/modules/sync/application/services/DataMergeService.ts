@@ -3,9 +3,11 @@ import { db } from "@/infrastructure/db/drizzle/client"
 import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
 import {
   canAccessScope,
+  findEntityScope,
   findListScope,
   type DbExecutor,
 } from "@/modules/sync/infrastructure/entityAccess"
+import type { SyncEntity } from "@/modules/sync/domain/entities/SyncOperation"
 import {
   items,
   tags,
@@ -76,6 +78,15 @@ export interface MergeResult {
     listItems: number
     history: number
   }
+  /**
+   * レコード単位で取り込めなかった件数（#116）。
+   * タグの関連付けだけのスキップや、同じユーザーが取り込み済みのレコード（再試行の重複）は数えない
+   */
+  failedCount: number
+  /** 同じユーザーが前回までに取り込み済みだったレコードの件数（分割送信の再試行で送り直した分） */
+  alreadyMergedCount: number
+  /** トランザクション全体が失敗した（何も取り込まれていない） */
+  fatal: boolean
   errors: string[]
 }
 
@@ -122,6 +133,8 @@ export class DataMergeService {
     targetGroupId?: string
   ): Promise<MergeResult> {
     const errors: string[] = []
+    let failedCount = 0
+    let alreadyMergedCount = 0
     const mergedCounts = {
       items: 0,
       tags: 0,
@@ -149,6 +162,44 @@ export class DataMergeService {
       }
       const scope = await findListScope(executor, listId)
       return scope !== null && (await canAccessScope(executor, scope, userId))
+    }
+
+    /**
+     * INSERT に失敗したレコードが、同じユーザーが前回までに取り込んだもの（同じ ID・個人のデータ）か。
+     * 分割して送った途中で失敗し、再試行で送り直した分を、失敗として数えないために使う（#116）
+     */
+    const isAlreadyMerged = async (
+      executor: DbExecutor,
+      entity: SyncEntity,
+      id: string
+    ): Promise<boolean> => {
+      try {
+        const scope = await findEntityScope(executor, entity, id)
+        return scope !== null && scope.userId === userId && (scope.groupId ?? undefined) === groupId
+      } catch {
+        return false
+      }
+    }
+
+    /** INSERT に失敗したレコードを、取り込み済みか失敗かに振り分ける */
+    const handleInsertFailure = async (
+      executor: DbExecutor,
+      entity: SyncEntity,
+      id: string,
+      message: string
+    ) => {
+      if (await isAlreadyMerged(executor, entity, id)) {
+        alreadyMergedCount++
+        return
+      }
+      failedCount++
+      errors.push(message)
+    }
+
+    /** INSERT 以外の理由でレコードを取り込めなかった */
+    const recordFailure = (message: string) => {
+      failedCount++
+      errors.push(message)
     }
 
     // トランザクションでまとめて実行
@@ -182,8 +233,8 @@ export class DataMergeService {
             mergedTagIds.add(tag.id)
             mergedCounts.tags++
           } else {
-            // 重複などで失敗した分だけをスキップ
-            errors.push(`タグ "${tag.name}" のマージに失敗`)
+            // 重複などで失敗した分だけをスキップ（取り込み済みなら失敗に数えない）
+            await handleInsertFailure(tx, "tag", tag.id, `タグ "${tag.name}" のマージに失敗`)
           }
         }
 
@@ -239,7 +290,7 @@ export class DataMergeService {
           if (ok) {
             mergedCounts.items++
           } else {
-            errors.push(`アイテム "${item.name}" のマージに失敗`)
+            await handleInsertFailure(tx, "item", item.id, `アイテム "${item.name}" のマージに失敗`)
           }
         }
 
@@ -272,14 +323,14 @@ export class DataMergeService {
             mergedListIds.add(list.id)
             mergedCounts.lists++
           } else {
-            errors.push(`リスト "${list.name}" のマージに失敗`)
+            await handleInsertFailure(tx, "list", list.id, `リスト "${list.name}" のマージに失敗`)
           }
         }
 
         // 4. リストアイテムをマージ
         for (const listItem of data.listItems) {
           if (!(await canWriteList(tx, listItem.listId))) {
-            errors.push(`リストアイテム "${listItem.name}" のマージに失敗（リストにアクセスできません）`)
+            recordFailure(`リストアイテム "${listItem.name}" のマージに失敗（リストにアクセスできません）`)
             continue
           }
           const ok = await inSavepoint(tx, `listItem:${listItem.id}`, async (sp) => {
@@ -309,14 +360,19 @@ export class DataMergeService {
           if (ok) {
             mergedCounts.listItems++
           } else {
-            errors.push(`リストアイテム "${listItem.name}" のマージに失敗`)
+            await handleInsertFailure(
+              tx,
+              "listItem",
+              listItem.id,
+              `リストアイテム "${listItem.name}" のマージに失敗`
+            )
           }
         }
 
         // 5. 履歴をマージ（リストのpurchasedAtを更新）
         for (const history of data.history) {
           if (!(await canWriteList(tx, history.listId))) {
-            errors.push(`履歴のマージに失敗（リストにアクセスできません）`)
+            recordFailure(`履歴のマージに失敗（リストにアクセスできません）`)
             continue
           }
           let notFound = false
@@ -355,12 +411,13 @@ export class DataMergeService {
               createdAt: now,
             })
           })
+          // 履歴は UPDATE なので、送り直しても同じ値で上書きされるだけ（重複にならない）
           if (notFound) {
-            errors.push(`履歴のマージに失敗（リストにアクセスできません）`)
+            recordFailure(`履歴のマージに失敗（リストにアクセスできません）`)
           } else if (ok) {
             mergedCounts.history++
           } else {
-            errors.push(`履歴のマージに失敗`)
+            recordFailure(`履歴のマージに失敗`)
           }
         }
       })
@@ -368,12 +425,19 @@ export class DataMergeService {
       return {
         success: errors.length === 0,
         mergedCounts,
+        failedCount,
+        alreadyMergedCount,
+        fatal: false,
         errors,
       }
     } catch (error) {
+      // トランザクションごとロールバックされ、何も取り込まれていない
       return {
         success: false,
-        mergedCounts,
+        mergedCounts: { items: 0, tags: 0, lists: 0, listItems: 0, history: 0 },
+        failedCount: 0,
+        alreadyMergedCount: 0,
+        fatal: true,
         errors: [`マージ処理に失敗しました: ${error}`],
       }
     }
