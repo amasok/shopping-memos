@@ -195,3 +195,41 @@ describe("GET /api/ogp", () => {
     })
   })
 })
+
+describe("GET /api/ogp: 読み込む大きさの上限", () => {
+  /** 64KB ずつ流れてくる応答（実際のストリームに近づける） */
+  function chunkedHtmlResponse(html: string) {
+    const buf = Buffer.from(html)
+    const chunks: Buffer[] = []
+    for (let i = 0; i < buf.length; i += 64 * 1024) chunks.push(buf.subarray(i, i + 64 * 1024))
+    return Object.assign(Readable.from(chunks), {
+      statusCode: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    })
+  }
+
+  const OG_TAGS = `<meta property="og:title" content="動画のタイトル"><meta property="og:image" content="https://i.ytimg.com/vi/x/hq.jpg">`
+
+  it("<head> のスクリプトが大きく og タグが 800KB 付近にあるページ（YouTube）でも取得できる", async () => {
+    mockLookup.mockResolvedValue(resolvedTo("142.250.196.110"))
+    const script = `<script>var ytInitialData = "${"x".repeat(800 * 1024)}";</script>`
+    mockFetch.mockResolvedValueOnce(chunkedHtmlResponse(`<html><head>${script}${OG_TAGS}</head><body></body></html>`))
+
+    const res = await GET(makeRequest("https://www.youtube.com/watch?v=abc"))
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.title).toBe("動画のタイトル")
+    expect(body.image).toBe("https://i.ytimg.com/vi/x/hq.jpg")
+  })
+
+  it("上限（2MiB）より後ろにある og タグは読まない", async () => {
+    mockLookup.mockResolvedValue(resolvedTo("93.184.216.34"))
+    const padding = "x".repeat(2 * 1024 * 1024)
+    mockFetch.mockResolvedValueOnce(chunkedHtmlResponse(`<html><head><script>${padding}</script>${OG_TAGS}</head></html>`))
+
+    const res = await GET(makeRequest("https://example.com/huge"))
+
+    expect(res.status).toBe(422)
+  })
+})

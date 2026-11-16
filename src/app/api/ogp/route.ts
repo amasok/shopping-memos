@@ -7,7 +7,7 @@ import { getClientIp, ogpRateLimiter } from "./rate-limit"
 import {
   HostResolutionError,
   PrivateAddressError,
-  resolvePublicAddress,
+  resolvePublicAddresses,
   validateTargetUrl,
   type UrlValidationError,
 } from "./ssrf"
@@ -16,8 +16,9 @@ const MAX_REDIRECTS = 5
 const TIMEOUT_MS = 8000
 /** 受け付ける URL の長さ（#72） */
 const MAX_URL_LENGTH = REQUEST_LIMITS.ogpUrl
-// OGP は <head> にあるので先頭だけ読む（DoS・正規表現の計算量対策）
-const MAX_BYTES = 512 * 1024
+// OGP は <head> にあるので先頭だけ読む（メモリ・処理時間の上限）。
+// YouTube は <head> にスクリプトが大量にあり、og タグが 800KB 付近に来るため、それが入る大きさにする
+const MAX_BYTES = 2 * 1024 * 1024
 
 const FETCH_HEADERS = {
   "User-Agent":
@@ -59,7 +60,7 @@ async function fetchWithValidation(
     const urlError = validateTargetUrl(current)
     if (urlError) throw new BlockedUrlError(URL_ERROR_MESSAGES[urlError])
 
-    const pinned = await resolvePublicAddress(current.hostname)
+    const pinned = await resolvePublicAddresses(current.hostname)
     const options = { headers: FETCH_HEADERS, signal }
 
     let res = await requestPinned(current, pinned, options)

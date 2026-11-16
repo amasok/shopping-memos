@@ -92,18 +92,27 @@ export class PrivateAddressError extends Error {
   }
 }
 
+/** IPv4 を先、IPv6 を後にする（同じファミリーの中では元の順を保つ） */
+function preferIpv4(addresses: ResolvedAddress[]): ResolvedAddress[] {
+  return [...addresses.filter((a) => a.family === 4), ...addresses.filter((a) => a.family === 6)]
+}
+
 /**
  * ホスト名を名前解決し、返ってきた全アドレスが公開アドレスであることを確認する。
  * 1 つでも非公開アドレスが含まれていれば拒否する（複数 A/AAAA レコードによる回避対策）。
- * 呼び出し側はここで返したアドレスに直接接続し、再度の名前解決をしないこと（DNS リバインディング対策）。
+ * 呼び出し側はここで返したアドレスにだけ接続し、再度の名前解決をしないこと（DNS リバインディング対策）。
+ *
+ * 検証した全アドレスを IPv4 を先にして返す。IPv6 で外に出られない環境（Vercel の Functions）でも、
+ * AAAA を持つサイトに IPv4 で接続できるようにするため。先頭の 1 件だけに固定すると、
+ * AAAA が先に返るサイト（Cloudflare 配下など）で接続に失敗していた
  */
-export async function resolvePublicAddress(hostname: string): Promise<ResolvedAddress> {
+export async function resolvePublicAddresses(hostname: string): Promise<ResolvedAddress[]> {
   const host = toConnectHost(hostname)
 
   const literalFamily = isIP(host)
   if (literalFamily !== 0) {
     if (!isPublicIp(host)) throw new PrivateAddressError()
-    return { address: host, family: literalFamily as 4 | 6 }
+    return [{ address: host, family: literalFamily as 4 | 6 }]
   }
 
   let results: { address: string; family: number }[]
@@ -116,6 +125,7 @@ export async function resolvePublicAddress(hostname: string): Promise<ResolvedAd
 
   if (results.some((r) => !isPublicIp(r.address))) throw new PrivateAddressError()
 
-  const first = results[0]
-  return { address: first.address, family: first.family === 6 ? 6 : 4 }
+  return preferIpv4(
+    results.map((r) => ({ address: r.address, family: r.family === 6 ? 6 : 4 }))
+  )
 }
