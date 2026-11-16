@@ -23,6 +23,10 @@ import {
   isInviteCodeExpired,
 } from "@/modules/identity/domain/entities/InviteCode"
 
+/** 招待コードで参加できないときの共通メッセージ */
+const INVALID_INVITE_CODE_MESSAGE =
+  "招待コードが無効か、有効期限が切れています。グループの管理者に確認してください"
+
 /**
  * 安全な招待トークンを生成
  * 256ビット（32バイト）のランダムトークン
@@ -263,25 +267,13 @@ export const identityRouter = router({
       // 招待コードでグループを検索
       const group = await groupRepository.findByInviteCode(input.inviteCode)
 
-      if (!group) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "招待コードが見つかりません",
-        })
-      }
-
-      // 招待が無効化されている場合は参加不可
-      if (!group.inviteEnabled) {
+      // 見つからない・招待無効・期限切れは同じエラーにする（#107）。
+      // 区別できるとコードの存在有無を判定する手がかりになるため。
+      // オーナーにはグループ詳細の一時停止・期限切れ表示で案内する
+      if (!group || !group.inviteEnabled || isInviteCodeExpired(group.inviteCodeExpiresAt)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: "現在招待を受け付けていません",
-        })
-      }
-
-      if (isInviteCodeExpired(group.inviteCodeExpiresAt)) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "招待コードの有効期限が切れています。管理者に新しいコードを発行してもらってください",
+          message: INVALID_INVITE_CODE_MESSAGE,
         })
       }
 

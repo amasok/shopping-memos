@@ -119,7 +119,7 @@ describe("identity.joinByInviteCode (#67)", () => {
       state.group = null
 
       await expect(caller().joinByInviteCode({ inviteCode: "ZZZZ2345" })).rejects.toMatchObject({
-        code: "NOT_FOUND",
+        code: "BAD_REQUEST",
       })
       expect(state.recordInviteCodeAttempt).toHaveBeenCalledTimes(1)
     })
@@ -148,11 +148,11 @@ describe("identity.joinByInviteCode (#67)", () => {
       expect(state.findByInviteCode).toHaveBeenCalledWith("ABCD2345")
     })
 
-    it("存在しないコードは NOT_FOUND", async () => {
+    it("存在しないコードは BAD_REQUEST（無効・期限切れと同じエラー）", async () => {
       state.group = null
 
       await expect(caller().joinByInviteCode({ inviteCode: "ZZZZ2345" })).rejects.toMatchObject({
-        code: "NOT_FOUND",
+        code: "BAD_REQUEST",
       })
     })
 
@@ -161,7 +161,7 @@ describe("identity.joinByInviteCode (#67)", () => {
 
       await expect(caller().joinByInviteCode({ inviteCode: "ABCD2345" })).rejects.toMatchObject({
         code: "BAD_REQUEST",
-        message: expect.stringContaining("招待を受け付けていません"),
+        message: expect.stringContaining("招待コードが無効"),
       })
       expect(state.addMember).not.toHaveBeenCalled()
     })
