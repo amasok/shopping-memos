@@ -1,5 +1,4 @@
 import { TRPCError } from "@trpc/server"
-import { eq } from "drizzle-orm"
 import { router, protectedProcedure } from "../server"
 import {
   createListSchema,
@@ -17,7 +16,6 @@ import {
   removeListItemSchema,
 } from "@/shared/schemas"
 import { db } from "@/infrastructure/db/drizzle/client"
-import { items } from "@/infrastructure/db/drizzle/schema"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
@@ -27,6 +25,13 @@ import { groupRepository } from "@/modules/identity/infrastructure/repositories/
 import { ListStatus, isInProgress } from "@/modules/shopping/domain/value-objects/ListStatus"
 import { ShoppingService } from "@/modules/shopping/application/services/ShoppingService"
 import { ShoppingSyncService } from "@/modules/shopping/application/services/ShoppingSyncService"
+import type { ItemWithTags } from "@/modules/catalog/domain/entities/Item"
+import { areTagsInScope, isSameScope } from "@/modules/catalog/application/services/ownership"
+import {
+  getListScope,
+  markScopedItemsUnpurchasedByName,
+  deleteScopedItemsByName,
+} from "@/modules/shopping/application/services/catalogItemScope"
 import { verifyGroupMembership } from "../middleware/groupAuth"
 
 // サービスインスタンス
@@ -121,6 +126,26 @@ export const shoppingRouter = router({
       await verifyGroupMembership(input.groupId, ctx.userId)
 
       const listId = crypto.randomUUID()
+      const listGroupId = input.groupId ?? null
+      const listScope = { userId: ctx.userId, groupId: listGroupId }
+
+      // itemIdsが指定された場合、リストと同じスコープのアイテムか事前に検証
+      const selectedItems: ItemWithTags[] = []
+      if (input.itemIds && input.itemIds.length > 0) {
+        for (const itemId of input.itemIds) {
+          const item = await itemRepository.findById(itemId)
+          if (!item) {
+            continue
+          }
+          if (!isSameScope(item, listScope)) {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "このアイテムをリストに追加する権限がありません",
+            })
+          }
+          selectedItems.push(item)
+        }
+      }
 
       // リストを作成（同期ログ記録付き）
       await shoppingSyncService.createList(
@@ -132,32 +157,28 @@ export const shoppingRouter = router({
         ctx.userId
       )
 
-      // itemIdsが指定された場合、アイテムを追加
-      if (input.itemIds && input.itemIds.length > 0) {
-        for (const itemId of input.itemIds) {
-          const item = await itemRepository.findById(itemId)
-          if (item) {
-            await shoppingSyncService.addItem(
-              {
-                id: crypto.randomUUID(),
-                listId,
-                name: item.name,
-                quantity: item.quantity,
-                memo: item.memo,
-                tagIds: item.tags.map((t) => t.id),
-                groupId: item.groupId,
-              },
-              ctx.userId
-            )
-          }
-        }
+      for (const item of selectedItems) {
+        await shoppingSyncService.addItem(
+          {
+            id: crypto.randomUUID(),
+            listId,
+            name: item.name,
+            quantity: item.quantity,
+            memo: item.memo,
+            tagIds: item.tags.map((t) => t.id),
+            groupId: listGroupId,
+          },
+          ctx.userId
+        )
       }
 
       // tagIdsが指定された場合、タグに紐づくアイテムを追加
+      // 検索はリストと同じスコープ（グループ or 自分の個人アイテム）に限定する
       if (input.tagIds && input.tagIds.length > 0) {
         const items = await itemRepository.findMany({
           tagIds: input.tagIds,
           groupId: input.groupId,
+          userId: ctx.userId,
           includePurchased: false,
         })
 
@@ -170,7 +191,7 @@ export const shoppingRouter = router({
               quantity: item.quantity,
               memo: item.memo,
               tagIds: item.tags.map((t) => t.id),
-              groupId: item.groupId,
+              groupId: listGroupId,
             },
             ctx.userId
           )
@@ -257,6 +278,15 @@ export const shoppingRouter = router({
         })
       }
 
+      // リストと同じスコープのアイテムのみ追加可能
+      // （アクセス確認済みのため、個人リストの所有者は ctx.userId）
+      if (!isSameScope(item, { userId: ctx.userId, groupId: list.groupId })) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "このアイテムをリストに追加する権限がありません",
+        })
+      }
+
       // リストにアイテムを追加（スナップショット、同期ログ記録付き）
       return shoppingSyncService.addItem(
         {
@@ -266,7 +296,7 @@ export const shoppingRouter = router({
           quantity: item.quantity,
           memo: item.memo,
           tagIds: item.tags.map((t) => t.id),
-          groupId: item.groupId,
+          groupId: list.groupId,
         },
         ctx.userId
       )
@@ -297,6 +327,18 @@ export const shoppingRouter = router({
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "完了したリストにはアイテムを追加できません",
+        })
+      }
+
+      // タグはリストと同じスコープのものに限定
+      const tagsOk = await areTagsInScope(input.tagIds, {
+        userId: ctx.userId,
+        groupId: list.groupId,
+      })
+      if (!tagsOk) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "指定されたタグを使用する権限がありません",
         })
       }
 
@@ -496,28 +538,23 @@ export const shoppingRouter = router({
       }
 
       // リストに含まれるアイテムのカタログアイテムを未購入に戻す
+      // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
       const revertedItemIds: string[] = []
-      for (const listItem of history.items) {
-        // 同名のカタログアイテムを検索
-        const catalogItems = await db
-          .select({ id: items.id, purchasedAt: items.purchasedAt })
-          .from(items)
-          .where(eq(items.name, listItem.name))
-
-        // 購入済みのカタログアイテムを未購入に戻す
-        for (const catalogItem of catalogItems) {
-          if (catalogItem.purchasedAt) {
-            await itemRepository.markAsUnpurchased(catalogItem.id)
-            revertedItemIds.push(catalogItem.id)
+      const scope = await getListScope(db, input.historyId)
+      if (scope) {
+        for (const listItem of history.items) {
+          const ids = await markScopedItemsUnpurchasedByName(db, scope, listItem.name)
+          for (const catalogItemId of ids) {
+            revertedItemIds.push(catalogItemId)
 
             // 同期ログを記録
             await syncRepository.createOperation({
               id: crypto.randomUUID(),
               userId: ctx.userId,
               entity: "item",
-              entityId: catalogItem.id,
+              entityId: catalogItemId,
               operation: "update",
-              payload: { id: catalogItem.id, purchasedAt: null },
+              payload: { id: catalogItemId, purchasedAt: null },
             })
           }
         }
@@ -556,25 +593,22 @@ export const shoppingRouter = router({
       }
 
       // リストに含まれるアイテムに対応するカタログアイテムを削除
-      for (const listItem of history.items) {
-        // 同名のカタログアイテムを検索して削除
-        const catalogItems = await db
-          .select({ id: items.id })
-          .from(items)
-          .where(eq(items.name, listItem.name))
-
-        for (const catalogItem of catalogItems) {
-          await itemRepository.delete(catalogItem.id)
-
-          // 同期ログを記録
-          await syncRepository.createOperation({
-            id: crypto.randomUUID(),
-            userId: ctx.userId,
-            entity: "item",
-            entityId: catalogItem.id,
-            operation: "delete",
-            payload: { id: catalogItem.id },
-          })
+      // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
+      const scope = await getListScope(db, input.id)
+      if (scope) {
+        for (const listItem of history.items) {
+          const ids = await deleteScopedItemsByName(db, scope, listItem.name)
+          for (const catalogItemId of ids) {
+            // 同期ログを記録
+            await syncRepository.createOperation({
+              id: crypto.randomUUID(),
+              userId: ctx.userId,
+              entity: "item",
+              entityId: catalogItemId,
+              operation: "delete",
+              payload: { id: catalogItemId },
+            })
+          }
         }
       }
 

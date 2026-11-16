@@ -2,6 +2,7 @@
 import { readFileSync } from "fs"
 import path from "path"
 import { parse } from "yaml"
+import { describe, it, expect } from "vitest"
 
 /**
  * CI ワークフロー（.github/workflows/ci.yml）の E2E ジョブ構成を検証する。
@@ -64,6 +65,27 @@ describe("CI ワークフローの E2E ジョブ", () => {
     const runE2E = stepIndex("test:e2e")
     expect(migrate).toBeGreaterThanOrEqual(0)
     expect(runE2E).toBeGreaterThan(migrate)
+  })
+
+  it("E2E 実行前に本番ビルドを作成する", () => {
+    const build = stepIndex("npm run build")
+    const runE2E = stepIndex("test:e2e")
+    expect(build).toBeGreaterThanOrEqual(0)
+    expect(runE2E).toBeGreaterThan(build)
+  })
+
+  it("next start で Auth.js が localhost を信頼する（AUTH_TRUST_HOST）", () => {
+    expect(e2e.env?.AUTH_TRUST_HOST).toBe("true")
+  })
+
+  it("playwright.config.ts が CI では本番ビルド（npm run start）で起動する", () => {
+    const config = readFileSync(
+      path.resolve(__dirname, "../../playwright.config.ts"),
+      "utf-8"
+    )
+    expect(config).toContain("process.env.CI")
+    expect(config).toContain("E2E_TEST=true npm run start")
+    expect(config).toContain("E2E_TEST=true npm run dev")
   })
 
   it("本番DBマイグレーション（migrate ジョブ）に依存しない", () => {
