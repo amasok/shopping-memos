@@ -6,6 +6,9 @@ import { buildSecurityHeaders } from "./src/lib/security/headers"
 const noStore = [{ key: "Cache-Control", value: "private, no-store" }]
 
 const nextConfig: NextConfig = {
+  // next dev が AI エージェントを検出したときに、AGENTS.md へ Next.js のルールのブロックを自動で書き足す動作を止める。
+  // AGENTS.md はエージェントが毎回読むので、ブロックが入るとトークン消費が増える（#122）
+  agentRules: false,
   // E2E 専用ルート（route.e2e.ts）は E2E_BUILD=true のビルドにだけ含める（#70）
   pageExtensions: getPageExtensions(),
   env: {
