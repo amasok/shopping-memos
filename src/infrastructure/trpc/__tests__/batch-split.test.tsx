@@ -14,21 +14,37 @@ import { REQUEST_LIMITS } from "@/shared/schemas/limits"
  * 一画面で 10 件を超える呼び出しが同時に飛んでもエラーにならないことを確かめる
  */
 
-const requested: Array<{ url: string; calls: number }> = []
+const requested: Array<{ url: string; calls: number; batch: boolean; path: string }> = []
 
 function stubFetch() {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost")
-      const calls = decodeURIComponent(url.pathname.slice("/api/trpc/".length)).split(",").length
-      requested.push({ url: url.href, calls })
-      const body = Array.from({ length: calls }, () => ({
-        result: { data: superjson.serialize([]) },
-      }))
+      const path = decodeURIComponent(url.pathname.slice("/api/trpc/".length))
+      const calls = path.split(",").length
+      const batch = url.searchParams.get("batch") === "1"
+      requested.push({ url: url.href, calls, batch, path })
+      const one = { result: { data: superjson.serialize([]) } }
+      // バッチなら配列、単独（httpLink）ならオブジェクトで返す
+      const body = batch ? Array.from({ length: calls }, () => one) : one
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
     })
   )
+}
+
+function FireMergeWithQueries({ onDone }: { onDone: () => void }) {
+  const utils = trpc.useUtils()
+  useEffect(() => {
+    const empty = { items: [], tags: [], lists: [], listItems: [], history: [] }
+    void Promise.all([
+      utils.client.sync.merge.mutate({ data: empty }),
+      ...Array.from({ length: 3 }, (_, i) =>
+        utils.client.catalog.getItems.query({ searchText: `m${i}`, includePurchased: false })
+      ),
+    ]).then(onDone)
+  }, [utils, onDone])
+  return null
 }
 
 function FireQueries({ count, onDone }: { count: number; onDone: (n: number) => void }) {
@@ -94,5 +110,21 @@ describe("tRPC クライアントのバッチ分割 (#72)", () => {
     await waitFor(() => expect(done).toHaveBeenCalledWith(10))
     expect(requested).toHaveLength(1)
     expect(requested[0].calls).toBe(10)
+  })
+
+  it("sync.merge はバッチに混ぜず単独で送り、サーバーで大きい上限が使われる", async () => {
+    const done = vi.fn()
+    render(
+      <TRPCProvider>
+        <FireMergeWithQueries onDone={done} />
+      </TRPCProvider>
+    )
+    await waitFor(() => expect(done).toHaveBeenCalled())
+
+    const merge = requested.filter((r) => r.path.includes("sync.merge"))
+    expect(merge).toHaveLength(1)
+    expect(merge[0]).toMatchObject({ path: "sync.merge", calls: 1, batch: false })
+    // ほかの呼び出しはバッチのまま
+    expect(requested.filter((r) => !r.path.includes("sync.merge")).every((r) => r.batch)).toBe(true)
   })
 })

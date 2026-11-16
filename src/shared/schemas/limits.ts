@@ -39,14 +39,22 @@ export const REQUEST_LIMITS = {
   pushOperations: 100,
   /** sync.pull で指定するグループの数 */
   groupIds: 50,
-  /** sync のパッチの JSON の大きさ（バイト） */
-  recordBytes: 8 * 1024,
+  /**
+   * sync のパッチ・merge の 1 レコードの JSON の大きさ（バイト）。
+   * 最大級のレコード（日本語のメモ 2000 文字・名前 100 文字・タグ 50 件）で約 8.4KB なので、余裕を見て 16KB
+   */
+  recordBytes: 16 * 1024,
   /** 招待トークンの長さ */
   inviteToken: 200,
   /** tRPC の HTTP バッチ 1 回の呼び出し数（クライアントの httpBatchLink の maxItems と同じ） */
   batchSize: 10,
   /** tRPC のリクエストボディの大きさ（バイト） */
   bodyBytes: 2 * 1024 * 1024,
+  /**
+   * sync.merge だけを単独で送るときのボディの大きさ（バイト）。ゲストのデータをまとめて送るため大きくする。
+   * Vercel の関数はボディが 4.5MB までなので、本番ではそちらが先に効く（分割送信は #116）
+   */
+  mergeBodyBytes: 10 * 1024 * 1024,
   /** /api/ogp が受け付ける URL の長さ */
   ogpUrl: 2048,
 } as const
@@ -68,15 +76,24 @@ export function clampQuantity(value: number): number {
   return Math.min(TEXT_LIMITS.quantityMax, Math.max(1, Math.trunc(value)))
 }
 
-/** UTF-8 でのバイト数 */
-function byteLength(value: string): number {
-  return new TextEncoder().encode(value).length
+/** JSON にしたときの UTF-8 のバイト数。JSON にできない値（BigInt・循環参照）は上限超えとして扱う */
+export function jsonByteLength(value: unknown): number {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value) ?? "").length
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
+}
+
+/** JSON にしたときの大きさが 1 レコードの上限以内か */
+export function isWithinRecordBytes(value: unknown): boolean {
+  return jsonByteLength(value) <= REQUEST_LIMITS.recordBytes
 }
 
 /** JSON にしたときの大きさが上限以内のレコード（sync のパッチ用） */
 export const boundedRecordSchema = z
   .record(z.string(), z.unknown())
-  .refine((record) => byteLength(JSON.stringify(record)) <= REQUEST_LIMITS.recordBytes, {
+  .refine(isWithinRecordBytes, {
     message: `1 件のデータは ${REQUEST_LIMITS.recordBytes} バイト以内です`,
   })
 

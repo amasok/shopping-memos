@@ -1,5 +1,11 @@
 import { z } from "zod"
-import { MERGE_LIMITS, REQUEST_LIMITS, TEXT_LIMITS, boundedRecordSchema } from "./limits"
+import {
+  MERGE_LIMITS,
+  REQUEST_LIMITS,
+  TEXT_LIMITS,
+  boundedRecordSchema,
+  isWithinRecordBytes,
+} from "./limits"
 
 // 既存の import（@/shared/schemas/sync の MERGE_LIMITS）のために再エクスポートする
 export { MERGE_LIMITS }
@@ -212,6 +218,13 @@ export function parseMergeData(input: z.infer<typeof syncMergeInputSchema>["data
   const pick = <T>(key: keyof typeof MERGE_ENTITY_LABELS, schema: z.ZodType<T>): T[] => {
     const valid: T[] = []
     input[key].forEach((raw, index) => {
+      // 大きすぎる 1 件は、検証する前にスキップする（#72。全体は拒否しない）
+      if (!isWithinRecordBytes(raw)) {
+        errors.push(
+          `${MERGE_ENTITY_LABELS[key]} ${index + 1} 件目が大きすぎるためスキップ（${REQUEST_LIMITS.recordBytes / 1024}KB 超）`
+        )
+        return
+      }
       const result = schema.safeParse(raw)
       if (result.success) {
         valid.push(result.data)

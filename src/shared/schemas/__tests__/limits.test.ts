@@ -1,9 +1,17 @@
 import { describe, it, expect } from "vitest"
-import { MERGE_LIMITS, REQUEST_LIMITS, TEXT_LIMITS, boundedRecordSchema } from "../limits"
+import {
+  MERGE_LIMITS,
+  REQUEST_LIMITS,
+  TEXT_LIMITS,
+  boundedRecordSchema,
+  isWithinRecordBytes,
+  jsonByteLength,
+} from "../limits"
 import { createItemSchema, getItemsQuerySchema, updateItemSchema } from "../item"
 import { addNewItemToListSchema, createListSchema } from "../list"
 import { acceptInviteSchema } from "../group"
 import {
+  parseMergeData,
   syncMergeInputSchema,
   syncPullInputSchema,
   syncPushInputSchema,
@@ -83,17 +91,36 @@ describe("入力の上限（#72）", () => {
   })
 
   describe("レコードの大きさ", () => {
-    it("JSON で 8KB までのレコードは受け付ける", () => {
-      expect(boundedRecordSchema.safeParse({ memo: "a".repeat(8000) }).success).toBe(true)
+    it("上限は 16KB", () => {
+      expect(REQUEST_LIMITS.recordBytes).toBe(16 * 1024)
     })
 
-    it("JSON で 8KB を超えるレコードを拒否する", () => {
+    it("最大級のレコード（日本語のメモ 2000 文字・名前 100 文字・タグ 50 件）を受け付ける", () => {
+      const record = {
+        id: uuids(1)[0],
+        name: "あ".repeat(TEXT_LIMITS.itemName),
+        memo: "あ".repeat(TEXT_LIMITS.memo),
+        quantity: TEXT_LIMITS.quantityMax,
+        tagIds: uuids(MERGE_LIMITS.tagIdsPerEntity),
+        purchasedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      }
+      expect(isWithinRecordBytes(record)).toBe(true)
+      expect(boundedRecordSchema.safeParse(record).success).toBe(true)
+    })
+
+    it("JSON で 16KB を超えるレコードを拒否する", () => {
       expect(boundedRecordSchema.safeParse({ memo: "a".repeat(REQUEST_LIMITS.recordBytes) }).success).toBe(false)
     })
 
     it("マルチバイト文字は UTF-8 のバイト数で数える", () => {
-      // 3 バイト × 3000 文字 = 9000 バイト
-      expect(boundedRecordSchema.safeParse({ memo: "あ".repeat(3000) }).success).toBe(false)
+      // 3 バイト × 6000 文字 = 18000 バイト
+      expect(boundedRecordSchema.safeParse({ memo: "あ".repeat(6000) }).success).toBe(false)
+      expect(jsonByteLength({ memo: "あ" })).toBe('{"memo":""}'.length + 3)
+    })
+
+    it("JSON にできない値は上限超えとして扱う", () => {
+      expect(isWithinRecordBytes({ n: BigInt(1) })).toBe(false)
     })
   })
 
@@ -134,6 +161,25 @@ describe("入力の上限（#72）", () => {
       const ng = { data: { ...emptyMerge, [key]: Array.from({ length: max + 1 }, () => ({})) } }
       expect(syncMergeInputSchema.safeParse(ok).success).toBe(true)
       expect(syncMergeInputSchema.safeParse(ng).success).toBe(false)
+    })
+
+    it("16KB を超える 1 件は全体を拒否せず、その 1 件だけをスキップして errors に入れる", () => {
+      const tag = (name: string, extra: Record<string, unknown> = {}) => ({
+        id: crypto.randomUUID(),
+        name,
+        createdAt: new Date().toISOString(),
+        ...extra,
+      })
+      const input = {
+        ...emptyMerge,
+        tags: [tag("食品"), tag("巨大", { padding: "a".repeat(REQUEST_LIMITS.recordBytes) }), tag("日用品")],
+      }
+      expect(syncMergeInputSchema.safeParse({ data: input }).success).toBe(true)
+      const { data, errors } = parseMergeData(input)
+      expect(data.tags.map((t) => t.name)).toEqual(["食品", "日用品"])
+      expect(errors).toEqual([expect.stringContaining("タグ 2 件目が大きすぎるためスキップ")])
+      // データの中身はエラー文に含めない
+      expect(errors[0]).not.toContain("aaaa")
     })
   })
 })
