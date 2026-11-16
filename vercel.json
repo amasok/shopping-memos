@@ -6,6 +6,5 @@
       "main": true,
       "develop": true
     }
-  },
-  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ':(exclude)docs' ':(exclude).claude' ':(exclude).github' ':(exclude)e2e' ':(exclude)*.md' ':(exclude)*__tests__*'"
+  }
 }

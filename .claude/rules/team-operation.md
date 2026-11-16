@@ -31,5 +31,5 @@
 
 ## Vercel のデプロイ上限対策
 
-- Vercel は main と develop だけデプロイする（`vercel.json` の `git.deploymentEnabled`）。docs・.claude・e2e・テスト・CI だけの変更はビルドを省く（`ignoreCommand`）
-- push はまとめて行う。空コミットでの再デプロイはしない
+- Vercel は main と develop だけデプロイする（`vercel.json` の `git.deploymentEnabled`）。PR ブランチのプレビューは作らない。ビルドを省略してもデプロイ数には数えられるため、デプロイ数を減らすにはマージ回数を減らす
+- develop へのマージは関連 PR をまとめて行う。空コミットでの再デプロイはしない
