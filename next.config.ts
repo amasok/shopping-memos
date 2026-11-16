@@ -1,6 +1,7 @@
 import type { NextConfig } from "next"
 import { withSerwist } from "@serwist/turbopack"
 import { getPageExtensions } from "./src/lib/e2e/guard"
+import { buildSecurityHeaders } from "./src/lib/security/headers"
 
 const noStore = [{ key: "Cache-Control", value: "private, no-store" }]
 
@@ -25,6 +26,11 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
+      // セキュリティヘッダ（#71）。全ルートに付ける
+      {
+        source: "/:path*",
+        headers: buildSecurityHeaders({ isDev: process.env.NODE_ENV === "development" }),
+      },
       {
         source: "/serwist/:path*",
         headers: [
