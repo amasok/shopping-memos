@@ -253,13 +253,13 @@ export default function GroupsPage() {
                 setInviteCode(e.target.value.toUpperCase())
                 setJoinError(null)
               }}
-              placeholder="例: ABC123"
+              placeholder="例: ABCD2345"
               autoFocus
-              maxLength={6}
+              maxLength={8}
               data-testid="group-join-code-input"
             />
             <p className="mt-2 text-sm text-gray-500">
-              グループの管理者から共有された6桁のコードを入力してください
+              グループの管理者から共有されたコード（8文字）を入力してください
             </p>
             {joinError && (
               <p className="mt-2 text-sm text-red-600" data-testid="group-join-error">{joinError}</p>
@@ -268,7 +268,7 @@ export default function GroupsPage() {
           <Button
             type="submit"
             className="w-full"
-            disabled={inviteCode.trim().length !== 6 || isJoining}
+            disabled={inviteCode.trim().length < 6 || isJoining}
             data-testid="group-join-submit"
           >
             {isJoining ? "参加中..." : "参加"}

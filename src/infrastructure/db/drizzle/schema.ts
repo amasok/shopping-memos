@@ -8,6 +8,7 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core"
+import { sql } from "drizzle-orm"
 
 // ============================================================
 // Identity コンテキスト
@@ -86,8 +87,13 @@ export const groups = pgTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
-    inviteCode: text("invite_code").notNull().unique(), // 6文字の招待コード
+    inviteCode: text("invite_code").notNull().unique(), // 8文字の招待コード（旧形式は6文字）
     inviteEnabled: boolean("invite_enabled").default(true).notNull(),
+    // 招待コードの有効期限。アプリは発行時に明示的に設定する。
+    // DB の既定値は、既存行と旧バージョンのアプリが作るグループ用（後方互換）
+    inviteCodeExpiresAt: timestamp("invite_code_expires_at")
+      .default(sql`now() + interval '7 days'`)
+      .notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -132,6 +138,24 @@ export const inviteLinks = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [index("invite_links_group_idx").on(table.groupId)]
+)
+
+/**
+ * 招待コードによる参加の試行履歴
+ * ユーザーごとの試行回数制限（総当たり対策）に使う
+ */
+export const inviteCodeAttempts = pgTable(
+  "invite_code_attempts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    attemptedAt: timestamp("attempted_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("invite_code_attempts_user_attempted_idx").on(table.userId, table.attemptedAt),
+  ]
 )
 
 // ============================================================

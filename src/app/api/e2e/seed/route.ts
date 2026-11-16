@@ -177,13 +177,15 @@ export async function POST(request: Request) {
       }
 
       case "seed-group": {
-        const { groupId, groupName, ownerUserId, inviteCode, inviteEnabled } =
+        const { groupId, groupName, ownerUserId, inviteCode, inviteEnabled, inviteCodeExpiresAt } =
           data as {
             groupId: string
             groupName: string
             ownerUserId: string
             inviteCode: string
             inviteEnabled?: boolean
+            /** ISO 文字列。省略時は DB の既定値（7 日後） */
+            inviteCodeExpiresAt?: string
           }
 
         await db.insert(groups).values({
@@ -191,6 +193,7 @@ export async function POST(request: Request) {
           name: groupName,
           inviteCode,
           inviteEnabled: inviteEnabled ?? true,
+          ...(inviteCodeExpiresAt ? { inviteCodeExpiresAt: new Date(inviteCodeExpiresAt) } : {}),
         })
 
         await db.insert(groupMembers).values({

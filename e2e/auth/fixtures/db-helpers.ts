@@ -46,6 +46,8 @@ export async function seedGroup(data: {
   ownerUserId: string
   inviteCode: string
   inviteEnabled?: boolean
+  /** ISO 文字列。省略時は DB の既定値（7 日後） */
+  inviteCodeExpiresAt?: string
 }): Promise<void> {
   const res = await fetch(SEED_API_URL, {
     method: "POST",
