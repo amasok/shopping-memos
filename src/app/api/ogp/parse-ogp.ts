@@ -133,13 +133,32 @@ function findContent(tags: Attributes[], key: "property" | "name", value: string
   return undefined
 }
 
+/**
+ * og:image をページの URL 基準で絶対 URL にし、http/https 以外（javascript:, data: など）は捨てる。
+ * 相対パスのまま返すと、表示側で自サイトの URL として解釈されてしまう。
+ */
+export function resolveImageUrl(raw: string | undefined, baseUrl: string): string | undefined {
+  if (!raw) return undefined
+  try {
+    const resolved = new URL(raw, baseUrl)
+    if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return undefined
+    return resolved.href
+  } catch {
+    return undefined
+  }
+}
+
 /** `</head>` より前だけを対象にする（本文の巨大な HTML を解析しない） */
 function headPart(html: string): string {
   const end = asciiLower(html).indexOf("</head")
   return end === -1 ? html : html.slice(0, end)
 }
 
-export function parseOGP(html: string, url: string): OGPData | null {
+/**
+ * @param url レスポンスに含める URL（リクエストされた URL）
+ * @param baseUrl 相対 URL を解決する基準（リダイレクト後の最終 URL）。省略時は url
+ */
+export function parseOGP(html: string, url: string, baseUrl: string = url): OGPData | null {
   const head = headPart(html)
   const tags = extractMetaTags(head)
 
@@ -150,7 +169,7 @@ export function parseOGP(html: string, url: string): OGPData | null {
     findContent(tags, "name", "title")
   const description =
     findContent(tags, "property", "og:description") ?? findContent(tags, "name", "description")
-  const image = findContent(tags, "property", "og:image")
+  const image = resolveImageUrl(findContent(tags, "property", "og:image"), baseUrl)
   const siteName = findContent(tags, "property", "og:site_name")
 
   if (!title && !description && !image && !siteName) return null

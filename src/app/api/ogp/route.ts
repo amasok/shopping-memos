@@ -49,7 +49,7 @@ function discard(res: IncomingMessage) {
 async function fetchWithValidation(
   initialUrl: URL,
   signal: AbortSignal
-): Promise<IncomingMessage> {
+): Promise<{ response: IncomingMessage; finalUrl: URL }> {
   let current = initialUrl
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -78,7 +78,7 @@ async function fetchWithValidation(
       }
       continue
     }
-    return res
+    return { response: res, finalUrl: current }
   }
 
   throw new UpstreamError("Too many redirects")
@@ -102,7 +102,28 @@ async function readHead(res: IncomingMessage): Promise<string> {
   return new TextDecoder().decode(Buffer.concat(chunks))
 }
 
+/**
+ * 自サイトのページからの呼び出しかを判定する（他サイトからブラウザ経由で踏み台にされるのを防ぐ）。
+ * - Sec-Fetch-Site があれば same-origin / none（直接アクセス）のみ許可
+ * - なければ Origin があるときは自オリジンと一致する場合のみ許可
+ * - どちらも無い（ブラウザ以外のクライアント）は許可する。ヘッダーは偽装できるため、
+ *   ブラウザ外からの乱用はレート制限（主に Vercel WAF）で抑える
+ */
+function isSameOriginRequest(request: NextRequest): boolean {
+  const fetchSite = request.headers.get("sec-fetch-site")
+  if (fetchSite !== null) return fetchSite === "same-origin" || fetchSite === "none"
+
+  const origin = request.headers.get("origin")
+  if (origin !== null) return origin === request.nextUrl.origin
+
+  return true
+}
+
 export async function GET(request: NextRequest) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Cross-origin requests are not allowed" }, { status: 403 })
+  }
+
   if (!ogpRateLimiter.consume(getClientIp(request.headers))) {
     return NextResponse.json(
       { error: "Too many requests" },
@@ -137,7 +158,7 @@ export async function GET(request: NextRequest) {
   const signal = AbortSignal.timeout(TIMEOUT_MS)
 
   try {
-    const response = await fetchWithValidation(parsedUrl, signal)
+    const { response, finalUrl } = await fetchWithValidation(parsedUrl, signal)
 
     const status = response.statusCode ?? 0
     if (status < 200 || status >= 300) {
@@ -153,7 +174,7 @@ export async function GET(request: NextRequest) {
     }
 
     const html = await readHead(response)
-    const ogpData = parseOGP(html, url)
+    const ogpData = parseOGP(html, url, finalUrl.href)
 
     if (!ogpData) {
       return NextResponse.json({ error: "No OGP tags found" }, { status: 422 })
