@@ -28,6 +28,17 @@ import { applyTagIdMappings } from "@/lib/merge/applyTagIdMappings"
 const clipNullable = (value: string | null | undefined, max: number) =>
   value == null ? null : clipText(value, max)
 
+/**
+ * Dexie の日付を ISO 文字列にする。アプリは Date で保存するが、古いデータや別の経路で文字列が入っていても、
+ * merge 全体を例外で止めない。不正な値はそのまま送り、サーバーの検証でその 1 件だけがスキップされる（#86）
+ */
+function toIso(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : (value as string)
+}
+function toIsoNullable(value: unknown): string | null {
+  return value == null ? null : toIso(value)
+}
+
 /** 取り込めなかった件数（リロードをまたいで表示するため localStorage に保存する） */
 const MERGE_SKIPPED_KEY = "data-merge-skipped"
 /**
@@ -171,21 +182,21 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
           quantity: clampQuantity(item.quantity),
           memo: clipNullable(item.memo, TEXT_LIMITS.memo),
           tagIds: item.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
-          purchasedAt: item.purchasedAt?.toISOString() ?? null,
-          createdAt: item.createdAt.toISOString(),
+          purchasedAt: toIsoNullable(item.purchasedAt),
+          createdAt: toIso(item.createdAt),
         })),
         tags: localTags.map((tag) => ({
           id: tag.id,
           name: clipText(tag.name, TEXT_LIMITS.tagName),
-          createdAt: tag.createdAt.toISOString(),
+          createdAt: toIso(tag.createdAt),
         })),
         lists: localLists.map((list) => ({
           id: list.id,
           name: clipText(list.name, TEXT_LIMITS.listName),
           status: list.status,
-          createdAt: list.createdAt.toISOString(),
-          completedAt: list.completedAt?.toISOString() ?? null,
-          purchasedAt: list.purchasedAt?.toISOString() ?? null,
+          createdAt: toIso(list.createdAt),
+          completedAt: toIsoNullable(list.completedAt),
+          purchasedAt: toIsoNullable(list.purchasedAt),
           location: clipNullable(list.location, TEXT_LIMITS.location),
         })),
         listItems: localListItems.map((listItem) => ({
@@ -196,14 +207,14 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
           memo: clipNullable(listItem.memo, TEXT_LIMITS.memo),
           tagIds: listItem.tagIds.slice(0, MERGE_LIMITS.tagIdsPerEntity),
           checked: listItem.checked,
-          createdAt: listItem.createdAt.toISOString(),
+          createdAt: toIso(listItem.createdAt),
         })),
         // 履歴はlistsのpurchasedAtが設定されているもの（listId = list.id）
         history: localHistory.map((list) => ({
           id: list.id,
           listId: list.id,
           location: clipNullable(list.location, TEXT_LIMITS.location),
-          purchasedAt: list.purchasedAt!.toISOString(),
+          purchasedAt: toIso(list.purchasedAt),
         })),
       }
 

@@ -195,4 +195,35 @@ describe("DataMergeContext が送る入力は、sync.merge のスキーマを満
 
     expect(localStorage.getItem("data-merge-skipped-user-1")).toBeNull()
   })
+
+  it("日付が ISO 文字列で入っていても、例外にせず、そのまま送る（スキーマを満たす）", async () => {
+    const iso = "2026-03-01T09:00:00.000Z"
+    state.tags = [{ id: uuid(), name: "お気に入り", createdAt: iso, updatedAt: iso }]
+    state.items = [{ id: uuid(), name: "牛乳", quantity: 1, tagIds: [], createdAt: iso, updatedAt: iso, purchasedAt: iso }]
+    state.lists = [{ id: uuid(), name: "週末", status: "completed", createdAt: iso, updatedAt: iso, completedAt: iso, purchasedAt: iso }]
+    state.listItems = []
+
+    const payload = await mergePayload()
+
+    expect(payload.data.items[0]).toMatchObject({ createdAt: iso, purchasedAt: iso })
+    expect(payload.data.history[0]).toMatchObject({ purchasedAt: iso })
+    expect(syncMergeInputSchema.safeParse(payload).success).toBe(true)
+  })
+
+  it("日付が不正な 1 件があっても、merge 全体は止めない（その 1 件だけがサーバーの検証でスキップされる）", async () => {
+    state.tags = [{ id: uuid(), name: "お気に入り", createdAt: NOW, updatedAt: NOW }]
+    state.items = [
+      { id: uuid(), name: "牛乳", quantity: 1, tagIds: [], createdAt: NOW, updatedAt: NOW },
+      { id: uuid(), name: "壊れた日付", quantity: 1, tagIds: [], createdAt: "日付ではない", updatedAt: NOW },
+    ]
+    state.lists = []
+    state.listItems = []
+
+    const payload = await mergePayload()
+
+    expect(payload.data.items).toHaveLength(2)
+    // 厳密なスキーマでは、日付が不正な 1 件だけが通らない
+    expect(syncMergeInputSchema.safeParse({ data: { ...payload.data, items: [payload.data.items[0]] } }).success).toBe(true)
+    expect(syncMergeInputSchema.safeParse({ data: { ...payload.data, items: [payload.data.items[1]] } }).success).toBe(false)
+  })
 })
