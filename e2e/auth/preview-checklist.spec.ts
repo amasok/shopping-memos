@@ -250,7 +250,7 @@ test.describe("Preview 確認項目（ログイン中）", () => {
     await page.getByTestId("fab-add-item").click()
     await page.getByTestId("bottom-sheet").waitFor({ state: "visible" })
     await page.getByTestId("item-name-input").fill(first)
-    await page.getByTestId("item-form").getByRole("button", { name: tag }).click()
+    await page.getByTestId("item-form").getByRole("button", { name: tag, exact: true }).click()
     await page.getByTestId("item-add-close").click()
     await expect(page.getByTestId("item-list")).toContainText(first)
 
@@ -260,7 +260,7 @@ test.describe("Preview 確認項目（ログイン中）", () => {
     await page.getByTestId("fab-add-item").click()
     await page.getByTestId("tab-new").click()
     await page.locator("#item-name").fill(added)
-    await page.getByTestId("item-selector").getByRole("button", { name: tag }).click()
+    await page.getByTestId("bottom-sheet").getByRole("button", { name: tag, exact: true }).click()
     await page.getByRole("button", { name: "リストに追加" }).click()
     await page.getByTestId("item-selector-submit").click()
     await expect(page.getByTestId("unchecked-list")).toContainText(added)
