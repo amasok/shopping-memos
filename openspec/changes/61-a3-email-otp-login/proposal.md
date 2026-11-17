@@ -53,7 +53,7 @@ Issue: #61（https://github.com/amasok/shopping-memos/issues/61）
 ## Impact
 
 - 依存: A1（メール送信の基盤。change `61-a1-email-sender`）と A2（Better Auth のテーブルの expand。change `61-a2-auth-tables-expand`）が先に develop に入っていること
-- 追加: `better-auth@1.7.25`・`@better-auth/passkey@1.7.25`（A5 で使う。design の D1）。入れるには先に vite 8 への更新が要る（D1）。削除: `next-auth`・`@auth/drizzle-adapter`
+- 追加: `better-auth@1.7.25`（`@better-auth/passkey` は A5 で入れる。design の D1）。入れるには先に vite 8 への更新が要る（D1）。削除: `next-auth`・`@auth/drizzle-adapter`
 - 変更: `src/infrastructure/auth/**`（作り直し）、`src/app/api/auth/[...all]/route.ts`（`[...nextauth]` を置き換え）、`src/infrastructure/trpc/server.ts`（`createContext`）、`src/app/api/trpc/[trpc]/route.ts`（オリジンの確認）、`src/contexts/AuthContext.tsx`、`src/app/login/page.tsx`、`src/app/settings/page.tsx`・`src/app/groups/page.tsx`（文言）、`src/lib/security/headers.ts`（Turnstile の CSP）、`e2e/auth/fixtures/**`・`playwright.config.ts`
 - 新規: `src/app/api/test/otp/route.e2e.ts`（E2E 専用）、`otp_events` を読み書きするリポジトリ
 - 削除: `src/infrastructure/auth/e2e-credentials.ts`
