@@ -1,23 +1,23 @@
 "use client"
 
 import { useCallback } from "react"
-import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
-import { useDataSource } from "./useDataSource"
-import { useCatalogSource } from "./useCatalogSource"
+import * as shoppingRepository from "@/infrastructure/local/shoppingRepository"
+import { requireStore, useCatalogSource } from "./useCatalogSource"
 
 /**
- * 購入履歴の操作フック
- * ログイン時: サーバーAPI経由
- * 未ログイン時: ローカルDB直接操作
+ * 購入履歴の操作フック（#62 O8）
+ * - ログイン中・フラグ false: サーバーAPI経由
+ * - ゲスト・ログイン中でフラグ true: 端末の DB のリポジトリ経由
  *
  * 購入履歴 = purchasedAtが入っているリスト
  */
 export function useHistoryMutations() {
-  const { useServer } = useDataSource()
+  const source = useCatalogSource()
+  const useServer = source.mode === "server"
   const utils = trpc.useUtils()
-  // カタログの一覧を追いつかせる（フラグ false: キャッシュを無効に / フラグ true: すぐに同期。#62 O7）
-  const { refreshCatalog } = useCatalogSource()
+  // サーバーファーストで、カタログの一覧のキャッシュを無効にする（ゲスト・ローカルファーストでは何もしない。#62 O8）
+  const { refreshCatalog } = source
 
   // サーバー側ミューテーション
   const revertMutation = trpc.shopping.revertHistory.useMutation({
@@ -41,41 +41,11 @@ export function useHistoryMutations() {
         return revertMutation.mutateAsync({ historyId })
       }
 
-      // ローカル処理
-      const list = await db.lists.get(historyId)
-      if (!list) throw new Error("履歴が見つかりません")
-      if (!list.purchasedAt) throw new Error("この履歴は既にリストに戻っています")
-
-      // リストに含まれるアイテムを取得
-      const listItems = await db.listItems.where("listId").equals(historyId).toArray()
-
-      // 名前でマッチングして購入済みカタログアイテムを未購入に戻す
-      const revertedItemIds: string[] = []
-      for (const listItem of listItems) {
-        const catalogItems = await db.items
-          .filter((item) => item.name === listItem.name && !!item.purchasedAt)
-          .toArray()
-
-        for (const item of catalogItems) {
-          await db.items.update(item.id, { purchasedAt: undefined })
-          revertedItemIds.push(item.id)
-        }
-      }
-
-      // リストを未購入に戻す
-      await db.lists.update(historyId, {
-        purchasedAt: undefined,
-        location: undefined,
-        status: "in_progress",
-        completedAt: undefined,
-      })
-
-      return {
-        success: true,
-        revertedItemIds,
-      }
+      const { revertedItemIds } = await shoppingRepository.revertHistory(requireStore(source), historyId)
+      source.afterWrite()
+      return { success: true, revertedItemIds }
     },
-    [useServer, revertMutation]
+    [useServer, revertMutation, source]
   )
 
   // 履歴を削除（リストとアイテムも削除）
@@ -85,33 +55,11 @@ export function useHistoryMutations() {
         return deleteMutation.mutateAsync({ id: historyId })
       }
 
-      // ローカル処理
-      const list = await db.lists.get(historyId)
-      if (!list) throw new Error("履歴が見つかりません")
-
-      // リストに含まれるアイテムを取得
-      const listItems = await db.listItems.where("listId").equals(historyId).toArray()
-
-      // 名前でマッチングしてカタログアイテムを削除
-      for (const listItem of listItems) {
-        const catalogItems = await db.items
-          .filter((item) => item.name === listItem.name)
-          .toArray()
-
-        for (const item of catalogItems) {
-          await db.items.delete(item.id)
-        }
-      }
-
-      // リストアイテムを削除
-      await db.listItems.where("listId").equals(historyId).delete()
-
-      // リストを削除
-      await db.lists.delete(historyId)
-
+      await shoppingRepository.deleteHistory(requireStore(source), historyId)
+      source.afterWrite()
       return { success: true }
     },
-    [useServer, deleteMutation]
+    [useServer, deleteMutation, source]
   )
 
   return {

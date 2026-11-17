@@ -1,10 +1,9 @@
 "use client"
 
 import { useCallback } from "react"
-import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
-import { useDataSource } from "./useDataSource"
-import { useCatalogSource } from "./useCatalogSource"
+import * as shoppingRepository from "@/infrastructure/local/shoppingRepository"
+import { requireStore, useCatalogSource } from "./useCatalogSource"
 
 type CreateListInput = {
   name: string
@@ -27,15 +26,16 @@ type AddNewItemToListInput = {
 }
 
 /**
- * 買い物リストのCRUD操作フック
- * ログイン時: サーバーAPI経由
- * 未ログイン時: ローカルDB直接操作
+ * 買い物リストのCRUD操作フック（#62 O8）
+ * - ログイン中・フラグ false: サーバーAPI経由
+ * - ゲスト・ログイン中でフラグ true: 端末の DB のリポジトリ経由（フラグ true ならキューに積み、同期を予約する）
  */
 export function useListMutations() {
-  const { useServer } = useDataSource()
+  const source = useCatalogSource()
+  const useServer = source.mode === "server"
   const utils = trpc.useUtils()
-  // カタログの一覧を追いつかせる（フラグ false: キャッシュを無効に / フラグ true: すぐに同期。#62 O7）
-  const { refreshCatalog } = useCatalogSource()
+  // サーバーファーストで、カタログの一覧のキャッシュを無効にする（ゲスト・ローカルファーストでは何もしない。#62 O8）
+  const { refreshCatalog } = source
 
   // サーバー側ミューテーション
   const createMutation = trpc.shopping.createList.useMutation({
@@ -96,69 +96,11 @@ export function useListMutations() {
         return createMutation.mutateAsync(input)
       }
 
-      // ローカル
-      const listId = crypto.randomUUID()
-      const now = new Date()
-
-      // リスト作成
-      await db.lists.add({
-        id: listId,
-        name: input.name,
-        status: "in_progress",
-        groupId: input.groupId,
-        createdAt: now,
-        completedAt: undefined,
-      })
-
-      // itemIds指定時はアイテムを追加
-      if (input.itemIds && input.itemIds.length > 0) {
-        for (const itemId of input.itemIds) {
-          const item = await db.items.get(itemId)
-          if (item) {
-            await db.listItems.add({
-              id: crypto.randomUUID(),
-              listId,
-              name: item.name,
-              quantity: item.quantity,
-              memo: item.memo,
-              tagIds: item.tagIds,
-              groupId: item.groupId,
-              checked: false,
-              createdAt: now,
-            })
-          }
-        }
-      }
-
-      // tagIds指定時はタグに紐づくアイテムを追加
-      if (input.tagIds && input.tagIds.length > 0) {
-        const items = await db.items
-          .filter(
-            (item) =>
-              !item.purchasedAt &&
-              item.groupId === input.groupId &&
-              item.tagIds.some((tagId) => input.tagIds!.includes(tagId))
-          )
-          .toArray()
-
-        for (const item of items) {
-          await db.listItems.add({
-            id: crypto.randomUUID(),
-            listId,
-            name: item.name,
-            quantity: item.quantity,
-            memo: item.memo,
-            tagIds: item.tagIds,
-            groupId: item.groupId,
-            checked: false,
-            createdAt: now,
-          })
-        }
-      }
-
-      return { id: listId }
+      const list = await shoppingRepository.createList(requireStore(source), input)
+      source.afterWrite()
+      return { id: list.id }
     },
-    [useServer, createMutation]
+    [useServer, createMutation, source]
   )
 
   // リスト更新
@@ -168,10 +110,13 @@ export function useListMutations() {
         return updateMutation.mutateAsync(input)
       }
 
-      await db.lists.update(input.id, { name: input.name })
+      if (input.name !== undefined) {
+        await shoppingRepository.updateList(requireStore(source), { id: input.id, name: input.name })
+        source.afterWrite()
+      }
       return { id: input.id }
     },
-    [useServer, updateMutation]
+    [useServer, updateMutation, source]
   )
 
   // リスト削除
@@ -181,12 +126,11 @@ export function useListMutations() {
         return deleteMutation.mutateAsync({ id })
       }
 
-      // リストアイテムも削除
-      await db.listItems.where("listId").equals(id).delete()
-      await db.lists.delete(id)
+      await shoppingRepository.deleteList(requireStore(source), id)
+      source.afterWrite()
       return { success: true }
     },
-    [useServer, deleteMutation]
+    [useServer, deleteMutation, source]
   )
 
   // リストにアイテム追加（既存アイテムを追加）
@@ -196,25 +140,11 @@ export function useListMutations() {
         return addItemMutation.mutateAsync(input)
       }
 
-      const item = await db.items.get(input.itemId)
-      if (!item) throw new Error("アイテムが見つかりません")
-
-      const now = new Date()
-      await db.listItems.add({
-        id: crypto.randomUUID(),
-        listId: input.listId,
-        name: item.name,
-        quantity: item.quantity,
-        memo: item.memo,
-        tagIds: item.tagIds,
-        groupId: item.groupId,
-        checked: false,
-        createdAt: now,
-      })
-
+      await shoppingRepository.addItemToList(requireStore(source), input)
+      source.afterWrite()
       return { success: true }
     },
-    [useServer, addItemMutation]
+    [useServer, addItemMutation, source]
   )
 
   // リストに新規アイテム追加（直接入力）
@@ -224,38 +154,11 @@ export function useListMutations() {
         return addNewItemMutation.mutateAsync(input)
       }
 
-      // ローカル: リストのgroupIdを取得
-      const list = await db.lists.get(input.listId)
-      const now = new Date()
-
-      // カタログにもアイテムを作成（リストから外した時に「買いたいもの」に戻れるようにする）
-      await db.items.add({
-        id: crypto.randomUUID(),
-        name: input.name,
-        quantity: input.quantity ?? 1,
-        memo: input.memo,
-        tagIds: input.tagIds ?? [],
-        groupId: list?.groupId,
-        createdAt: now,
-        updatedAt: now,
-      })
-
-      // リストにアイテムを追加（スナップショット）
-      await db.listItems.add({
-        id: crypto.randomUUID(),
-        listId: input.listId,
-        name: input.name,
-        quantity: input.quantity ?? 1,
-        memo: input.memo,
-        tagIds: input.tagIds ?? [],
-        groupId: list?.groupId,
-        checked: false,
-        createdAt: now,
-      })
-
+      await shoppingRepository.addNewItemToList(requireStore(source), input)
+      source.afterWrite()
       return { success: true }
     },
-    [useServer, addNewItemMutation]
+    [useServer, addNewItemMutation, source]
   )
 
   // リストからアイテム削除
@@ -265,10 +168,11 @@ export function useListMutations() {
         return removeItemMutation.mutateAsync({ id: listItemId })
       }
 
-      await db.listItems.delete(listItemId)
+      await shoppingRepository.removeItemFromList(requireStore(source), listItemId)
+      source.afterWrite()
       return { success: true }
     },
-    [useServer, removeItemMutation]
+    [useServer, removeItemMutation, source]
   )
 
   // アイテムのチェック状態切り替え
@@ -278,10 +182,11 @@ export function useListMutations() {
         return checkItemMutation.mutateAsync({ listItemId, checked })
       }
 
-      await db.listItems.update(listItemId, { checked })
+      await shoppingRepository.checkItem(requireStore(source), listItemId, checked)
+      source.afterWrite()
       return { success: true }
     },
-    [useServer, checkItemMutation]
+    [useServer, checkItemMutation, source]
   )
 
   // 買い物完了
@@ -291,51 +196,17 @@ export function useListMutations() {
         return finishMutation.mutateAsync({ listId, location })
       }
 
-      // ローカル処理
-      const list = await db.lists.get(listId)
-      if (!list) throw new Error("リストが見つかりません")
-
-      const listItems = await db.listItems.where("listId").equals(listId).toArray()
-      const checkedItems = listItems.filter((item) => item.checked)
-      const uncheckedItems = listItems.filter((item) => !item.checked)
-
-      if (checkedItems.length === 0) {
-        throw new Error("購入済みのアイテムがありません")
-      }
-
-      const now = new Date()
-
-      // カタログアイテムのpurchasedAtを更新（名前でマッチング）
-      for (const listItem of checkedItems) {
-        const items = await db.items
-          .filter((item) => item.name === listItem.name && !item.purchasedAt)
-          .toArray()
-        for (const item of items) {
-          await db.items.update(item.id, { purchasedAt: now })
-        }
-      }
-
-      // 未チェックアイテムをlistItemsから削除（履歴には購入済みのみ残す）
-      // カタログアイテムはリスト追加時に保持されているため、自動的に「買いたいもの」に戻る
-      for (const uncheckedItem of uncheckedItems) {
-        await db.listItems.delete(uncheckedItem.id)
-      }
-
-      // リストを完了状態に + 購入日時/場所を設定（履歴として表示される）
-      await db.lists.update(listId, {
-        status: "completed",
-        completedAt: now,
-        purchasedAt: now,
+      // ゲストは 179b が決まるまで今の規則（チェック 0 件はエラー、照合は未購入だけ）。ローカルファーストはサーバーと同じ
+      const result = await shoppingRepository.finishShopping(
+        requireStore(source),
+        listId,
         location,
-      })
-
-      return {
-        historyId: listId, // 履歴IDはリストID
-        purchasedCount: checkedItems.length,
-        skippedCount: uncheckedItems.length,
-      }
+        source.mode === "local" ? "server" : "guest"
+      )
+      source.afterWrite()
+      return result
     },
-    [useServer, finishMutation]
+    [useServer, finishMutation, source]
   )
 
   return {

@@ -42,8 +42,8 @@ export interface CatalogSource {
   /** 端末の DB に書いた後に呼ぶ（local なら 2 秒のデバウンスで同期を予約する） */
   afterWrite: () => void
   /**
-   * 買い物（tRPC）の変更の後に、「買いたいもの」の一覧を追いつかせる（design.md D5）
-   * server: catalog.getItems のキャッシュを無効にする / local: すぐに同期する（待たない）/ guest: 何もしない
+   * 買い物の変更の後に、「買いたいもの」の一覧を追いつかせる（catalog「サーバーファーストの買い物の変更の後のカタログ」）
+   * server: catalog.getItems のキャッシュを無効にする / guest・local: 何もしない（同じ端末の DB を一覧がそのまま追う。#62 O8）
    */
   refreshCatalog: () => void
 }
@@ -70,8 +70,7 @@ export function useCatalogSource(): CatalogSource {
 
   const refreshCatalog = useCallback(() => {
     if (mode === "server") void utils.catalog.getItems.invalidate()
-    else if (mode === "local" && engine) void engine.sync()
-  }, [mode, engine, utils])
+  }, [mode, utils])
 
   return {
     mode,
