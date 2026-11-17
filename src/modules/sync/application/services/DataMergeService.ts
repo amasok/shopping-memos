@@ -189,7 +189,8 @@ export class DataMergeService {
       id: string
     ): Promise<boolean> => {
       try {
-        const scope = await findEntityScope(executor, entity, id)
+        // 取り込んだ後にサーバーで削除したものも「取り込み済み」とする（送り直しで復活させない。#144）
+        const scope = await findEntityScope(executor, entity, id, { includeDeleted: true })
         return scope !== null && scope.userId === userId && (scope.groupId ?? undefined) === groupId
       } catch {
         return false
@@ -316,7 +317,7 @@ export class DataMergeService {
           }
           // ID がほかのユーザーのタグと重なった（主キーの重複で、その ID の行がある）なら、付け替える
           const isForeignId =
-            result.error.code === "23505" && (await findEntityScope(tx, "tag", tag.id).catch(() => null)) !== null
+            result.error.code === "23505" && (await findEntityScope(tx, "tag", tag.id, { includeDeleted: true }).catch(() => null)) !== null
           if (isForeignId && (await createTagWithNewId(tx, tag))) continue
 
           await handleInsertFailure(

@@ -137,7 +137,9 @@ export class DrizzleItemRepository implements ItemRepository {
       const itemIdsWithTags = await db
         .select({ itemId: itemTags.itemId })
         .from(itemTags)
-        .where(inArray(itemTags.tagId, query.tagIds))
+        // 削除済みのタグでは絞り込まない（タグの削除で関連も消すが、念のため）
+        .innerJoin(tags, eq(itemTags.tagId, tags.id))
+        .where(and(inArray(itemTags.tagId, query.tagIds), notDeleted(tags)))
 
       const itemIdSet = new Set(itemIdsWithTags.map((r) => r.itemId))
       filteredItems = itemsResult.filter((item) => itemIdSet.has(item.id))
