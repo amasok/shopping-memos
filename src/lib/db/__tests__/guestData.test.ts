@@ -12,11 +12,13 @@ import {
   applyMergeOutcome,
   clearGuestData,
   clearLoginScopedState,
+  clearMergeCompletedMarks,
   discardPendingMerge,
   ensureGuestDataMigrated,
   loadGuestDataForMerge,
   hasGuestDataToMerge,
   migrateLegacyGuestData,
+  watchGuestWrites,
 } from "../guestData"
 import { DEFAULT_TAG_NAMES } from "../tags"
 
@@ -194,6 +196,62 @@ describe("clearLoginScopedState", () => {
     // 取り込めなかった件数の通知（閉じるまで）と、移行済みのバージョンは残す
     expect(storage.getItem("data-merge-skipped-user-1")).toBe("2")
     expect(storage.getItem(GUEST_DATA_VERSION_KEY)).toBe(GUEST_DATA_VERSION)
+  })
+})
+
+describe("clearMergeCompletedMarks（#61 A3a）", () => {
+  it("merge 済みの印（全ユーザー分）だけを消し、選んでいたグループは残す", () => {
+    const storage = memoryStorage()
+    storage.setItem(`${MERGE_COMPLETED_KEY}-user-1`, "true")
+    storage.setItem(`${MERGE_COMPLETED_KEY}-user-2`, "true")
+    storage.setItem(SELECTED_GROUP_KEY, "group-1")
+    clearMergeCompletedMarks(storage)
+    expect(storage.getItem(`${MERGE_COMPLETED_KEY}-user-1`)).toBeNull()
+    expect(storage.getItem(`${MERGE_COMPLETED_KEY}-user-2`)).toBeNull()
+    expect(storage.getItem(SELECTED_GROUP_KEY)).toBe("group-1")
+  })
+})
+
+describe("watchGuestWrites（#61 A3a。本物の Dexie）", () => {
+  it.each([
+    ["商品の追加", () => db.items.add(item("w1"))],
+    ["タグの追加", () => db.tags.add(tagRow("w2", "新しいタグ"))],
+    ["リストの追加", () => db.lists.add({ id: "w3", name: "週末", status: "in_progress", createdAt: NOW, updatedAt: NOW } as never)],
+    ["リストの中身の追加", () => db.listItems.add({ id: "w4", listId: "l1", name: "卵", quantity: 1, tagIds: [], checked: false, createdAt: NOW } as never)],
+  ])("%sで知らせる", async (_label, write) => {
+    const onWrite = vi.fn()
+    const stop = watchGuestWrites(onWrite)
+    await write()
+    expect(onWrite).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it("更新・削除でも知らせ、何度書いても 1 回だけ", async () => {
+    await db.items.add(item("w5"))
+    const onWrite = vi.fn()
+    const stop = watchGuestWrites(onWrite)
+    await db.items.update("w5", { name: "豆乳" })
+    await db.items.delete("w5")
+    await db.items.add(item("w6"))
+    expect(onWrite).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it("見張りをやめた後は知らせない", async () => {
+    const onWrite = vi.fn()
+    const stop = watchGuestWrites(onWrite)
+    stop()
+    await db.items.add(item("w7"))
+    expect(onWrite).not.toHaveBeenCalled()
+  })
+
+  it("ゲストのデータでないテーブル（同期のキュー・pendingMerge）の書き込みは知らせない", async () => {
+    const onWrite = vi.fn()
+    const stop = watchGuestWrites(onWrite)
+    await db.meta.put({ key: "cursor", value: "c2" })
+    await db.pendingMerge.add(pending("user-x", "items", { id: "p9" }))
+    expect(onWrite).not.toHaveBeenCalled()
+    stop()
   })
 })
 

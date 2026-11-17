@@ -117,7 +117,7 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
   - `AuthContext` に `sessionKnown` を足す。正常な応答か 401 のときだけ true（通信のエラー・5xx・読み込み中は false）
   - GroupContext は、ゲストとして出している間はグループで絞り込まない（`selectedGroupId` を undefined として出す）が、保存した値を消すのは `sessionKnown` のときだけ。DataMergeContext の `clearLoginScopedState` も `sessionKnown` のときだけ
   - ログイン中の取り直しのエラーでは、Better Auth が前のセッションを残すので `authenticated` のまま。#62 の O9 で `offline` を足すときは、`sessionKnown` が false の場合を `offline` に分けられる
-  - **O9 への申し送り（レビューの Low）**: ログイン中のユーザーがオフラインで最初に開くと、ゲストとして表示される。その間に作った商品はゲストの DB に入るが、merge 済みの印は残る（この直しの狙いどおり）ので、オンラインに戻っても merge されずにゲストの DB に残る（Auth.js のころは印が消え、次のログインで merge されていた）。O9 で `status: "offline"` を足すときに、オフラインのログイン中の書き込みの行き先を決める
+  - **オフラインで作ったものの merge（リーダーの指示で A3a で直す。2026-11-18）**: ログイン中のユーザーがオフラインで最初に開くと、ゲストとして表示される。その間に作ったものはゲストの DB に入る。merge 済みの印が残ったままだと、オンラインに戻っても merge されずに見えなくなる（Auth.js のころは印が消え、次のログインで merge されていた。今の動きからの後退）。そこで、セッションがわからずゲストとして出している間（`!user && !isLoading && !sessionKnown`）は、DataMergeContext がゲストの DB（商品・タグ・リスト・リストの中身）への書き込みを Dexie の hook で見張り（`watchGuestWrites`）、書き込みがあれば merge 済みの印だけを消す（`clearMergeCompletedMarks`。選んでいたグループは残す）。次にセッションが確かになると、いつものログインと同じく merge で送る。E2E（`e2e/auth/session-unknown-merge.spec.ts`）は、get-session を失敗させて再現する（Playwright のオフラインは Service Worker の通信に効かず、SW 経由の get-session が成功してしまうため、SW を止めて `page.route` で失敗させる）。オフラインのログイン中の書き込みの行き先そのもの（ゲストの DB を経由しない形）は、O9 で `offline` を足すときに決める
 - **セッションの取得は rate limit をかけない**: `customRules` で `/get-session` を外した。画面はフォーカスのたびなどに呼び、IP が取れないとき（共有のキー）に Better Auth の既定（10 秒に 100 回）を使い切ると 429 になるため。Cookie を読むだけで、トークンは推測できない長さ
 
 ### D6. 別のオリジンからの POST（#71 の残り。レビュー H3）

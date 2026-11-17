@@ -59,9 +59,14 @@ async function loginAndMerge(page: Page) {
   await loginWithOtp(page, EMAIL)
   await page.goto("/")
   await expect
-    .poll(() => page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("data-merge-completed-"))), {
-      timeout: 30_000,
-    })
+    // merge の後に画面を読み込み直すことがあるので、その間の evaluate の失敗は「まだ」として待ち続ける
+    .poll(
+      () =>
+        page
+          .evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("data-merge-completed-")))
+          .catch(() => false),
+      { timeout: 30_000 }
+    )
     .toBe(true)
   await page.waitForLoadState("networkidle")
 }

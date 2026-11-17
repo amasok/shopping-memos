@@ -15,10 +15,12 @@ import {
   SELECTED_GROUP_KEY,
   applyMergeOutcome,
   clearLoginScopedState,
+  clearMergeCompletedMarks,
   discardPendingMerge,
   loadGuestDataForMerge,
   ensureGuestDataMigrated,
   hasGuestDataToMerge,
+  watchGuestWrites,
 } from "@/lib/db/guestData"
 import { trpc } from "@/infrastructure/trpc/client"
 import { MERGE_LIMITS } from "@/shared/schemas/sync"
@@ -124,6 +126,14 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     // マージ後のリロードをまたいで、取り込めなかった件数を通知する
     const skipped = Number(localStorage.getItem(`${MERGE_SKIPPED_KEY}-${user.id}`) ?? 0)
     setSkippedCount(Number.isFinite(skipped) && skipped > 0 ? skipped : 0)
+  }, [user, isAuthLoading, sessionKnown])
+
+  // セッションを確かめられない（オフラインなど）ためにゲストとして表示している間に、ゲストの DB へ書いたら、
+  // merge 済みの印を消す。次にセッションが確かになったとき（ログイン中なら）、いつものログインと同じく merge で送る（#61 A3a）。
+  // 印を残したままだと、その書き込みはゲストの DB に残り、ログイン中の画面から見えなくなる
+  useEffect(() => {
+    if (user || isAuthLoading || sessionKnown) return
+    return watchGuestWrites(() => clearMergeCompletedMarks())
   }, [user, isAuthLoading, sessionKnown])
 
   const dismissSkipped = useCallback(() => {
