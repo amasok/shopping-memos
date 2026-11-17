@@ -118,4 +118,28 @@ describe("カタログアイテムのスコープ付き更新・削除 (#64)", (
       expect(await getListScope(db as unknown as DbExecutor, "missing")).toBeNull()
     })
   })
+
+  describe("sync.push の複合操作の時刻（#62 O4b）", () => {
+    it("操作の時刻を渡すと、purchasedAt の時刻がそれ以前のアイテムだけを更新する（購入済み・未購入とも）", async () => {
+      const { db, queries } = createFakeDb({ itemIdsByName: { 牛乳: ["mine-1"] } })
+      const exec = db as unknown as DbExecutor
+      const opTime = "2026-01-02T00:00:00.000Z"
+
+      await markScopedItemsPurchasedByName(exec, personal, "牛乳", NOW, opTime)
+      await markScopedItemsUnpurchasedByName(exec, personal, "牛乳", opTime)
+
+      const qs = itemQueries(queries)
+      expect(qs).toHaveLength(2)
+      for (const q of qs) {
+        expect(q.sql).toContain(`coalesce("items"."field_modified_at" ->> `)
+        expect(q.params).toContain(opTime)
+      }
+    })
+
+    it("操作の時刻を渡さなければ、LWW の条件は付けない（tRPC の操作）", async () => {
+      const { db, queries } = createFakeDb({ itemIdsByName: { 牛乳: ["mine-1"] } })
+      await markScopedItemsPurchasedByName(db as unknown as DbExecutor, personal, "牛乳", NOW)
+      expect(itemQueries(queries)[0].sql).not.toContain("field_modified_at")
+    })
+  })
 })

@@ -58,8 +58,11 @@ export const syncPushEntitySchema = z.enum(["item", "tag", "list", "listItem"])
 
 export type SyncPushEntity = z.infer<typeof syncPushEntitySchema>
 
-/** sync.push の操作の種類 */
-export const syncPushOperationTypeSchema = z.enum(["create", "update", "delete"])
+/**
+ * sync.push の操作の種類。finishShopping（買い物の完了）と revertHistory（履歴の取り消し）は、
+ * リスト（entity: "list"）に対する複合操作（#62 O4b）
+ */
+export const syncPushOperationTypeSchema = z.enum(["create", "update", "delete", "finishShopping", "revertHistory"])
 
 export type SyncPushOperationType = z.infer<typeof syncPushOperationTypeSchema>
 

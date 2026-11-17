@@ -5,6 +5,7 @@ import type { SQL } from "drizzle-orm"
 import { items } from "../drizzle/schema"
 import {
   SERVER_NOW_ISO,
+  fieldNotNewerThan,
   createdFieldTimes,
   definedFields,
   notDeleted,
@@ -56,5 +57,17 @@ describe("同期用の列の書き込み（#62 O3b）", () => {
   it("definedFields は undefined でないフィールドだけを返す（null は書き込みとして数える）", () => {
     const input = { id: "1", name: "x", quantity: undefined, memo: null as string | null }
     expect(definedFields(input, ["name", "quantity", "memo"])).toEqual(["name", "memo"])
+  })
+
+  it("touchFields に時刻を渡すと、キーをその時刻にする（複合操作の操作の時刻。#62 O4b）", () => {
+    const q = toQuery(touchFields(items, ["purchasedAt"], "2026-01-02T00:00:00.000Z").fieldModifiedAt)
+    expect(q.sql).toBe('"items"."field_modified_at" || jsonb_build_object($1::text, $2::text)')
+    expect(q.params).toEqual(["purchasedAt", "2026-01-02T00:00:00.000Z"])
+  })
+
+  it("fieldNotNewerThan は、キーがないか、時刻が指定以前のときだけ真になる条件", () => {
+    const q = toQuery(fieldNotNewerThan(items, "purchasedAt", "2026-01-02T00:00:00.000Z"))
+    expect(q.sql).toBe(`coalesce("items"."field_modified_at" ->> $1::text, '') <= $2::text`)
+    expect(q.params).toEqual(["purchasedAt", "2026-01-02T00:00:00.000Z"])
   })
 })
