@@ -9,7 +9,8 @@
 - 並行して書き換えるときは必ず git worktree を使う。メインの作業フォルダは書き換えない
   `git worktree add ../<repo>-wt-<役割> -b <branch> develop`
 - ちょっとした調査は名前なしのサブエージェントに任せる（Explore や quick-lookup / haiku）。返してほしい結論の形を指定する
-- 同じブランチは 2 つの worktree で同時に checkout できないので、実装者と tester は同じ worktree を順番に使う
+- tester は、実装者の worktree を使わず、テストするコミットに固定した自分専用の worktree で流す（`git worktree add --detach ../<repo>-wt-test <HEAD>`、次の HEAD は `git checkout --detach <HEAD>`、終わったら消す）。実装者はテスト中でも自分の worktree を書き換えてよい（同じ worktree を順番に使う方式では、テスト中に書き換える事故が 2 回あった。2026-11-17）
+- 依頼に書く HEAD は、コミットの後に `git log` で確かめた値にする
 - チームメイトどうしは名前を指定した SendMessage で直接やりとりする。指摘・修正・再確認の往復はチームメイトどうしで済ませ、リーダーを経由しない
 - レビュー担当も SendMessage を使える種類のエージェントで作る（code-reviewer・database-reviewer などの読み取り専用の種類は SendMessage が使えず、リーダーの中継が要るため。general-purpose などで作り、指示で「ファイルを書き換えない」と縛る）
 
