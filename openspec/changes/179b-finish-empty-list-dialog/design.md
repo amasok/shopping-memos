@@ -33,12 +33,14 @@
 
 - tRPC の完了: `no_checked_items` を `ShoppingDomainError`（BAD_REQUEST）にする。メッセージは「カゴに入れた商品がありません」
 - sync.push: `no_checked_items` を conflict の reason `no_checked_items` にし、サーバーの行を返す。今の SyncEngine は conflict をすべて「サーバーの行で戻す + トースト」で扱うので、クライアントの追加の対応はいらない
-- `deleteListSchema` に `deleteCatalogItems?: boolean` を足す。true なら、`ShoppingSyncService.deleteHistory` と同じ形で、1 トランザクションの中でリストの商品と候補を読み、`selectItemsToDeleteWithList` で選んで論理削除（item_tags も消す）し、リストを論理削除する。同期の記録はコミットの後に書く
+- `deleteListSchema` に `deleteCatalogItems?: boolean` を足す。true なら、`ShoppingSyncService.deleteHistory` と同じ形で、1 トランザクションの中でリストの行をロック（`notDeleted`・`accessibleByUser`）してリストの商品と候補を読み、`selectItemsToDeleteWithList` で選んで論理削除（item_tags も消す）し、リストを論理削除する。同期の記録（リストと各カタログの商品の `delete`）はコミットの後に書く（`deleteHistory` と同じ）
+- 指定はリストの状態（進行中・完了）とチェックの有無を問わずに受ける。画面から使うのは 0 件の完了だけだが、API としては「リストと同じ名前の未購入の商品も消す削除」で意味が決まっていて、断る理由がないため。完了済みのリストは購入履歴の削除（`deleteHistory`）を使うので、画面からは届かない
 
 ### D4. クライアント（画面と、ゲストの `deleteList` だけ）
 
 - `app/lists/detail/page.tsx`: チェック 0 件のとき、完了ボタンを押せるようにし、押すと BottomSheet のダイアログを出す。選んだ方法で `deleteList(listId, { deleteCatalogItems })` を呼び、`/lists` に移る。`finishShopping` は呼ばない
-- `useListMutations.deleteList`: サーバーのときは tRPC にそのまま渡す。ゲストのときは、同じ名前・同じ groupId・未購入の商品を `selectItemsToDeleteWithList` で選んで消す（ゲストの商品は userId を持たないので、リストと商品の両方に同じ固定の所有者を入れたスコープを渡す）
+- `useListMutations.deleteList`: サーバーのときは tRPC にそのまま渡す。ゲストのときは、**リストの** groupId と同じ groupId・同じ名前・未購入の商品を `selectItemsToDeleteWithList` で選び、カタログの商品・リストの商品・リストの削除を Dexie の 1 つのトランザクション（`items`・`listItems`・`lists`）で行う。ゲストのリストの商品の groupId は item のものとリストのものが混在している（design-doc 7.1）ので、リストの商品の groupId は使わない。ゲストの商品は userId を持たないので、リストと商品の両方に同じ固定の所有者を入れたスコープを渡す
+- 完了の失敗: `handleComplete` は今 `console.error` だけなので、エラーのメッセージを画面に出し（既存のトーストか、ボタンの下の文言）、リストを読み直す
 
 ### D5. DB
 

@@ -10,16 +10,17 @@ Issue: #179（https://github.com/amasok/shopping-memos/issues/179）
 
 - shopping の domain に、Drizzle・Dexie・tRPC を import しない純粋関数を足す: 買い物の完了の計画、履歴の取り消しの計画、カタログとの照合（購入済みにする・未購入に戻す）、リストの商品のスナップショット、進行中のリストでの除外。所有スコープの判定（`isSameScope`）は共有カーネル（`src/shared/`）に移し、domain から使えるようにする
 - サーバーを置き換える: `ShoppingService.finishShopping`、`routers/shopping.ts` の `revertHistory`（本体を `ShoppingService` に移す）、`SyncPushService` の `finishShopping` / `revertHistory`、`routers/shopping.ts` のスナップショットの 4 か所、`routers/catalog.ts` の除外の絞り込み
-- 関数の規則は **今のサーバーの振る舞いのまま** にする。チェック 0 件でも完了でき（空の購入履歴になる）、完了の照合は同じ名前の購入済みの商品の購入日時も上書きする。これらの変更は別の change `179b-finish-empty-list-dialog`（ユーザーの確認待ち）で行う
-- サーバーの 2 か所の間の食い違いのうち、ユーザーの確認に関係しないものは正す（振る舞いの変更）:
-  - tRPC の履歴の取り消しを、購入日時が入っているリストに限り（sync.push・ゲストと同じ）、1 つのトランザクションで行う。今は進行中のリストにも通り、途中で失敗すると一部だけ反映される
-  - tRPC の完了で、リストの行をロックしてからリストの商品をトランザクションの中で読む（sync.push と同じ）。今は外で読む
+- 関数の規則は **今のサーバーの振る舞いのまま** にする。ユーザーから見える結果（成功・失敗・エラーの種類・データの最終状態）は変えない。チェック 0 件でも完了でき（空の購入履歴になる）、完了の照合は同じ名前の購入済みの商品の購入日時も上書きし、購入履歴でないリストの取り消しは NOT_FOUND のまま。0 件の完了と照合の変更は別の change `179b-finish-empty-list-dialog`（ユーザーの確認待ち）で行う
+- 結果を変えない内部の直し（リーダーの判断、2026-11-17。成功したときの最終状態が今と同じことをテストで示す）:
+  - tRPC の履歴の取り消しを 1 つのトランザクションにする（今は途中で失敗すると一部だけ反映される）
+  - tRPC の完了で、リストの行をロックしてからリストの商品をトランザクションの中で読む（今は外で読む。sync.push と同じにする）
+  - 名前ごとの UPDATE（N+1）を、候補の SELECT 1 回と id での UPDATE 1 回にする
 
 ## Capabilities
 
 ### New Capabilities
 
-- `shopping`: 買い物リストの完了・履歴の取り消し・リストの商品のスナップショット・カタログとの照合・「買いたいもの」の一覧での進行中のリストの除外。この change で、触れる範囲の今の振る舞いを書き起こし、上の 2 つの直しを加える
+- `shopping`: 買い物リストの完了・履歴の取り消し・リストの商品のスナップショット・カタログとの照合・「買いたいもの」の一覧での進行中のリストの除外。この change で、触れる範囲の今の振る舞い（境界のケースを含む）を書き起こす
 
 ### Modified Capabilities
 
@@ -30,7 +31,7 @@ Issue: #179（https://github.com/amasok/shopping-memos/issues/179）
 | モード | 影響 |
 |-------|------|
 | ゲスト（Dexie だけ） | なし（hooks は O7/O8 で domain の関数に置き換える） |
-| サーバーファースト（tRPC） | 置き換えの対象。振る舞いの変更は、履歴の取り消しの前提（購入履歴でないと BAD_REQUEST）とトランザクション、完了でリストの商品を読む時点だけ |
+| サーバーファースト（tRPC） | 置き換えの対象。見える結果は変えない（取り消しのトランザクションなど、失敗や競合のときの内部の直しだけ） |
 | ローカルファースト（`NEXT_PUBLIC_LOCAL_FIRST`） | 画面はまだ tRPC を使う（O6 の時点）のでサーバーファーストと同じ。sync.push の `finishShopping` / `revertHistory` が domain の関数を通る（結果は今と同じ） |
 
 ## Non-goals
@@ -44,9 +45,9 @@ Issue: #179（https://github.com/amasok/shopping-memos/issues/179）
 
 ## Impact
 
-- 追加: `src/modules/shopping/domain/services/*`（純粋関数とテスト）、`src/shared/domain/ownerScope.ts`（`isSameScope` を移す）
-- 変更: `src/modules/shopping/application/services/ShoppingService.ts`・`catalogItemScope.ts`、`src/modules/sync/application/services/SyncPushService.ts`、`src/infrastructure/trpc/routers/shopping.ts`・`catalog.ts`、`src/infrastructure/db/ownership.ts`（移した関数を再エクスポート）
-- API: `shopping.revertHistory` は、購入日時が入っていないリストで BAD_REQUEST になる。ほかの入出力は変わらない
+- 追加: `src/modules/shopping/domain/services/*`（純粋関数とテスト）、`src/shared/domain/ownerScope.ts`（`isSameScope` と `OwnerScope` を移す）
+- 変更: `src/modules/shopping/application/services/ShoppingService.ts`・`catalogItemScope.ts`、`src/modules/sync/application/services/SyncPushService.ts`、`src/infrastructure/trpc/routers/shopping.ts`・`catalog.ts`、`src/infrastructure/db/ownership.ts`（移した関数を取り除き、shared から import する。再エクスポートはしない）、`isSameScope`・`OwnerScope` を使う各所の import、`eslint.config.mjs`（import の制限）
+- API: 入出力・エラーの種類は変わらない
 - DB の migration: なし
 
 ## ユーザーに確認すること
