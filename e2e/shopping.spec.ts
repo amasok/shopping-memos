@@ -34,6 +34,26 @@ test.describe("買い物中", () => {
     await page.locator("[data-testid='unchecked-section']").waitFor({ state: "visible", timeout: 10000 })
   }
 
+  /** ゲスト DB のカタログの商品（名前と購入日時） */
+  async function catalogItems(page: import("@playwright/test").Page) {
+    return page.evaluate(
+      () =>
+        new Promise<Array<{ name: string; purchasedAt?: string }>>((resolve, reject) => {
+          const request = indexedDB.open("ShoppingMemosDB")
+          request.onsuccess = () => {
+            const db = request.result
+            const all = db.transaction("items", "readonly").objectStore("items").getAll()
+            all.onsuccess = () => {
+              db.close()
+              resolve(all.result.map((i: { name: string; purchasedAt?: string }) => ({ name: i.name, purchasedAt: i.purchasedAt })))
+            }
+            all.onerror = () => reject(all.error)
+          }
+          request.onerror = () => reject(request.error)
+        })
+    )
+  }
+
   test.beforeEach(async ({ page }) => {
     resetIdCounter()
     await setupCleanPage(page, "/")
@@ -158,26 +178,6 @@ test.describe("買い物中", () => {
   })
 
   test.describe("チェック 0 件の完了（179b）", () => {
-    /** ゲスト DB のカタログの商品（名前と購入日時） */
-    async function catalogItems(page: import("@playwright/test").Page) {
-      return page.evaluate(
-        () =>
-          new Promise<Array<{ name: string; purchasedAt?: string }>>((resolve, reject) => {
-            const request = indexedDB.open("ShoppingMemosDB")
-            request.onsuccess = () => {
-              const db = request.result
-              const all = db.transaction("items", "readonly").objectStore("items").getAll()
-              all.onsuccess = () => {
-                db.close()
-                resolve(all.result.map((i: { name: string; purchasedAt?: string }) => ({ name: i.name, purchasedAt: i.purchasedAt })))
-              }
-              all.onerror = () => reject(all.error)
-            }
-            request.onerror = () => reject(request.error)
-          })
-      )
-    }
-
     async function openNoCheckedDialog(page: import("@playwright/test").Page) {
       await page.locator("[data-testid='partial-complete-button']").click()
       await page.locator("[data-testid='no-checked-dialog']").waitFor({ state: "visible" })
@@ -241,6 +241,45 @@ test.describe("買い物中", () => {
       await expect(page).toHaveURL(/\/lists\/detail/)
       await expect(page.locator("[data-testid='unchecked-section']")).toContainText("牛乳")
       expect(await catalogItems(page)).toEqual([{ name: "牛乳", purchasedAt: undefined }])
+    })
+  })
+
+  test.describe("メニューからのリストの削除（#191）", () => {
+    async function openDeleteDialog(page: import("@playwright/test").Page) {
+      await page.locator("[data-testid='list-menu-button']").click()
+      await page.locator("[data-testid='list-delete-menu']").click()
+      await page.locator("[data-testid='list-delete-dialog']").waitFor({ state: "visible" })
+    }
+
+    test("E-13: メニューで商品ごと消すとリストと同じ名前の未購入の商品も削除する", async ({ page }) => {
+      await createListWithItems(page, ["牛乳", "パン"])
+      // 前に買った同じ名前の商品（購入済み）は残る
+      const purchasedAt = new Date("2026-11-01T00:00:00.000Z").toISOString()
+      await seedTable(page, "items", [createItem({ name: "牛乳", purchasedAt })])
+
+      await openDeleteDialog(page)
+      await expect(page.locator("[data-testid='list-delete-option-list-only']")).toBeChecked()
+      await page.locator("[data-testid='list-delete-option-with-items']").check()
+      await page.locator("[data-testid='list-delete-confirm']").click()
+
+      await expect(page).toHaveURL(/\/lists$/, { timeout: 10000 })
+      await expect(page.locator("[data-testid='lists-empty-state']")).toBeVisible()
+      await expect.poll(() => catalogItems(page)).toEqual([{ name: "牛乳", purchasedAt }])
+    })
+
+    test("E-14: メニューでリストだけ消すとカタログの商品は変えずに買いたいものに戻る", async ({ page }) => {
+      await createListWithItems(page, ["牛乳", "パン"])
+
+      await openDeleteDialog(page)
+      await page.locator("[data-testid='list-delete-confirm']").click()
+
+      await expect(page).toHaveURL(/\/lists$/, { timeout: 10000 })
+      await expect(page.locator("[data-testid='lists-empty-state']")).toBeVisible()
+      await page.goto("/")
+      const itemList = page.locator("[data-testid='item-list']")
+      await expect(itemList).toContainText("牛乳")
+      await expect(itemList).toContainText("パン")
+      expect((await catalogItems(page)).every((i) => !i.purchasedAt)).toBe(true)
     })
   })
 })

@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import type { ReactNode } from "react"
 
 /**
- * 買い物リストの画面の完了（179b。openspec の shopping「チェック 0 件の完了」）
+ * 買い物リストの画面の完了（179b。openspec の shopping「チェック 0 件の完了」）と、
+ * メニューからのリストの削除（#191。openspec の shopping「メニューからのリストの削除」）
  *
  * hooks をモックし、ダイアログの選択と完了の失敗の表示を確かめる。
  * 端末の DB・サーバーでの結果は E2E（e2e/shopping.spec.ts・e2e/auth/）で確かめる
@@ -168,5 +169,106 @@ describe("チェック済みの商品がある完了", () => {
 
     expect(await screen.findByTestId("complete-error")).toHaveTextContent("このリストは既に完了しています")
     expect(state.push).not.toHaveBeenCalled()
+  })
+})
+
+describe("メニューからのリストの削除（#191）", () => {
+  /** メニューの「リストを削除」からダイアログを開く */
+  async function openDeleteDialog() {
+    fireEvent.click(await screen.findByTestId("list-menu-button"))
+    fireEvent.click(screen.getByTestId("list-delete-menu"))
+    return screen.findByTestId("list-delete-dialog")
+  }
+
+  it("メニューの削除のダイアログは商品の扱いを選ばせる", async () => {
+    render(<ShoppingListPage />)
+    const dialog = await openDeleteDialog()
+
+    expect(dialog).toHaveTextContent("このリストを削除しますか？")
+    expect(dialog).toHaveTextContent("リストの商品（2件）はどうしますか？")
+    expect(dialog).toHaveTextContent("リストだけ消して商品は元に戻す")
+    expect(dialog).toHaveTextContent("買いたいものの一覧に戻ります")
+    expect(dialog).toHaveTextContent("リストの商品ごと消す")
+    expect(dialog).toHaveTextContent("同じ名前のまだ買っていない商品も消します。買った商品と履歴は残ります")
+    expect(screen.getByTestId("list-delete-option-list-only")).toBeChecked()
+    expect(screen.getByTestId("list-delete-option-with-items")).not.toBeChecked()
+  })
+
+  it("メニューで商品ごと消すと、商品も消す指定でリストを削除し、一覧に移る", async () => {
+    render(<ShoppingListPage />)
+    await openDeleteDialog()
+
+    fireEvent.click(screen.getByTestId("list-delete-option-with-items"))
+    fireEvent.click(screen.getByTestId("list-delete-confirm"))
+
+    await waitFor(() => expect(state.push).toHaveBeenCalledWith("/lists"))
+    expect(state.deleteList).toHaveBeenCalledWith("list-1", { deleteCatalogItems: true })
+  })
+
+  it("メニューでリストだけ消すと、商品を消さない指定でリストを削除し、一覧に移る", async () => {
+    render(<ShoppingListPage />)
+    await openDeleteDialog()
+
+    fireEvent.click(screen.getByTestId("list-delete-confirm"))
+
+    await waitFor(() => expect(state.push).toHaveBeenCalledWith("/lists"))
+    expect(state.deleteList).toHaveBeenCalledWith("list-1", { deleteCatalogItems: false })
+  })
+
+  it("商品がないリストはメニューで選ばせずにリストだけを消す", async () => {
+    state.items = []
+    render(<ShoppingListPage />)
+    await openDeleteDialog()
+
+    expect(screen.queryByTestId("list-delete-option-with-items")).toBeNull()
+    expect(screen.queryByTestId("list-delete-option-list-only")).toBeNull()
+    fireEvent.click(screen.getByTestId("list-delete-confirm"))
+
+    await waitFor(() => expect(state.push).toHaveBeenCalledWith("/lists"))
+    expect(state.deleteList).toHaveBeenCalledWith("list-1", { deleteCatalogItems: false })
+  })
+
+  it("ダイアログを開き直すとリストだけ消す選択に戻る", async () => {
+    render(<ShoppingListPage />)
+    await openDeleteDialog()
+    fireEvent.click(screen.getByTestId("list-delete-option-with-items"))
+    expect(screen.getByTestId("list-delete-option-with-items")).toBeChecked()
+
+    fireEvent.click(screen.getByTestId("list-delete-cancel"))
+    await openDeleteDialog()
+
+    expect(screen.getByTestId("list-delete-option-list-only")).toBeChecked()
+    expect(screen.getByTestId("list-delete-option-with-items")).not.toBeChecked()
+    expect(state.deleteList).not.toHaveBeenCalled()
+  })
+
+  it("メニューの削除に失敗したらダイアログにエラーを出し、リストの画面のまま", async () => {
+    state.deleteList.mockRejectedValue(new Error("network"))
+    render(<ShoppingListPage />)
+    await openDeleteDialog()
+
+    fireEvent.click(screen.getByTestId("list-delete-option-with-items"))
+    fireEvent.click(screen.getByTestId("list-delete-confirm"))
+
+    const alert = await screen.findByTestId("list-delete-error")
+    expect(alert).toHaveAttribute("role", "alert")
+    expect(alert).toHaveTextContent("リストを削除できませんでした。もう一度お試しください")
+    expect(state.push).not.toHaveBeenCalled()
+    expect(screen.getByTestId("list-delete-confirm")).not.toBeDisabled()
+  })
+
+  it("削除の途中は削除するボタンを押せない", async () => {
+    let resolveDelete: (value: unknown) => void = () => {}
+    state.deleteList.mockReturnValue(new Promise((resolve) => (resolveDelete = resolve)))
+    render(<ShoppingListPage />)
+    await openDeleteDialog()
+
+    fireEvent.click(screen.getByTestId("list-delete-confirm"))
+
+    await waitFor(() => expect(screen.getByTestId("list-delete-confirm")).toBeDisabled())
+    fireEvent.click(screen.getByTestId("list-delete-confirm"))
+    expect(state.deleteList).toHaveBeenCalledTimes(1)
+    resolveDelete({ success: true })
+    await waitFor(() => expect(state.push).toHaveBeenCalledWith("/lists"))
   })
 })
