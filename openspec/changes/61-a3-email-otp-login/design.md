@@ -144,6 +144,8 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 
 `src/lib/security/headers.ts` の Report-Only の `script-src` と `frame-src` に `https://challenges.cloudflare.com` を足す（Turnstile）。強制の CSP（今あるもの）にも Turnstile を妨げる指定がないかを確かめる。CSP 全体の強制は別の Issue（proposal の確認事項 4）。
 
+- **CSP の確認（6.2。2026-11-18）**: `E2E_BUILD` なしの本番ビルドを、Turnstile のテスト用のキーで `next start` し、headless の Chromium でログイン画面を開いてコードを送った。Turnstile のスクリプト（`challenges.cloudflare.com/turnstile/v0/api.js`）が読み込まれ、トークンを取って送信まで進み、コンソールに CSP（Report-Only）の違反・エラーは出なかった。本物のサイトキーでの確認は、AR1b の Preview の確認項目に入れた
+
 ## リリースの手順（設計書からの変更。論点 a・b）
 
 - リリースの名前を #62 とぶつからないよう AR0〜AR3 にする（リーダーの判断、2026-11-18）
