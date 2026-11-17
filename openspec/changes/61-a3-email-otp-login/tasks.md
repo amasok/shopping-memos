@@ -51,6 +51,6 @@
 
 ## 6. 確認
 
-- [ ] 6.1 `npm run lint`・`npm run test:run`・`npm run test:db`・`npm run build`・`npm run test:e2e:local` が通る
+- [x] 6.1 `npm run lint`・`npm run test:run`・`npm run test:db`・`npm run build`・`npm run test:e2e:local` が通る
 - [x] 6.2 ブラウザで Report-Only の CSP の違反が出ないことを確かめる（ログイン画面と Turnstile）
 - [x] 6.3 リリースに要る外の作業を書き出す（レビュー M3）: Vercel の Production・Preview に入れる環境変数の一覧（`BETTER_AUTH_SECRET`・`BETTER_AUTH_URL`・`BETTER_AUTH_TRUSTED_ORIGINS`（Preview）・`OTP_EVENT_HMAC_KEY`・`TURNSTILE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY`・`RESEND_API_KEY`・`EMAIL_FROM`・`EMAIL_RECIPIENT_ALLOWLIST`（Preview））と、ユーザーの作業（Turnstile のウィジェットを本番と Preview のホストで作る、Resend の `mail.counoco.net` の検証、Preview の Deployment Protection）を `docs/INFRASTRUCTURE.md` に足す。設計書の「Preview での確認チェックリスト」の R1b の項目を、AR1b の PR の本文に写せる形で用意する。確認項目に「偽の `x-real-ip`・`x-forwarded-for` を付けた送信で、記録される IP（`otp_events.ip`・`rate_limits.key`）がクライアントの値にならないこと」を入れる（D4。一時的なルートは作らず、既存の送信の記録で確かめる）
