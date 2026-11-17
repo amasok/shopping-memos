@@ -267,6 +267,16 @@ sequenceDiagram
 
 ### 7.8 ADR-002 / 003 と実装がずれている（「9. ADR との関係」）
 
+### 7.9 offline-support.md と実装のずれ（既知。offline-support.md の直しは別の PR）
+
+| 項目 | offline-support.md | 実装（392dbed） |
+|------|-------------------|----------------|
+| ローカルファーストの範囲 | フラグが true ならログイン中もローカルファーストで動く（:383。O8 までそろった後の姿） | O6 ではフラグが true でも画面はユーザー DB を読まない。変わるのは SyncEngine が push + pull で動くことだけ（「4. データの流れ」の注意） |
+| フラグの既定 | `NEXT_PUBLIC_LOCAL_FIRST` は「R3 以降の既定」が true（:383） | 値が `"true"` のときだけ有効で、既定は false（`src/lib/featureFlags.ts`）。R3 で環境変数を入れるのか既定を変えるのかは未定 |
+| 同期のロックの名前 | `navigator.locks.request("sync")`（:392） | ユーザーごとの `shopping-memos-sync-<userId>`（`src/contexts/SyncContext.tsx:63`） |
+| push の `duplicate` | 「`applied` / `duplicate` はキューから削除」（:390、テスト計画の :573）。:326 には reason で分ける記述もあり、文書の中で食い違う | reason で分ける: `applied` なら消す、`rejected:*` なら failed、それ以外は消して取り直す（`SyncEngine.ts` の `pushOutcome`） |
+| 「現状」の表 | 2026-11-16 時点（Dexie v8、`public/sw.js` だけなど。:19-31） | Dexie v10、Serwist の SW |
+
 ## 8. 目指す構造
 
 ### 方針
