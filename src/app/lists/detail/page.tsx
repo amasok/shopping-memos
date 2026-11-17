@@ -46,6 +46,12 @@ function ShoppingListContent() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteItemHandling, setDeleteItemHandling] = useState<"return" | "delete">("return")
   const [showEmptyListConfirm, setShowEmptyListConfirm] = useState(false)
+  // チェック 0 件で完了を押したときの確認ダイアログ（179b）
+  const [showNoCheckedConfirm, setShowNoCheckedConfirm] = useState(false)
+  const [isDeletingNoChecked, setIsDeletingNoChecked] = useState(false)
+  const [noCheckedError, setNoCheckedError] = useState<string | null>(null)
+  // 完了の失敗（ほかの端末でチェックが外れていた場合など）
+  const [completeError, setCompleteError] = useState<string | null>(null)
 
   // サーバーファースト対応のhooksを使用
   const { list, items: listItems, isLoading: isListLoading, refetch: refetchList } = useList({ listId })
@@ -138,13 +144,36 @@ function ShoppingListContent() {
   }
 
   const handleComplete = async () => {
+    // チェック 0 件なら完了せず、リストの削除方法を選ばせる（179b「チェック 0 件の完了」）
+    if (checkedItems.length === 0) {
+      setNoCheckedError(null)
+      setShowNoCheckedConfirm(true)
+      return
+    }
     setIsCompleting(true)
+    setCompleteError(null)
     try {
       await finishShopping(listId, list?.name)
       router.push("/history")
     } catch (error) {
       console.error("Failed to complete shopping:", error)
+      setCompleteError(error instanceof Error ? error.message : "")
+      refetchList()
       setIsCompleting(false)
+    }
+  }
+
+  // チェック 0 件の完了: 履歴は作らずにリストを削除する（deleteCatalogItems: リストと同じ名前の未購入の商品も消す）
+  const handleDeleteNoChecked = async (deleteCatalogItems: boolean) => {
+    setIsDeletingNoChecked(true)
+    setNoCheckedError(null)
+    try {
+      await deleteList(listId, { deleteCatalogItems })
+      router.push("/lists")
+    } catch (error) {
+      console.error("Failed to delete list:", error)
+      setNoCheckedError("リストを削除できませんでした。もう一度お試しください")
+      setIsDeletingNoChecked(false)
     }
   }
 
@@ -437,16 +466,27 @@ function ShoppingListContent() {
                 variant="secondary"
                 className="w-full"
                 onClick={handleComplete}
-                disabled={isCompleting || checkedItems.length === 0}
+                disabled={isCompleting}
                 data-testid="partial-complete-button"
               >
                 {checkedItems.length === 0
-                  ? "カゴに入れたものがありません"
+                  ? "買い物を完了"
                   : `${checkedItems.length}件を購入完了にする`}
               </Button>
               <p className="mt-2 text-center text-sm text-gray-500">
                 チェックしていないアイテムは「買いたいもの」に戻ります
               </p>
+            </div>
+          )}
+
+          {completeError !== null && (
+            <div
+              role="alert"
+              className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+              data-testid="complete-error"
+            >
+              <p className="font-medium">買い物を完了できませんでした</p>
+              {completeError && <p className="mt-1">{completeError}</p>}
             </div>
           )}
         </div>
@@ -551,6 +591,53 @@ function ShoppingListContent() {
               data-testid="list-delete-confirm"
             >
               削除する
+            </Button>
+          </div>
+        </div>
+      </BottomSheet>
+
+      {/* チェック 0 件の完了の確認ダイアログ（179b。文言はユーザーの承認どおり 2026-11-18） */}
+      <BottomSheet
+        isOpen={showNoCheckedConfirm}
+        onClose={() => setShowNoCheckedConfirm(false)}
+        title="カゴに入れたものがありません"
+      >
+        <div className="space-y-4" data-testid="no-checked-dialog">
+          <p className="text-gray-600">
+            履歴は作らずに、このリストを削除します。リストの商品はどうしますか？
+          </p>
+          {noCheckedError && (
+            <p role="alert" className="text-sm text-red-700" data-testid="no-checked-error">
+              {noCheckedError}
+            </p>
+          )}
+          <div className="space-y-2">
+            <Button
+              variant="danger"
+              className="w-full"
+              onClick={() => handleDeleteNoChecked(true)}
+              disabled={isDeletingNoChecked}
+              data-testid="no-checked-delete-with-items"
+            >
+              リストの商品ごと消す
+            </Button>
+            <Button
+              variant="secondary"
+              className="w-full"
+              onClick={() => handleDeleteNoChecked(false)}
+              disabled={isDeletingNoChecked}
+              data-testid="no-checked-delete-list-only"
+            >
+              リストだけ消して商品は元に戻す
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={() => setShowNoCheckedConfirm(false)}
+              disabled={isDeletingNoChecked}
+              data-testid="no-checked-cancel"
+            >
+              キャンセル
             </Button>
           </div>
         </div>

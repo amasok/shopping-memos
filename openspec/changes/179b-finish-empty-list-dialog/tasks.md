@@ -24,13 +24,13 @@
 
 ## 5. 画面
 
-- [ ] 5.1 `app/lists/detail/page.tsx` のダイアログを実装し、E2E（`e2e/shopping.spec.ts`）に「チェック 0 件で完了を押すと確認ダイアログを出す」「リストの商品ごと消すとリストと同じ名前の未購入の商品を削除する」「リストだけ消すとカタログの商品は変えずに買いたいものに戻る」「キャンセルするとリストはそのまま」をゲストで、`e2e/auth/` にログイン中の「リストの商品ごと消す…」を足す
-- [ ] 5.2 「完了に失敗したら画面にエラーを出す」を、`finishShopping` が失敗するようにした画面のテスト（`src/app/lists/detail/__tests__/`）で確かめる
+- [x] 5.1 `app/lists/detail/page.tsx` のダイアログを実装し、E2E（`e2e/shopping.spec.ts`）に「チェック 0 件で完了を押すと確認ダイアログを出す」「リストの商品ごと消すとリストと同じ名前の未購入の商品を削除する」「リストだけ消すとカタログの商品は変えずに買いたいものに戻る」「キャンセルするとリストはそのまま」をゲストで、`e2e/auth/` にログイン中の「リストの商品ごと消す…」を足す
+- [x] 5.2 「完了に失敗したら画面にエラーを出す」を、`finishShopping` が失敗するようにした画面のテスト（`src/app/lists/detail/__tests__/`）で確かめる
 
 ## 6. 確認
 
-- [ ] 6.1 `npm run lint`・`npm run test:run`・`npm run test:coverage`（80% 以上）・`npm run build` が通る
-- [ ] 6.2 `npm run test:db` が通る
+- [x] 6.1 `npm run lint`・`npm run test:run`・`npm run test:coverage`（80% 以上）・`npm run build` が通る
+- [x] 6.2 `npm run test:db` が通る
 - [ ] 6.3 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く
 
 ## Workflow follow-up
