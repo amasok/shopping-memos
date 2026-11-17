@@ -293,7 +293,6 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     if (isAuthLoading || !user || mergeAttempted.current) return
 
     mergeAttempted.current = true
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- ログイン時に一度だけマージを実行する必要がある
     executeMerge()
   }, [isAuthLoading, user, executeMerge])
 
