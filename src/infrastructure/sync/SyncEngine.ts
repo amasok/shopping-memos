@@ -65,19 +65,26 @@ export const BACKOFF_MAX_MS = 5 * 60_000
 /** ローカルへの書き込み後、push するまでのデバウンス */
 export const PUSH_DEBOUNCE_MS = 2_000
 
-type ErrorKind = "retry" | "auth" | "tooOld" | "client"
+/**
+ * - invalid: 入力の中身で拒否された（400 BAD_REQUEST・413）。push は分けて送り直し、1 件で拒否された操作だけを failed にする
+ * - retry: ネットワークエラー・5xx・429 と、そのほかの 4xx（WAF の 403、デプロイの切り替わりの 404・405 など、
+ *   どの操作が悪いのかに関係なく全体が拒否されるもの）。failed にせず、バックオフで再試行する
+ */
+type ErrorKind = "retry" | "auth" | "tooOld" | "invalid"
+
+function httpStatusOf(error: unknown): number | undefined {
+  const e = error as { data?: { httpStatus?: number }; meta?: { response?: { status?: number } } } | null
+  // tRPC の形でないエラーのレスポンス（request-limits.ts の 413 / 400 など）は data がないので、HTTP の状態を見る
+  return e?.data?.httpStatus ?? e?.meta?.response?.status
+}
 
 export function classifySyncError(error: unknown): ErrorKind {
-  const e = error as { data?: { code?: string; httpStatus?: number }; meta?: { response?: { status?: number } } } | null
-  const data = e?.data
-  // tRPC の形でないエラーのレスポンス（request-limits.ts の 413 / 400 など）は data がないので、HTTP の状態で分ける
-  const status = data?.httpStatus ?? e?.meta?.response?.status
-  // どちらもないのは、レスポンスが届かなかった（ネットワークエラー）とき
-  if (!data && status === undefined) return "retry"
-  if (data?.code === "UNAUTHORIZED" || status === 401) return "auth"
-  if (data?.code === "PRECONDITION_FAILED" && error instanceof Error && error.message.includes(CLIENT_TOO_OLD)) return "tooOld"
-  if ((status ?? 500) >= 500 || status === 429) return "retry"
-  return "client"
+  const code = (error as { data?: { code?: string } } | null)?.data?.code
+  const status = httpStatusOf(error)
+  if (code === "UNAUTHORIZED" || status === 401) return "auth"
+  if (code === "PRECONDITION_FAILED" && error instanceof Error && error.message.includes(CLIENT_TOO_OLD)) return "tooOld"
+  if (code === "BAD_REQUEST" || code === "PAYLOAD_TOO_LARGE" || status === 400 || status === 413) return "invalid"
+  return "retry"
 }
 
 class SyncStop extends Error {
@@ -210,7 +217,8 @@ export class SyncEngine {
     if (kind === "auth") return this.setState({ sessionExpired: true })
     if (kind === "tooOld") return this.setState({ clientTooOld: true })
     if (kind === "retry") {
-      if (!(error as { data?: unknown })?.data) this.setState({ isOnline: false })
+      // レスポンスが届かなかった（HTTP の状態がない）ときだけ、オフラインとみなす
+      if (httpStatusOf(error) === undefined) this.setState({ isOnline: false })
       const delay = Math.min(BACKOFF_MIN_MS * 2 ** this.attempt, BACKOFF_MAX_MS)
       this.attempt += 1
       this.retryTimer = this.timer(() => void this.sync(), delay)
@@ -253,12 +261,12 @@ export class SyncEngine {
         })
       } catch (error) {
         const kind = classifySyncError(error)
-        if (kind === "client" && batch.length > 1) {
+        if (kind === "invalid" && batch.length > 1) {
           await db.syncQueue.where("id").anyOf(ids).modify({ status: "pending" })
           limit = Math.ceil(batch.length / 2)
           continue
         }
-        if (kind === "client") {
+        if (kind === "invalid") {
           // 1 件だけで入力ごと拒否された操作は、送り直しても通らない。failed にして、残りを続けて送る
           console.error("Sync push rejected:", error)
           await db.syncQueue.update(ids[0], { status: "failed", lastError: error instanceof Error ? error.message : String(error) })
@@ -336,7 +344,7 @@ export class SyncEngine {
         page = await this.options.transport.pull({ cursor, protocolVersion: SYNC_PROTOCOL_VERSION })
       } catch (error) {
         // 壊れたカーソル（BAD_REQUEST）は捨てて、次の同期でカーソルなしで取り直す
-        if (cursor !== undefined && classifySyncError(error) === "client") await deleteMeta(db, "cursor")
+        if (cursor !== undefined && classifySyncError(error) === "invalid") await deleteMeta(db, "cursor")
         throw error
       }
       this.updateOffset(page.serverTime, sentAt)

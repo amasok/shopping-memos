@@ -249,7 +249,7 @@ describe("SyncEngine.push", () => {
 
   it("tRPC の形でない 4xx（413 など）も、入力ごとの拒否として扱う", () => {
     const tooLarge = Object.assign(new Error("Payload Too Large"), { meta: { response: { status: 413 } } })
-    expect(classifySyncError(tooLarge)).toBe("client")
+    expect(classifySyncError(tooLarge)).toBe("invalid")
     expect(classifySyncError(Object.assign(new Error("x"), { meta: { response: { status: 502 } } }))).toBe("retry")
   })
 
@@ -338,6 +338,26 @@ describe("SyncEngine.push", () => {
     await instance.sync()
     expect((await queue())[0]).toMatchObject({ status: "failed", lastError: "invalid" })
     expect(timers).toEqual([])
+  })
+
+  it("403・404 など全体が拒否される 4xx では failed にせず、pending のままバックオフで再試行する", async () => {
+    await setMeta(database, "cursor", "keep")
+    await database.syncQueue.bulkAdd([op(1), op(2)])
+    for (const [code, status] of [["FORBIDDEN", 403], ["METHOD_NOT_SUPPORTED", 405]] as const) {
+      const push = vi.fn().mockRejectedValue(trpcError(code, status))
+      const { instance } = engine({ transport: { push, pull: vi.fn(async () => pullPage()) } })
+      await instance.sync()
+      expect(push).toHaveBeenCalledTimes(1)
+      expect((await queue()).map((q) => q.status)).toEqual(["pending", "pending"])
+      expect(instance.getState().isOnline).toBe(true)
+    }
+    // WAF のチャレンジ（tRPC の形でない 403）も同じ
+    const html403 = Object.assign(new Error("Forbidden"), { meta: { response: { status: 403 } } })
+    const { instance } = engine({ transport: { push: vi.fn().mockRejectedValue(html403), pull: vi.fn(async () => pullPage()) } })
+    await instance.sync()
+    expect((await queue()).map((q) => q.status)).toEqual(["pending", "pending"])
+    expect(timers.map((t) => t.ms)).toEqual([2000, 2000, 2000])
+    expect(await getMeta(database, "cursor")).toBe("keep")
   })
 
   it("serverTime で時計のずれを補正し、保存する", async () => {
@@ -520,8 +540,10 @@ describe("requestSync とその他", () => {
     expect(classifySyncError(trpcError("TOO_MANY_REQUESTS", 429))).toBe("retry")
     expect(classifySyncError(trpcError("UNAUTHORIZED", 401))).toBe("auth")
     expect(classifySyncError(trpcError("PRECONDITION_FAILED", 412, "CLIENT_TOO_OLD"))).toBe("tooOld")
-    expect(classifySyncError(trpcError("PRECONDITION_FAILED", 412, "other"))).toBe("client")
-    expect(classifySyncError(trpcError("FORBIDDEN", 403))).toBe("client")
+    expect(classifySyncError(trpcError("BAD_REQUEST", 400))).toBe("invalid")
+    expect(classifySyncError(trpcError("PRECONDITION_FAILED", 412, "other"))).toBe("retry")
+    expect(classifySyncError(trpcError("FORBIDDEN", 403))).toBe("retry")
+    expect(classifySyncError(trpcError("NOT_FOUND", 404))).toBe("retry")
   })
 
   it("push の結果の扱い", () => {
