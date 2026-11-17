@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from "fs"
 import { spawnSync } from "child_process"
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from "fs"
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import path from "path"
 import { parse } from "yaml"
@@ -453,5 +453,244 @@ describe("SW ライフサイクル E2E のワークフロー（sw-e2e.yml）", (
     expect(job.steps.some((s) => s.run?.includes("test:e2e:sw-lifecycle"))).toBe(true)
     expect(job["timeout-minutes"]).toBeGreaterThan(0)
     expect(job["runs-on"]).toMatch(/^ubuntu-\d{2}\.\d{2}$/)
+  })
+})
+
+describe("本番 DB への手動 migrate（migrate-production.yml）(#164)", () => {
+  type ManualWorkflow = {
+    on: Record<string, { inputs?: Record<string, { required?: boolean; type?: string }> } | null>
+    permissions?: Record<string, string>
+    jobs: Record<string, Job>
+  }
+  const manual = parse(
+    readFileSync(path.resolve(__dirname, "../../.github/workflows/migrate-production.yml"), "utf-8")
+  ) as ManualWorkflow
+  const check = manual.jobs.check
+  const migrate = manual.jobs.migrate
+  const stepNamed = (job: Job, name: string) => job.steps.find((s) => s.name === name)
+  /** shell を指定しない step の既定（bash -e {0}）と同じく、bash -e で run を実行する */
+  const runBash = (run: string, env: Record<string, string>, cwd?: string) =>
+    spawnSync("bash", ["-e", "-c", run], { env: { ...process.env, ...env }, cwd, encoding: "utf-8" })
+
+  it("手動実行（workflow_dispatch）だけで動き、確認の入力が必須", () => {
+    expect(Object.keys(manual.on)).toEqual(["workflow_dispatch"])
+    const confirm = manual.on.workflow_dispatch?.inputs?.confirm
+    expect(confirm?.required).toBe(true)
+    expect(confirm?.type).toBe("string")
+  })
+
+  it("GITHUB_TOKEN の権限を contents: read に絞る", () => {
+    expect(manual.permissions).toEqual({ contents: "read" })
+  })
+
+  it("確認の job は production 環境と secret を使わず、migrate は確認が通ってから production 環境で動く", () => {
+    expect(check.environment).toBeUndefined()
+    expect(JSON.stringify(check)).not.toContain("secrets.")
+    expect([migrate.needs ?? []].flat()).toEqual(["check"])
+    expect(migrate.environment).toBe("production")
+  })
+
+  it("ci.yml の本番 migrate と同じ concurrency group で、本番 DB への migrate を 1 本ずつにする（実行中は取り消さない）", () => {
+    expect(migrate.concurrency?.group).toBe(workflow.jobs.migrate.concurrency?.group)
+    expect(migrate.concurrency?.group).toBe("migrate-production")
+    expect(migrate.concurrency?.["cancel-in-progress"]).toBe(false)
+  })
+
+  it("ci.yml と同じく、本番の secret で毎回 db:migrate を実行する（適用済みの分は飛ばされる）", () => {
+    const step = migrate.steps.find((s) => s.run?.includes("db:migrate"))
+    expect(step?.env?.DATABASE_URL).toBe("${{ secrets.NEON_DATABASE_URL }}")
+    expect(step?.if).toBeUndefined()
+  })
+
+  it("main への push で動く ci.yml の本番 migrate は残っている", () => {
+    expect(workflow.jobs.migrate.if).toBe("github.ref == 'refs/heads/main'")
+    expect(workflow.jobs.migrate.steps.some((s) => s.run?.includes("db:migrate"))).toBe(true)
+  })
+
+  it("checkout は認証情報を残さない（後の step で git の資格情報を使わない）", () => {
+    for (const job of [check, migrate]) {
+      const checkout = job.steps.find((s) => s.uses?.startsWith("actions/checkout")) as (Step & { with?: Record<string, unknown> }) | undefined
+      expect(checkout?.with?.["persist-credentials"]).toBe(false)
+    }
+  })
+
+  it("式を run に直接埋め込まない（入力や secret は env で受け取る）", () => {
+    for (const job of [check, migrate]) {
+      for (const s of job.steps) expect(s.run ?? "").not.toContain("${{")
+    }
+  })
+
+  describe("ref と確認の入力のチェック", () => {
+    const exec = (ref: string, confirm: string) =>
+      runBash(stepNamed(check, "Check ref and confirmation")?.run ?? "", { REF: ref, CONFIRM: confirm })
+
+    it("env で ref と入力を受け取る", () => {
+      expect(stepNamed(check, "Check ref and confirmation")?.env).toEqual({
+        REF: "${{ github.ref }}",
+        CONFIRM: "${{ inputs.confirm }}",
+      })
+    })
+
+    it.each([["refs/heads/develop"], ["refs/heads/main"]])("%s で \"migrate production\" と入力すれば通る", (ref) => {
+      expect(exec(ref, "migrate production").status).toBe(0)
+    })
+
+    it.each([["refs/heads/feature/x"], ["refs/tags/v1"], ["refs/heads/develop2"]])(
+      "develop・main 以外の ref（%s）では止まる",
+      (ref) => {
+        const result = exec(ref, "migrate production")
+        expect(result.status).toBe(1)
+        expect(result.stdout).toContain("::error title=Unsupported ref::")
+      }
+    )
+
+    it.each([[""], ["migrate"], ["Migrate Production"], ["migrate production "]])(
+      "入力が \"migrate production\" と一致しない（%j）と止まる",
+      (confirm) => {
+        const result = exec("refs/heads/develop", confirm)
+        expect(result.status).toBe(1)
+        expect(result.stdout).toContain("::error title=Confirmation mismatch::")
+      }
+    )
+  })
+
+  describe("expand のマイグレーションだけかのチェック", () => {
+    const step = () => stepNamed(check, "Check migrations are expand-only")
+    const dir = "src/infrastructure/db/drizzle/migrations"
+    const gitEnv = {
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    }
+
+    /** main に base のファイルを置き、develop で changes を足した（null は削除）一時リポジトリでチェックを流す */
+    function execWith(base: Record<string, string>, changes: Record<string, string | null>) {
+      const repo = mkdtempSync(path.join(tmpdir(), "migrate-check-"))
+      const git = (...args: string[]) => {
+        const r = spawnSync("git", args, { cwd: repo, env: { ...process.env, ...gitEnv }, encoding: "utf-8" })
+        expect(r.status, r.stderr).toBe(0)
+      }
+      const write = (files: Record<string, string | null>) => {
+        for (const [name, content] of Object.entries(files)) {
+          const file = path.join(repo, dir, name)
+          if (content === null) rmSync(file)
+          else writeFileSync(file, content)
+        }
+      }
+      try {
+        git("init", "-q", "-b", "main")
+        mkdirSync(path.join(repo, dir), { recursive: true })
+        write({ "0000_init.sql": 'CREATE TABLE "items" ("id" text);', ...base })
+        git("add", "-A")
+        git("commit", "-q", "-m", "base")
+        git("checkout", "-q", "-b", "develop")
+        write(changes)
+        git("add", "-A")
+        git("commit", "-q", "--allow-empty", "-m", "change")
+        return runBash(step()?.run ?? "", { ...gitEnv, BASE_REF: "main" }, repo)
+      } finally {
+        rmSync(repo, { recursive: true, force: true })
+      }
+    }
+
+    it("main との差分を取るため、全履歴を取得してから、origin/main と比べる", () => {
+      const checkout = check.steps.find((s) => s.uses?.startsWith("actions/checkout"))
+      expect((checkout as Step & { with?: Record<string, unknown> })?.with?.["fetch-depth"]).toBe(0)
+      expect(step()?.env?.BASE_REF).toBe("origin/main")
+      expect(check.steps.indexOf(checkout!)).toBeLessThan(check.steps.indexOf(step()!))
+    })
+
+    it("main にない migration がなければ、notice を出して通る", () => {
+      const result = execWith({}, {})
+      expect(result.status, result.stderr).toBe(0)
+      expect(result.stdout).toContain("::notice title=No new migrations::")
+    })
+
+    it("O3 の migration（列・インデックスの追加と、埋めてからの SET NOT NULL）は通る", () => {
+      const o3 = readFileSync(path.resolve(__dirname, `../../${dir}/0005_sync_columns.sql`), "utf-8")
+      const result = execWith({}, { "0005_sync_columns.sql": o3 })
+      expect(result.status, result.stdout + result.stderr).toBe(0)
+      expect(result.stdout).toContain("0005_sync_columns.sql")
+    })
+
+    it.each([
+      ["列の削除", 'ALTER TABLE "items" DROP COLUMN "memo";'],
+      ["テーブルの削除", 'DROP TABLE "purchase_history" CASCADE;'],
+      ["小文字の drop table", 'drop table if exists "purchase_history";'],
+      ["列の名前の変更", 'ALTER TABLE "items" RENAME COLUMN "memo" TO "note";'],
+      ["テーブルの名前の変更", 'ALTER TABLE "items" RENAME TO "products";'],
+      ["drizzle の型の変更", 'ALTER TABLE "items" ALTER COLUMN "quantity" SET DATA TYPE integer;'],
+      ["型の変更（TYPE）", 'ALTER TABLE "items" ALTER COLUMN "quantity" TYPE integer;'],
+      ["enum 型の削除", 'DROP TYPE "public"."status";'],
+      ["制約の削除", 'ALTER TABLE "items" DROP CONSTRAINT "items_user_id_users_id_fk";'],
+      ["インデックスの削除", 'DROP INDEX IF EXISTS "items_user_updated_idx";'],
+      ["行の削除", 'DELETE FROM "items" WHERE "deleted_at" IS NOT NULL;'],
+      ["TRUNCATE", 'TRUNCATE TABLE "items";'],
+    ])("contract の変更（%s）があれば ::error で止まる", (_label, sql) => {
+      const result = execWith({}, { "0006_contract.sql": `ALTER TABLE "items" ADD COLUMN "x" text;--> statement-breakpoint\n${sql}` })
+      expect(result.status).toBe(1)
+      expect(result.stdout).toContain(`::error file=${dir}/0006_contract.sql,title=Not an expand migration::`)
+    })
+
+    it("複数の migration のうち 1 つでも contract があれば止まる", () => {
+      const result = execWith({}, {
+        "0006_a.sql": 'ALTER TABLE "items" ADD COLUMN "x" text;',
+        "0007_b.sql": 'ALTER TABLE "items" DROP COLUMN "y";',
+      })
+      expect(result.status).toBe(1)
+      expect(result.stdout).toContain("0007_b.sql,title=Not an expand migration")
+      expect(result.stdout).not.toContain("0006_a.sql,title=")
+    })
+
+    it("コメントの中の DROP や、名前に rename を含む列は止めない", () => {
+      const result = execWith({}, {
+        "0006_expand.sql": [
+          '-- 古い列は DROP COLUMN せず残す（contract は後のリリースで）',
+          '  -- DROP TABLE "x" はしない',
+          'ALTER TABLE "items" ADD COLUMN IF NOT EXISTS "renamed_at" timestamp;',
+          'ALTER TABLE "items" ALTER COLUMN "memo" DROP NOT NULL;',
+          'ALTER TABLE "items" ALTER COLUMN "memo" DROP DEFAULT;',
+        ].join("\n"),
+      })
+      expect(result.status, result.stdout).toBe(0)
+    })
+
+    it("main に既にある migration（適用済み）の DROP は対象にしない", () => {
+      const result = execWith({ "0002_drop.sql": 'DROP TABLE "purchase_history" CASCADE;' }, { "0003_add.sql": 'ALTER TABLE "items" ADD COLUMN "x" text;' })
+      expect(result.status, result.stdout).toBe(0)
+    })
+
+    it("develop で消した migration は対象にしない", () => {
+      const result = execWith({ "0002_drop.sql": 'DROP TABLE "purchase_history" CASCADE;' }, { "0002_drop.sql": null })
+      expect(result.status, result.stdout).toBe(0)
+    })
+  })
+
+  describe("secret のチェック", () => {
+    const run = () => stepNamed(migrate, "Check NEON_DATABASE_URL")?.run ?? ""
+
+    it("migrate の前に、secret が空なら明確なメッセージで止まり、設定されていれば通る", () => {
+      const index = migrate.steps.findIndex((s) => s.name === "Check NEON_DATABASE_URL")
+      expect(index).toBeGreaterThanOrEqual(0)
+      expect(index).toBeLessThan(migrate.steps.findIndex((s) => s.run?.includes("db:migrate")))
+      const missing = runBash(run(), { DATABASE_URL: "" })
+      expect(missing.status).toBe(1)
+      expect(missing.stdout).toContain("::error title=NEON_DATABASE_URL is not set::")
+      expect(runBash(run(), { DATABASE_URL: "postgresql://u:p@host/db" }).status).toBe(0)
+    })
+  })
+
+  it("設計書とチームのルールに、main への PR をマージする前に流す手順が書かれている", () => {
+    for (const doc of ["../../docs/features/offline-support.md", "../../.claude/rules/team-operation.md"]) {
+      const text = readFileSync(path.resolve(__dirname, doc), "utf-8")
+      expect(text).toContain("gh workflow run migrate-production.yml --ref develop")
+      // 守りにしている environment の設定と、残る危険（リポジトリの secret）を書いている
+      expect(text).toContain("Deployment branches を `main` と `develop` に絞る")
+      expect(text).toContain("Required reviewers は付けない")
+      expect(text).toContain("#139 のガードを本番の URL のハッシュとの比較などに変えてから消す")
+    }
   })
 })
