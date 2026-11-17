@@ -1,43 +1,40 @@
 "use client"
 
 import { useLiveQuery } from "dexie-react-hooks"
-import { db, type Tag } from "@/lib/db"
+import type { Tag } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
-import { useDataSource } from "./useDataSource"
+import { useCatalogSource } from "./useCatalogSource"
+import { queryTags } from "./catalogQueries"
 
 interface UseTagsOptions {
   groupId?: string
 }
 
 /**
- * タグ一覧を取得するフック
- * グループ選択時: サーバーから取得
- * 個人モード: ローカルDBから取得
+ * タグ一覧を取得するフック（#62 O7）
+ * - ゲスト: ゲスト DB から（今のまま並べ替えない）
+ * - ログイン中・フラグ false: サーバー（tRPC）から
+ * - ログイン中・フラグ true: ユーザー DB から（名前の文字コードの順。初回の同期が終わるまでは読み込み中）
  *
  * 返り値は常にTag型（groupId?: string）に正規化される
  */
 export function useTags(options: UseTagsOptions = {}) {
   const { groupId } = options
-  const { useServer, isAuthLoading, selectedGroupId } = useDataSource()
+  const { mode, store, awaitingFirstSync, isAuthLoading, selectedGroupId } = useCatalogSource()
+  const useServer = mode === "server"
 
   // 実際に使用するgroupId
   // 明示的にgroupIdが渡された場合（undefinedでも）はそれを使用
   // 渡されていない場合はコンテキストのselectedGroupIdを使用
   const effectiveGroupId = "groupId" in options ? groupId : selectedGroupId
 
-  // ローカル（Dexie）クエリ
+  // 端末の DB（ゲスト DB・ユーザー DB）のクエリ
   const localTags = useLiveQuery(
     async () => {
-      if (useServer) return undefined
-
-      // 選択されたグループのタグのみ取得
-      const filtered = await db.tags.filter((tag) => {
-        return tag.groupId === effectiveGroupId
-      }).toArray()
-
-      return filtered
+      if (!store) return undefined
+      return queryTags(store.db, { groupId: effectiveGroupId, order: mode === "local" ? "server" : "guest" })
     },
-    [useServer, effectiveGroupId]
+    [store, mode, effectiveGroupId]
   )
 
   // サーバー（tRPC）クエリ
@@ -70,7 +67,7 @@ export function useTags(options: UseTagsOptions = {}) {
 
   return {
     tags: localTags ?? [],
-    isLoading: localTags === undefined || isAuthLoading,
+    isLoading: localTags === undefined || awaitingFirstSync || isAuthLoading,
     error: null,
     refetch: async () => {},
   }

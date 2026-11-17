@@ -4,6 +4,7 @@ import { useCallback } from "react"
 import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useDataSource } from "./useDataSource"
+import { useCatalogSource } from "./useCatalogSource"
 
 /**
  * 購入履歴の操作フック
@@ -15,19 +16,21 @@ import { useDataSource } from "./useDataSource"
 export function useHistoryMutations() {
   const { useServer } = useDataSource()
   const utils = trpc.useUtils()
+  // カタログの一覧を追いつかせる（フラグ false: キャッシュを無効に / フラグ true: すぐに同期。#62 O7）
+  const { refreshCatalog } = useCatalogSource()
 
   // サーバー側ミューテーション
   const revertMutation = trpc.shopping.revertHistory.useMutation({
     onSuccess: () => {
       utils.shopping.getHistory.invalidate()
       utils.shopping.getLists.invalidate()
-      utils.catalog.getItems.invalidate()
+      refreshCatalog()
     },
   })
   const deleteMutation = trpc.shopping.deleteHistory.useMutation({
     onSuccess: () => {
       utils.shopping.getHistory.invalidate()
-      utils.catalog.getItems.invalidate()
+      refreshCatalog()
     },
   })
 

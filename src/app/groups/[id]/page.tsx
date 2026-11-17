@@ -45,7 +45,7 @@ export default function GroupDetailPage() {
   const [isProcessing, setIsProcessing] = useState(false)
 
   // サーバーからグループとメンバーを取得
-  const { group, members, isLoading: isGroupLoading, refetch: refetchGroup } = useGroup({ groupId })
+  const { group, members, isLoading: isGroupLoading, refetch: refetchGroup, syncGroups } = useGroup({ groupId })
 
   const isLoading = isGroupLoading
   // メンバー情報からオーナーかどうかを判定
@@ -160,6 +160,7 @@ export default function GroupDetailPage() {
     setIsProcessing(true)
     try {
       await deleteGroupMutation.mutateAsync({ id: groupId })
+      syncGroups()
       router.push("/groups")
     } catch (error) {
       console.error("Failed to delete group:", error)
@@ -173,6 +174,7 @@ export default function GroupDetailPage() {
     try {
       // 自分自身を削除 = グループ退出
       await removeMemberMutation.mutateAsync({ groupId, userId: user.id })
+      syncGroups()
       router.push("/groups")
     } catch (error) {
       console.error("Failed to leave group:", error)

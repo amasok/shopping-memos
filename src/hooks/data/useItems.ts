@@ -1,9 +1,10 @@
 "use client"
 
 import { useLiveQuery } from "dexie-react-hooks"
-import { db, type ShoppingItem } from "@/lib/db"
+import type { ShoppingItem } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
-import { useDataSource } from "./useDataSource"
+import { useCatalogSource } from "./useCatalogSource"
+import { queryItems } from "./catalogQueries"
 
 interface UseItemsOptions {
   groupId?: string
@@ -13,58 +14,39 @@ interface UseItemsOptions {
 }
 
 /**
- * アイテム一覧を取得するフック
- * グループ選択時: サーバーから取得
- * 個人モード: ローカルDBから取得
+ * アイテム一覧を取得するフック（#62 O7）
+ * - ゲスト: ゲスト DB から（今の並び）
+ * - ログイン中・フラグ false: サーバー（tRPC）から
+ * - ログイン中・フラグ true: ユーザー DB から（サーバーと同じ並び。初回の同期が終わるまでは読み込み中）
  *
  * 返り値は常にShoppingItem型（tagIds配列を持つ）に正規化される
  */
 export function useItems(options: UseItemsOptions = {}) {
   const { groupId, tagIds, includePurchased = false, purchasedOnly = false } = options
-  const { useServer, isAuthLoading, selectedGroupId } = useDataSource()
+  const source = useCatalogSource()
+  const { mode, store, awaitingFirstSync, isAuthLoading, selectedGroupId } = source
+  const useServer = mode === "server"
 
   // 実際に使用するgroupId
   // 明示的にgroupIdが渡された場合（undefinedでも）はそれを使用
   // 渡されていない場合はコンテキストのselectedGroupIdを使用
   const effectiveGroupId = "groupId" in options ? groupId : selectedGroupId
+  const tagKey = tagIds?.join(",") ?? ""
 
-  // ローカル（Dexie）クエリ
+  // 端末の DB（ゲスト DB・ユーザー DB）のクエリ
   const localItems = useLiveQuery(
     async () => {
-      if (useServer) return undefined // サーバー使用時は実行しない
-
-      // 進行中のリストに含まれるアイテム名を取得（除外用）
-      const activeLists = await db.lists
-        .filter((list) => list.status === "in_progress" && list.groupId === effectiveGroupId)
-        .toArray()
-      const activeListIds = activeLists.map((list) => list.id)
-
-      const activeListItems = await db.listItems
-        .filter((item) => activeListIds.includes(item.listId))
-        .toArray()
-      const namesInActiveLists = new Set(activeListItems.map((item) => item.name))
-
-      const query = db.items.orderBy("createdAt").reverse()
-
-      const filtered = await query.filter((item) => {
-        // グループフィルタ
-        if (item.groupId !== effectiveGroupId) return false
-        // 購入済みのみフィルタ
-        if (purchasedOnly && !item.purchasedAt) return false
-        // 購入済み除外フィルタ
-        if (!includePurchased && !purchasedOnly && item.purchasedAt) return false
-        // タグフィルタ
-        if (tagIds && tagIds.length > 0) {
-          if (!tagIds.some((tagId) => item.tagIds.includes(tagId))) return false
-        }
-        // 進行中リストに含まれるアイテムを除外
-        if (namesInActiveLists.has(item.name)) return false
-        return true
-      }).toArray()
-
-      return filtered
+      if (!store) return undefined
+      return queryItems(store.db, {
+        groupId: effectiveGroupId,
+        tagIds,
+        includePurchased,
+        purchasedOnly,
+        order: mode === "local" ? "server" : "guest",
+      })
     },
-    [useServer, effectiveGroupId, tagIds, includePurchased, purchasedOnly]
+    // tagIds は内容（tagKey）で比べる（配列は描画ごとに別のものになるため）
+    [store, mode, effectiveGroupId, tagKey, includePurchased, purchasedOnly]
   )
 
   // サーバー（tRPC）クエリ
@@ -113,7 +95,7 @@ export function useItems(options: UseItemsOptions = {}) {
 
   return {
     items: localItems ?? [],
-    isLoading: localItems === undefined || isAuthLoading,
+    isLoading: localItems === undefined || awaitingFirstSync || isAuthLoading,
     error: null,
     refetch: async () => {}, // Dexieはリアクティブなのでrefetch不要
   }

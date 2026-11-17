@@ -24,9 +24,22 @@ import { TABLE_OF, applyServerChanges, removeGroupData } from "./applyServerRows
  * - drain モード（NEXT_PUBLIC_LOCAL_FIRST=false）: push だけ（未送信のキューを送り切る）。pull はしない
  */
 
+/** 所属グループのキャッシュの行（identity.getGroups の結果。#62 O7） */
+export interface GroupCacheRow {
+  id: string
+  name: string
+  inviteCode?: string | null
+  inviteEnabled?: boolean | null
+  createdAt: Date | string
+  updatedAt: Date | string
+  memberCount?: number | null
+}
+
 export interface SyncTransport {
   push(input: SyncPushInput): Promise<SyncPushOutput>
   pull(input: SyncPullInput): Promise<SyncPullOutput>
+  /** 所属グループの一覧（full モードの pull の後に groups のキャッシュを上書きする。#62 O7） */
+  getGroups?(): Promise<GroupCacheRow[]>
 }
 
 export type SyncMode = "full" | "drain"
@@ -372,9 +385,43 @@ export class SyncEngine {
       cursor = page.nextCursor
       if (!page.hasMore) break
     }
+    await this.refreshGroupCache()
     const now = this.clock.now()
     await setMeta(db, "lastSyncAt", now.toISOString())
     this.setState({ lastSyncAt: now })
+  }
+
+  /**
+   * 所属グループの一覧で groups のキャッシュを上書きする（openspec の sync「所属グループのキャッシュ」）
+   * 取得に失敗しても同期は失敗にせず、前のキャッシュを残す。getGroups は ownerId を返さないので空にする（表示だけに使う）
+   */
+  private async refreshGroupCache(): Promise<void> {
+    const { db, transport } = this.options
+    if (!transport.getGroups) return
+    let rows: GroupCacheRow[]
+    try {
+      rows = await transport.getGroups()
+    } catch (error) {
+      console.warn("Group cache refresh failed:", error)
+      return
+    }
+    const ids = new Set(rows.map((r) => r.id))
+    await db.transaction("rw", db.groups, async () => {
+      const stale = (await db.groups.toCollection().primaryKeys()).filter((id) => !ids.has(id))
+      await db.groups.bulkDelete(stale)
+      await db.groups.bulkPut(
+        rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          ownerId: "",
+          inviteCode: r.inviteCode ?? undefined,
+          inviteEnabled: r.inviteEnabled ?? undefined,
+          createdAt: new Date(r.createdAt),
+          updatedAt: new Date(r.updatedAt),
+          memberCount: r.memberCount ?? 0,
+        }))
+      )
+    })
   }
 
   // ---- 補助 ----
