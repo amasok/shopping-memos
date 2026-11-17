@@ -3,6 +3,8 @@ import { TEXT_LIMITS } from "./limits"
 
 // タグ作成
 export const createTagSchema = z.object({
+  // クライアントで採番した ID（#62 O3b）。省略するとサーバーで採番する。使用済みなら CONFLICT
+  id: z.string().uuid().optional(),
   name: z.string().min(1, "名前は必須です").max(TEXT_LIMITS.tagName, `名前は${TEXT_LIMITS.tagName}文字以内です`),
   groupId: z.string().uuid().optional(),
 })

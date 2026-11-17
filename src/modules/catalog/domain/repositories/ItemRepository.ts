@@ -28,22 +28,22 @@ export interface ItemRepository {
   /**
    * アイテムを更新
    */
-  update(input: UpdateItemInput): Promise<Item>
+  update(input: UpdateItemInput, actorUserId: string): Promise<Item>
 
   /**
    * アイテムを削除
    */
-  delete(id: string): Promise<void>
+  delete(id: string, actorUserId: string): Promise<void>
 
   /**
    * アイテムを購入済みにする
    */
-  markAsPurchased(id: string): Promise<Item>
+  markAsPurchased(id: string, actorUserId: string): Promise<Item>
 
   /**
    * アイテムを未購入に戻す
    */
-  markAsUnpurchased(id: string): Promise<Item>
+  markAsUnpurchased(id: string, actorUserId: string): Promise<Item>
 
   /**
    * ユーザーがアイテムにアクセスできるか確認

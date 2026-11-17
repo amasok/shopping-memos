@@ -45,15 +45,17 @@ describe("カタログアイテムのスコープ付き更新・削除 (#64)", (
       expect(q.params).toEqual(["牛乳", "user-A"])
     })
 
-    it("削除は名前とgroupIdなし・作成者の条件で絞る（他ユーザーの同名は対象外）", async () => {
+    it("削除は名前とgroupIdなし・作成者の条件で絞った論理削除になる（他ユーザーの同名は対象外）", async () => {
       const { db, queries } = createFakeDb({ itemIdsByName: { 牛乳: ["mine-1"] } })
 
       const ids = await deleteScopedItemsByName(db as unknown as DbExecutor, personal, "牛乳")
 
       expect(ids).toEqual(["mine-1"])
       const [q] = itemQueries(queries)
-      expect(q.kind).toBe("delete")
+      expect(q.kind).toBe("update")
+      expect(q.set).toHaveProperty("deletedAt")
       expect(q.sql).toContain('"items"."group_id" is null')
+      expect(q.sql).toContain('"items"."deleted_at" is null')
       expect(q.sql).toContain('"items"."user_id" = $2')
       expect(q.params).toEqual(["牛乳", "user-A"])
     })
@@ -74,7 +76,8 @@ describe("カタログアイテムのスコープ付き更新・削除 (#64)", (
         expect(q.sql).toContain('"items"."name" = $1')
         expect(q.sql).toContain('"items"."group_id" = $2')
         expect(q.sql).not.toContain("user_id")
-        expect(q.sql).not.toContain("is null")
+        expect(q.sql).not.toContain('"items"."group_id" is null')
+        expect(q.sql).toContain('"items"."deleted_at" is null')
         expect(q.params).toEqual(["牛乳", "group-1"])
       }
     })

@@ -3,6 +3,8 @@ import { TEXT_LIMITS, quantitySchema, tagIdsSchema } from "./limits"
 
 // アイテム作成
 export const createItemSchema = z.object({
+  // クライアントで採番した ID（#62 O3b）。省略するとサーバーで採番する。使用済みなら CONFLICT
+  id: z.string().uuid().optional(),
   name: z.string().min(1, "名前は必須です").max(TEXT_LIMITS.itemName, `名前は${TEXT_LIMITS.itemName}文字以内です`),
   quantity: quantitySchema.default(1),
   memo: z.string().max(TEXT_LIMITS.memo, `メモは${TEXT_LIMITS.memo}文字以内です`).optional(),

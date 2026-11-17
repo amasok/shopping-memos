@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest"
 import type { SQL } from "drizzle-orm"
 import { PgDialect } from "drizzle-orm/pg-core"
 import { items, shoppingLists, tags } from "@/infrastructure/db/drizzle/schema"
-import { canAccessScope, isSameScope, scopeCondition, type DbExecutor } from "../ownership"
+import { accessibleByUser, canAccessScope, isSameScope, scopeCondition, type DbExecutor } from "../ownership"
 
 const dialect = new PgDialect()
 const render = (where: SQL) => dialect.sqlToQuery(where)
@@ -95,5 +95,15 @@ describe("canAccessScope (#101)", () => {
 
     const outsider = executorReturning([])
     expect(await canAccessScope(outsider.executor, { userId: "u1", groupId: "g1" }, "u1")).toBe(false)
+  })
+})
+
+describe("accessibleByUser（#73-1）", () => {
+  it("自分の個人データか、所属しているグループのデータに限る", () => {
+    const q = render(accessibleByUser(items, "user-1"))
+    expect(q.sql).toBe(
+      '(("items"."group_id" is null and "items"."user_id" = $1) or "items"."group_id" IN (SELECT "group_members"."group_id" FROM "group_members" WHERE "group_members"."user_id" = $2))'
+    )
+    expect(q.params).toEqual(["user-1", "user-1"])
   })
 })

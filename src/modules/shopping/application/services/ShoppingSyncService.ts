@@ -1,3 +1,5 @@
+import { db } from "@/infrastructure/db/drizzle/client"
+import type { DbExecutor } from "@/infrastructure/db/ownership"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
 import type {
@@ -42,7 +44,7 @@ export class ShoppingSyncService {
   }
 
   async updateList(input: UpdateShoppingListInput, userId: string): Promise<ShoppingList> {
-    const list = await this.shoppingListRepository.update(input)
+    const list = await this.shoppingListRepository.update(input, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -58,7 +60,7 @@ export class ShoppingSyncService {
   }
 
   async deleteList(id: string, userId: string): Promise<void> {
-    await this.shoppingListRepository.delete(id)
+    await this.shoppingListRepository.delete(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -103,7 +105,7 @@ export class ShoppingSyncService {
   }
 
   async updateItem(input: UpdateListItemInput, userId: string): Promise<ListItem> {
-    const item = await this.shoppingListRepository.updateItem(input)
+    const item = await this.shoppingListRepository.updateItem(input, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -119,7 +121,7 @@ export class ShoppingSyncService {
   }
 
   async removeItem(id: string, userId: string): Promise<void> {
-    await this.shoppingListRepository.removeItem(id)
+    await this.shoppingListRepository.removeItem(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -155,9 +157,22 @@ export class ShoppingSyncService {
     return null
   }
 
-  async deleteHistory(id: string, userId: string): Promise<void> {
-    // 履歴削除 = リスト削除（cascade でlist_itemsも削除される）
-    await this.shoppingListRepository.delete(id)
+  /**
+   * 履歴を削除する（リスト削除。list_items もまとめて論理削除される）
+   * @param deleteCatalogItems 同じトランザクションで行う、カタログのアイテムの削除（削除したアイテムの ID を返す）。
+   *   リストの削除が失敗したら、カタログのアイテムの削除も戻す
+   * @returns deleteCatalogItems が削除したカタログのアイテムの ID
+   */
+  async deleteHistory(
+    id: string,
+    userId: string,
+    deleteCatalogItems?: (executor: DbExecutor) => Promise<string[]>
+  ): Promise<string[]> {
+    const deletedCatalogItemIds = await db.transaction(async (tx) => {
+      const ids = deleteCatalogItems ? await deleteCatalogItems(tx) : []
+      await this.shoppingListRepository.delete(id, userId, tx)
+      return ids
+    })
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -168,11 +183,13 @@ export class ShoppingSyncService {
       operation: "delete",
       payload: { id },
     })
+
+    return deletedCatalogItemIds
   }
 
   async revertHistory(id: string, userId: string): Promise<ShoppingList> {
     // リストを未購入に戻す
-    const list = await this.shoppingListRepository.markAsUnpurchased(id)
+    const list = await this.shoppingListRepository.markAsUnpurchased(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({

@@ -1,7 +1,15 @@
-import { eq, and, sql, isNull } from "drizzle-orm"
+import { eq, and, sql, isNull, inArray } from "drizzle-orm"
+import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
 import { db } from "@/infrastructure/db/drizzle/client"
-import { canAccessScope } from "@/infrastructure/db/ownership"
-import { tags, itemTags } from "@/infrastructure/db/drizzle/schema"
+import { accessibleByUser, canAccessScope } from "@/infrastructure/db/ownership"
+import { RowNotFoundError, rethrowDuplicateId } from "@/infrastructure/db/errors"
+import {
+  createdFieldTimes,
+  notDeleted,
+  softDeleteValues,
+  touchFields,
+} from "@/infrastructure/db/syncColumns"
+import { items, tags, itemTags } from "@/infrastructure/db/drizzle/schema"
 import type { TagRepository } from "../../domain/repositories/TagRepository"
 import type {
   Tag,
@@ -11,13 +19,19 @@ import type {
   TagWithUsageCount,
 } from "../../domain/entities/Tag"
 
+/** 更新・削除の対象: 論理削除されておらず、操作したユーザーが使えるタグ（#73-1） */
+function writableTag(id: string, actorUserId: string) {
+  return and(eq(tags.id, id), notDeleted(tags), accessibleByUser(tags, actorUserId))
+}
+
 /**
  * Drizzleを使用したタグリポジトリ実装
+ *
+ * 削除は論理削除（deleted_at）。取得系は削除済みを返さない（#62 O3b）
  */
 export class DrizzleTagRepository implements TagRepository {
   async create(input: CreateTagInput): Promise<Tag> {
-    const now = new Date()
-
+    // created_at / updated_at は DB の既定値（now()）にする
     const [tag] = await db
       .insert(tags)
       .values({
@@ -25,23 +39,26 @@ export class DrizzleTagRepository implements TagRepository {
         name: input.name,
         userId: input.userId,
         groupId: input.groupId ?? null,
-        createdAt: now,
-        updatedAt: now,
+        fieldModifiedAt: createdFieldTimes(["name"]),
       })
       .returning()
+      .catch((error: unknown) => rethrowDuplicateId(error, "tags", "タグ"))
 
     return tag
   }
 
   async findById(id: string): Promise<Tag | null> {
-    const result = await db.select().from(tags).where(eq(tags.id, id))
+    const result = await db
+      .select()
+      .from(tags)
+      .where(and(eq(tags.id, id), notDeleted(tags)))
 
     return result[0] ?? null
   }
 
   async findMany(query: GetTagsQuery): Promise<TagWithUsageCount[]> {
-    // 基本のクエリ条件を構築
-    const conditions = []
+    // 基本のクエリ条件を構築（論理削除済みは返さない）
+    const conditions = [notDeleted(tags)]
 
     // グループフィルタ
     // groupId が指定されている場合はグループタグ
@@ -64,13 +81,14 @@ export class DrizzleTagRepository implements TagRepository {
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(tags.name)
 
-    // 各タグの使用数を取得
+    // 各タグの使用数を取得（論理削除済みのアイテムは数えない）
     const result: TagWithUsageCount[] = []
     for (const tag of tagsResult) {
       const usageCountResult = await db
         .select({ count: sql<number>`count(*)` })
         .from(itemTags)
-        .where(eq(itemTags.tagId, tag.id))
+        .innerJoin(items, eq(itemTags.itemId, items.id))
+        .where(and(eq(itemTags.tagId, tag.id), notDeleted(items)))
 
       result.push({
         ...tag,
@@ -81,9 +99,9 @@ export class DrizzleTagRepository implements TagRepository {
     return result
   }
 
-  async update(input: UpdateTagInput): Promise<Tag> {
-    const updateData: Partial<typeof tags.$inferInsert> = {
-      updatedAt: new Date(),
+  async update(input: UpdateTagInput, actorUserId: string): Promise<Tag> {
+    const updateData: PgUpdateSetSource<typeof tags> = {
+      ...touchFields(tags, input.name !== undefined ? ["name"] : []),
     }
 
     if (input.name !== undefined) {
@@ -93,15 +111,38 @@ export class DrizzleTagRepository implements TagRepository {
     const [updated] = await db
       .update(tags)
       .set(updateData)
-      .where(eq(tags.id, input.id))
+      .where(writableTag(input.id, actorUserId))
       .returning()
+    if (!updated) {
+      throw new RowNotFoundError("タグ")
+    }
 
     return updated
   }
 
-  async delete(id: string): Promise<void> {
-    // itemTagsはonDelete: cascadeなので自動削除
-    await db.delete(tags).where(eq(tags.id, id))
+  async delete(id: string, actorUserId: string): Promise<void> {
+    // 論理削除。タグの関連は消し、関連を外したアイテムの updated_at / tagIds のキーを更新する
+    // （中間テーブルの削除は pull で伝わらないので、アイテムの変更として伝える）
+    await db.transaction(async (tx) => {
+      const deleted = await tx
+        .update(tags)
+        .set(softDeleteValues())
+        .where(writableTag(id, actorUserId))
+        .returning({ id: tags.id })
+      if (deleted.length === 0) {
+        throw new RowNotFoundError("タグ")
+      }
+      const unlinked = await tx
+        .delete(itemTags)
+        .where(eq(itemTags.tagId, id))
+        .returning({ itemId: itemTags.itemId })
+      if (unlinked.length > 0) {
+        await tx
+          .update(items)
+          .set(touchFields(items, ["tagIds"]))
+          .where(inArray(items.id, unlinked.map((row) => row.itemId)))
+      }
+    })
   }
 
   async canAccess(tagId: string, userId: string): Promise<boolean> {

@@ -4,6 +4,8 @@ import {
   checkItemSchema,
   finishShoppingSchema,
   listStatusSchema,
+  addItemToListSchema,
+  addNewItemToListSchema,
 } from "../list"
 
 describe("createListSchema", () => {
@@ -132,5 +134,22 @@ describe("listStatusSchema", () => {
     const result = listStatusSchema.safeParse("cancelled")
 
     expect(result.success).toBe(false)
+  })
+})
+
+describe("作成時のクライアント ID（#62 O3b）", () => {
+  const id = "550e8400-e29b-41d4-a716-446655440009"
+  const listId = "550e8400-e29b-41d4-a716-446655440001"
+
+  it("createListSchema は uuid の id を受け付け、uuid でない id はバリデーションエラーにする", () => {
+    expect(createListSchema.parse({ name: "週末", id }).id).toBe(id)
+    expect(createListSchema.safeParse({ name: "週末", id: "x" }).success).toBe(false)
+  })
+
+  it("addItemToListSchema / addNewItemToListSchema はリストのアイテムの id を受け付ける", () => {
+    const itemId = "550e8400-e29b-41d4-a716-446655440002"
+    expect(addItemToListSchema.parse({ id, listId, itemId }).id).toBe(id)
+    expect(addNewItemToListSchema.parse({ id, listId, name: "卵" }).id).toBe(id)
+    expect(addNewItemToListSchema.safeParse({ id: "x", listId, name: "卵" }).success).toBe(false)
   })
 })

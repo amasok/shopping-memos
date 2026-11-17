@@ -87,3 +87,11 @@ describe("deleteTagSchema", () => {
     expect(result.success).toBe(false)
   })
 })
+
+describe("createTagSchema のクライアント ID（#62 O3b）", () => {
+  it("uuid の id を受け付け、uuid でない id はバリデーションエラーにする", () => {
+    const id = "550e8400-e29b-41d4-a716-446655440009"
+    expect(createTagSchema.parse({ name: "食品", id }).id).toBe(id)
+    expect(createTagSchema.safeParse({ name: "食品", id: "x" }).success).toBe(false)
+  })
+})

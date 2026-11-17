@@ -16,9 +16,13 @@ const scope = vi.hoisted(() => ({
   getListScope: vi.fn(), markScopedItemsUnpurchasedByName: vi.fn(), deleteScopedItemsByName: vi.fn(),
 }))
 const areTagsInScope = vi.hoisted(() => vi.fn())
+// リストのアイテムの ID が使用済みかの確認（addNewItemToList）で返す行
+const existingListItems = vi.hoisted(() => ({ rows: [] as { id: string }[] }))
 
 vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
-vi.mock("@/infrastructure/db/drizzle/client", () => ({ db: {} }))
+vi.mock("@/infrastructure/db/drizzle/client", () => ({
+  db: { select: () => ({ from: () => ({ where: () => Promise.resolve(existingListItems.rows) }) }) },
+}))
 vi.mock("@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository", () => ({ shoppingListRepository: {} }))
 vi.mock("@/modules/catalog/infrastructure/repositories/DrizzleItemRepository", () => ({ itemRepository: itemRepo }))
 vi.mock("@/modules/catalog/infrastructure/repositories/DrizzleTagRepository", () => ({ tagRepository: {} }))
@@ -67,6 +71,7 @@ const catalogItem = (over = {}) => ({
 
 beforeEach(() => {
   vi.resetAllMocks()
+  existingListItems.rows = []
   sync.canAccessList.mockResolvedValue(true)
   sync.canAccessItem.mockResolvedValue(true)
   sync.canAccessHistory.mockResolvedValue(true)
@@ -161,6 +166,13 @@ describe("shopping.createList", () => {
     expect(itemRepo.findMany).toHaveBeenCalledWith({ tagIds: [TAG], groupId: GID, userId: "user-1", includePurchased: false })
     expect(sync.addItem).toHaveBeenCalledTimes(2)
     expect(sync.addItem).toHaveBeenCalledWith(expect.objectContaining({ groupId: GID }), "user-1")
+  })
+
+  it("クライアントで採番した id があれば、その id でリストを作る（#62 O3b）", async () => {
+    sync.getList.mockResolvedValue({ id: ID2, items: [] })
+    await caller().createList({ name: "x", id: ID2 })
+    expect(sync.createList).toHaveBeenCalledWith(expect.objectContaining({ id: ID2 }), "user-1")
+    expect(sync.getList).toHaveBeenCalledWith(ID2)
   })
 
   it("アイテムの指定がなければ空のリストを作って返す", async () => {
@@ -268,6 +280,21 @@ describe("shopping.addNewItemToList", () => {
     await caller().addNewItemToList({ ...input, tagIds: [TAG] })
     expect(areTagsInScope).toHaveBeenCalledWith([TAG], { userId: "user-1", groupId: GID })
     expect(catalog.createItem).toHaveBeenCalledWith(expect.objectContaining({ groupId: GID }), "user-1")
+  })
+
+  it("使用済みのリストのアイテムの id は CONFLICT で、カタログのアイテムも作らない（#62 O3b）", async () => {
+    sync.getList.mockResolvedValue(list)
+    existingListItems.rows = [{ id: ID2 }]
+    await expect(caller().addNewItemToList({ ...input, id: ID2 })).rejects.toMatchObject({ code: "CONFLICT" })
+    expect(catalog.createItem).not.toHaveBeenCalled()
+    expect(sync.addItem).not.toHaveBeenCalled()
+  })
+
+  it("未使用のリストのアイテムの id なら、その id でリストのアイテムを作る（#62 O3b）", async () => {
+    sync.getList.mockResolvedValue(list)
+    sync.addItem.mockResolvedValue({ id: ID2 })
+    await caller().addNewItemToList({ ...input, id: ID2 })
+    expect(sync.addItem).toHaveBeenCalledWith(expect.objectContaining({ id: ID2 }), "user-1")
   })
 
   it("カタログとリストの両方にアイテムを作る（数量の既定は 1）", async () => {
@@ -419,20 +446,32 @@ describe("shopping の履歴", () => {
       await expect(caller().deleteHistory({ id: ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
     })
 
+    // 履歴の削除は、カタログのアイテムの削除をコールバックで受け取り、同じトランザクションで行う（#62 O3b）
+    const runDeleteCallback = () =>
+      sync.deleteHistory.mockImplementation(
+        async (_id: string, _userId: string, deleteCatalogItems: (tx: unknown) => Promise<string[]>) =>
+          deleteCatalogItems("tx")
+      )
+
     it("対応するカタログアイテムを消し、delete の同期ログを残して履歴を削除する", async () => {
       sync.getHistoryById.mockResolvedValue({ items: [{ name: "牛乳" }] })
       scope.getListScope.mockResolvedValue({ userId: "user-1", groupId: null })
       scope.deleteScopedItemsByName.mockResolvedValue(["c1"])
+      runDeleteCallback()
       expect(await caller().deleteHistory({ id: ID })).toEqual({ success: true })
       expect(syncRepo.createOperation).toHaveBeenCalledWith(
         expect.objectContaining({ entityId: "c1", operation: "delete", payload: { id: "c1" } })
       )
-      expect(sync.deleteHistory).toHaveBeenCalledWith(ID, "user-1")
+      expect(sync.deleteHistory).toHaveBeenCalledWith(ID, "user-1", expect.any(Function))
+      // カタログのアイテムの削除は、履歴の削除のトランザクションの中で行う
+      expect(scope.getListScope).toHaveBeenCalledWith("tx", ID)
+      expect(scope.deleteScopedItemsByName).toHaveBeenCalledWith("tx", { userId: "user-1", groupId: null }, "牛乳")
     })
 
     it("スコープが分からなければカタログは消さず履歴だけ削除する", async () => {
       sync.getHistoryById.mockResolvedValue({ items: [{ name: "牛乳" }] })
       scope.getListScope.mockResolvedValue(null)
+      runDeleteCallback()
       await caller().deleteHistory({ id: ID })
       expect(scope.deleteScopedItemsByName).not.toHaveBeenCalled()
       expect(sync.deleteHistory).toHaveBeenCalled()

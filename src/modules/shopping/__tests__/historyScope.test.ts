@@ -26,7 +26,15 @@ vi.mock("@/modules/shopping/application/services/ShoppingSyncService", () => ({
     canAccessHistory = async () => state.canAccess
     getHistoryById = async () => state.history
     revertHistory = state.revertHistory
-    deleteHistory = state.deleteHistory
+    // カタログのアイテムの削除（コールバック）を、記録用の DB で実行する（#62 O3b）
+    deleteHistory = async (
+      id: string,
+      userId: string,
+      deleteCatalogItems?: (tx: unknown) => Promise<string[]>
+    ) => {
+      await state.deleteHistory(id, userId)
+      return deleteCatalogItems ? deleteCatalogItems(state.fake.db) : []
+    }
   },
 }))
 
@@ -114,7 +122,8 @@ describe("履歴の差し戻し・削除のカタログアイテム更新範囲 
       const qs = itemQueries()
       expect(qs).toHaveLength(2)
       for (const q of qs) {
-        expect(q.kind).toBe("delete")
+        // カタログアイテムの削除は論理削除（#62 O3b）
+        expect(q.kind).toBe("update")
         expect(q.sql).toContain('"items"."group_id" is null')
         expect(q.params[1]).toBe("user-A")
       }

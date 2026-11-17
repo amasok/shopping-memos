@@ -1,5 +1,5 @@
 import { initTRPC, TRPCError } from "@trpc/server"
-import { formatErrorShape } from "./error-format"
+import { formatErrorShape, toClientError } from "./error-format"
 import superjson from "superjson"
 import { auth } from "@/infrastructure/auth"
 
@@ -71,12 +71,18 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
     })
   }
 
-  return next({
+  const result = await next({
     ctx: {
       ...ctx,
       userId: ctx.userId, // 型を確定させる
     },
   })
+  // リポジトリのエラー（対象なし・ID の重複）を NOT_FOUND / CONFLICT にする（#62 O3b）
+  if (!result.ok) {
+    const clientError = toClientError(result.error)
+    if (clientError) throw clientError
+  }
+  return result
 })
 
 /**

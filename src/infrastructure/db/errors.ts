@@ -28,6 +28,36 @@ export function isUniqueViolation(error: unknown, hint?: string): boolean {
   return false
 }
 
+/**
+ * 更新・削除の対象が見つからない（存在しない・論理削除済み・操作したユーザーのスコープ外。#62 O3b）。
+ * 3 つを区別しない（他人のデータの有無を漏らさないため）。tRPC のミドルウェアで NOT_FOUND にする
+ */
+export class RowNotFoundError extends Error {
+  constructor(entity: string) {
+    super(`${entity}が見つかりません`)
+    this.name = "RowNotFoundError"
+  }
+}
+
+/**
+ * 作成時に指定された ID（クライアントで採番した ID）が、すでに使われている（#62 O3b）。
+ * 論理削除済みの行の ID も含む。tRPC のミドルウェアで CONFLICT にする
+ */
+export class DuplicateIdError extends Error {
+  constructor(entity: string) {
+    super(`この${entity}の ID はすでに使われています`)
+    this.name = "DuplicateIdError"
+  }
+}
+
+/** 主キーの一意制約違反なら DuplicateIdError に変えて投げ、それ以外はそのまま投げる */
+export function rethrowDuplicateId(error: unknown, table: string, entity: string): never {
+  if (isUniqueViolation(error, `${table}_pkey`)) {
+    throw new DuplicateIdError(entity)
+  }
+  throw error
+}
+
 /** ログに残してよい DB エラーの種類（値や detail は含めない） */
 export interface DbErrorKind {
   /** PostgreSQL のエラーコード（23505 など）。DB のエラーでなければ undefined */

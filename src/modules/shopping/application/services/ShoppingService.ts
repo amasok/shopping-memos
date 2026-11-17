@@ -1,7 +1,8 @@
 import { db } from "@/infrastructure/db/drizzle/client"
 import { shoppingLists, listItems } from "@/infrastructure/db/drizzle/schema"
-import { inArray } from "drizzle-orm"
-import { eq } from "drizzle-orm"
+import { and, eq, inArray } from "drizzle-orm"
+import { accessibleByUser } from "@/infrastructure/db/ownership"
+import { notDeleted, softDeleteValues, touchFields } from "@/infrastructure/db/syncColumns"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
 import type { ShoppingListWithItems } from "../../domain/entities/ShoppingList"
@@ -73,16 +74,27 @@ export class ShoppingService {
     const result = await db.transaction(async (tx) => {
       const now = new Date()
 
-      // 1. リストを購入完了に更新（purchasedAtを設定）
-      await tx
+      // 1. リストを購入完了に更新（purchasedAtを設定）。操作したユーザーが使える、削除されていないリストに限る（#73-1）
+      const updatedLists = await tx
         .update(shoppingLists)
         .set({
           status: ListStatus.COMPLETED,
           completedAt: now,
           purchasedAt: now,
           location: location ?? null,
+          ...touchFields(shoppingLists, ["status", "completedAt", "purchasedAt", "location"]),
         })
-        .where(eq(shoppingLists.id, listId))
+        .where(
+          and(
+            eq(shoppingLists.id, listId),
+            notDeleted(shoppingLists),
+            accessibleByUser(shoppingLists, userId)
+          )
+        )
+        .returning({ id: shoppingLists.id })
+      if (updatedLists.length === 0) {
+        throw new ShoppingDomainError("リストが見つかりません")
+      }
 
       // 2. チェック済みアイテムに対応するCatalog.ItemのpurchasedAtを設定
       // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
@@ -98,12 +110,19 @@ export class ShoppingService {
         }
       }
 
-      // 3. 未チェックアイテムをlist_itemsから削除（履歴には購入済みのみ残す）
+      // 3. 未チェックアイテムをlist_itemsから論理削除（履歴には購入済みのみ残す）
       // カタログアイテムはリスト追加時に保持されているため、自動的に「買いたいもの」に戻る
       if (uncheckedItemIds.length > 0) {
         await tx
-          .delete(listItems)
-          .where(inArray(listItems.id, uncheckedItemIds))
+          .update(listItems)
+          .set(softDeleteValues())
+          .where(
+            and(
+              inArray(listItems.id, uncheckedItemIds),
+              eq(listItems.listId, listId),
+              notDeleted(listItems)
+            )
+          )
       }
 
       return {

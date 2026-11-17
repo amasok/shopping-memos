@@ -28,12 +28,12 @@ export interface TagRepository {
   /**
    * タグを更新
    */
-  update(input: UpdateTagInput): Promise<Tag>
+  update(input: UpdateTagInput, actorUserId: string): Promise<Tag>
 
   /**
    * タグを削除
    */
-  delete(id: string): Promise<void>
+  delete(id: string, actorUserId: string): Promise<void>
 
   /**
    * ユーザーがタグにアクセスできるか確認

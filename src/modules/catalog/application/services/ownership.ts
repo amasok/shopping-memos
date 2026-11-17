@@ -1,4 +1,5 @@
-import { inArray } from "drizzle-orm"
+import { and, inArray } from "drizzle-orm"
+import { notDeleted } from "@/infrastructure/db/syncColumns"
 import { db } from "@/infrastructure/db/drizzle/client"
 import { tags } from "@/infrastructure/db/drizzle/schema"
 import { isSameScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
@@ -24,7 +25,7 @@ export async function areTagsInScope(
   const found = await executor
     .select({ id: tags.id, userId: tags.userId, groupId: tags.groupId })
     .from(tags)
-    .where(inArray(tags.id, targetIds))
+    .where(and(inArray(tags.id, targetIds), notDeleted(tags)))
 
   if (found.length !== targetIds.length) {
     return false

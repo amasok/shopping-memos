@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server"
+import { notDeleted } from "@/infrastructure/db/syncColumns"
 import { eq, and, isNull } from "drizzle-orm"
 import { router, protectedProcedure } from "../server"
 import {
@@ -59,7 +60,11 @@ export const catalogRouter = router({
 
       // 進行中のリストに含まれるアイテム名を取得（除外用）
       // グループ指定時はグループのリスト、個人時はユーザーのリスト
-      const listConditions = [eq(shoppingLists.status, "in_progress")]
+      const listConditions = [
+        eq(shoppingLists.status, "in_progress"),
+        notDeleted(shoppingLists),
+        notDeleted(listItems),
+      ]
       if (input.groupId) {
         listConditions.push(eq(shoppingLists.groupId, input.groupId))
       } else {
@@ -123,7 +128,7 @@ export const catalogRouter = router({
 
       return catalogSyncService.createItem(
         {
-          id: crypto.randomUUID(),
+          id: input.id ?? crypto.randomUUID(),
           name: input.name,
           quantity: input.quantity,
           memo: input.memo,
@@ -269,7 +274,7 @@ export const catalogRouter = router({
 
       return catalogSyncService.createTag(
         {
-          id: crypto.randomUUID(),
+          id: input.id ?? crypto.randomUUID(),
           name: input.name,
           userId: ctx.userId,
           groupId: input.groupId,

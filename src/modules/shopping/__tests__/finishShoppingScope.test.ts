@@ -102,3 +102,35 @@ describe("ShoppingService.finishShopping のカタログアイテム更新範囲
     ])
   })
 })
+
+describe("ShoppingService.finishShopping の論理削除とスコープ（#62 O3b）", () => {
+  beforeEach(() => {
+    state.syncOps = []
+  })
+
+  const makeMixedService = () => {
+    const list = makeList(["牛乳", "卵"])
+    list.items[1].checked = false
+    const repo = { findById: async () => list } as unknown as ShoppingListRepository
+    return new ShoppingService(repo)
+  }
+
+  it("リストの更新は、操作したユーザーが使える、削除されていないリストに限る", async () => {
+    state.fake = createFakeDb({ listScope: { userId: "user-A", groupId: null } })
+    await makeMixedService().finishShopping("list-1", "user-A")
+    const [q] = state.fake.queries.filter((x) => x.table === "shopping_lists" && x.kind === "update")
+    expect(q.sql).toContain('"shopping_lists"."deleted_at" is null')
+    expect(q.sql).toContain('"group_members"."user_id"')
+    expect(q.set).toHaveProperty("fieldModifiedAt")
+  })
+
+  it("未チェックのアイテムは物理削除せず、論理削除する", async () => {
+    state.fake = createFakeDb({ listScope: { userId: "user-A", groupId: null } })
+    await makeMixedService().finishShopping("list-1", "user-A")
+    const listItemQueries = state.fake.queries.filter((x) => x.table === "list_items")
+    expect(listItemQueries.map((x) => x.kind)).toEqual(["update"])
+    expect(listItemQueries[0].set).toHaveProperty("deletedAt")
+    expect(listItemQueries[0].params).toContain("li-1")
+    expect(listItemQueries[0].params).not.toContain("li-0")
+  })
+})
