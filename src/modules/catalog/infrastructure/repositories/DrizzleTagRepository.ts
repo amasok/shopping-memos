@@ -151,7 +151,6 @@ export class DrizzleTagRepository implements TagRepository {
     }
   }
 
-
   async canAccess(tagId: string, userId: string): Promise<boolean> {
     // タグを取得
     const tag = await this.findById(tagId)

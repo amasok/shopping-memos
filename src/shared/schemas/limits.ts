@@ -37,6 +37,8 @@ export const REQUEST_LIMITS = {
   itemIds: 500,
   /** sync.push の 1 リクエストあたりの操作数 */
   pushOperations: 100,
+  /** sync.push の 1 操作の fieldTimes のキーの数（どのエンティティもフィールドは 10 個未満） */
+  pushFieldTimes: 20,
   /** sync.pull で指定するグループの数 */
   groupIds: 50,
   /**

@@ -296,7 +296,7 @@ input: {
     entity: "item" | "tag" | "list" | "listItem"
     entityId: string        // クライアントで採番した UUID
     type: "create" | "update" | "delete" | "finishShopping" | "revertHistory"
-    patch?: Record<string, unknown>      // entity ごとの Zod スキーマで検証（JSON で 8KB まで）
+    patch?: Record<string, unknown>      // entity ごとの Zod スキーマで検証（JSON で 16KB まで。REQUEST_LIMITS.recordBytes）
     fieldTimes?: Record<string, string>  // patch の各フィールドの操作時刻（補正済み ISO）
     clientTime: string                   // 操作全体の時刻（create / delete / 複合操作で使う）
   }>  // 最大 100 件 / リクエスト
@@ -323,6 +323,10 @@ output: {
   - パッチは、エンティティと種類ごとの strict な Zod スキーマで検証する（未知のフィールドは拒否）。受け付けるフィールドは tRPC と同じ範囲（update: アイテムは `name` / `quantity` / `memo` / `tagIds` / `purchasedAt`、タグとリストは `name`、リストのアイテムは `checked`）。不正ならその操作だけ `rejected`（`invalid_patch`）。パッチの大きさ（`REQUEST_LIMITS.recordBytes`）と件数（100）は入力の検証で拒否する（#72。クライアントはキューに積むときに同じ上限で検証する）
   - 認可と参照: グループへの作成はメンバーだけ（`forbidden`）。タグは同じスコープのものだけ（`invalid_reference`）。リストのアイテムは、使える進行中のリストにだけ作り、`group_id` はリストの値にする（#68）。完了したリストのアイテムの作成・チェック・削除は `rejected`（`list_completed`。tRPC と同じ）
   - 時刻: フィールドの時刻は `fieldTimes[f]`、なければ `clientTime`。`serverTime`（DB の `now()`）より未来なら `serverTime` に丸め、UTC・ミリ秒の ISO で保存する。create は、書き込んだすべてのフィールドに操作の時刻を入れる
+  - 再送: `duplicate` の `reason` に、最初に処理したときの結果（`applied` / `partial` / `conflict:deleted` / `rejected:not_found` など）を入れる。クライアント（O6）は、`reason` が `applied` ならキューから消し、`partial` / `conflict` ならキューから消して pull で最新の行を取り直し、`rejected` なら `failed` にする（レスポンスが失われて再送したとき、拒否された操作を適用済みと取り違えない）
+  - リストのアイテム: 作成・チェック・削除の間は、親のリストに共有ロック（`FOR SHARE`）を取り、リストの削除・完了と同時に走っても、削除済み・完了済みのリストの下に生きたアイテムができないようにする。親のリストが削除済みのアイテムは、削除済みと同じに扱う（update は `conflict`、delete は `applied`）
+  - リポジトリの「対象なし」（`RowNotFoundError`）は、その操作だけ `rejected`（`not_found`）にする（決まって失敗する操作で、キュー全体を止めない）
+  - `purchasedAt` の値も、未来なら `serverTime` に丸める。返す `serverTime` は処理の後の時刻（丸めにはリクエストの開始時刻を使う）。`fieldTimes` のキーは 20 個まで
   - 予期しないエラー（DB の障害など）は、リクエスト全体を 500 にする（クライアントがまとめて再送する。適用済みの操作は `duplicate` になる）。1 操作 1 トランザクションで、`statement_timeout` は 30 秒
   - 対応外の `protocolVersion` は `PRECONDITION_FAILED`（メッセージ `CLIENT_TOO_OLD`）。今は 1 だけを受け付ける
   - 複合操作（`finishShopping` / `revertHistory`）は O4b で足す（リストとカタログのアイテムのフィールドを、操作の時刻でフィールド単位の LWW にする）
@@ -599,7 +603,7 @@ develop に PR をマージ
 | #64 | finishShopping / revertHistory / deleteHistory が、名前だけで全ユーザーのアイテムを更新・削除する | **O4 より前に修正が必須**。push の複合操作（`finishShopping` / `revertHistory`）は同じサービス層を再利用するため。#64 で `list_items.source_item_id` を追加する場合は、O3 のマイグレーションと競合しないよう #64 を先にマージする |
 | #68 | itemId / tagId の所有権を検証していない。listItem の groupId がリスト側の値になっていない | **O4 より前に修正が必須**。push はこの検証を通るサービス層を使う。pull は `list_items.group_id` で絞り込むため、#68 の groupId 修正が pull の正しさの前提になる |
 | #73-1 | リポジトリの update / delete の WHERE が id だけ | O3（論理削除化）で、update / delete の WHERE に `user_id` / `group_id` のスコープ条件を入れる |
-| #72 | 配列件数・payload サイズの上限、ページングがない | push は 1 リクエスト 100 件まで、パッチは JSON で 8KB まで、pull は 1 回 500 行のページングにする（O4 / O5） |
+| #72 | 配列件数・payload サイズの上限、ページングがない | push は 1 リクエスト 100 件まで、パッチは JSON で 16KB まで（`REQUEST_LIMITS.recordBytes`）、pull は 1 回 500 行のページングにする（O4 / O5） |
 | #71 | セキュリティヘッダがない | 上記の `worker-src` と SW スクリプトの Cache-Control |
 | #65 | Next.js 16.1.5 の既知脆弱性 | O1 の前に #65 で Next.js を更新し、更新後のバージョンで `@serwist/turbopack` の動作を確認する |
 

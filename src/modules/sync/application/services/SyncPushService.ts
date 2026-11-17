@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   items,
@@ -9,7 +9,7 @@ import {
   tags,
 } from "@/infrastructure/db/drizzle/schema"
 import { canAccessScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
-import { notDeleted } from "@/infrastructure/db/syncColumns"
+import { RowNotFoundError } from "@/infrastructure/db/errors"
 import type {
   SyncPushEntity,
   SyncPushOperation,
@@ -79,30 +79,32 @@ async function lockRow(tx: DbExecutor, entity: SyncPushEntity, id: string): Prom
   return row as Row | undefined
 }
 
-/** 親のリスト（削除されていないもの） */
-async function findList(tx: DbExecutor, listId: string) {
+type ParentList = { id: string; userId: string | null; groupId: string | null; status: string; deletedAt: Date | null }
+
+/**
+ * 親のリスト（論理削除済みも含む）を、共有ロックを取って読む。
+ * リストのアイテムの作成・チェック・削除の間に、リストが削除・完了されないようにする
+ * （ロックがないと、削除済み・完了済みのリストの下に、生きているリストのアイテムができる）
+ */
+async function lockParentList(tx: DbExecutor, listId: string): Promise<ParentList | undefined> {
   const [list] = await tx
-    .select({ id: shoppingLists.id, userId: shoppingLists.userId, groupId: shoppingLists.groupId, status: shoppingLists.status })
+    .select({
+      id: shoppingLists.id,
+      userId: shoppingLists.userId,
+      groupId: shoppingLists.groupId,
+      status: shoppingLists.status,
+      deletedAt: shoppingLists.deletedAt,
+    })
     .from(shoppingLists)
-    .where(and(eq(shoppingLists.id, listId), notDeleted(shoppingLists)))
+    .where(eq(shoppingLists.id, listId))
+    .for("share")
   return list
 }
 
-/** 行の所有スコープ（リストのアイテムは親のリストのスコープ。親がなければ null） */
-async function scopeOf(tx: DbExecutor, entity: SyncPushEntity, row: Row): Promise<OwnerScope | null> {
-  if (entity !== "listItem") {
-    return { userId: row.userId, groupId: row.groupId }
-  }
-  const [list] = await tx
-    .select({ userId: shoppingLists.userId, groupId: shoppingLists.groupId })
-    .from(shoppingLists)
-    .where(eq(shoppingLists.id, row.listId as string))
-  return list ?? null
-}
-
-async function canUse(tx: DbExecutor, entity: SyncPushEntity, row: Row, userId: string): Promise<boolean> {
-  const scope = await scopeOf(tx, entity, row)
-  return scope !== null && (await canAccessScope(tx, scope, userId))
+/** 親のリスト（削除されていないもの。共有ロックを取る） */
+async function findList(tx: DbExecutor, listId: string) {
+  const list = await lockParentList(tx, listId)
+  return list && !list.deletedAt ? list : undefined
 }
 
 /** クライアントに返す行（アイテムは tagIds を付ける） */
@@ -113,18 +115,33 @@ async function toServerRow(tx: DbExecutor, entity: SyncPushEntity, id: string): 
   return { ...row, tagIds: links.map((l) => l.tagId) }
 }
 
-/** ISO の文字列を Date に（null / undefined はそのまま） */
-const toDate = (value: unknown) => (typeof value === "string" ? new Date(value) : (value as null | undefined))
+/** DB の現在時刻（ミリ秒） */
+async function dbNowMs(): Promise<number> {
+  const [{ now }] = (await db.execute(sql`SELECT now() AS now`)) as unknown as [{ now: Date | string }]
+  return new Date(now).getTime()
+}
+
+/** 処理済みの操作の記録から、最初の結果（"status" か "status:reason"）を取り出す */
+function originalResult(payload: string): string | undefined {
+  try {
+    const { status, reason } = JSON.parse(payload) as { status?: string; reason?: string }
+    if (!status) return undefined
+    return reason ? `${status}:${reason}` : status
+  } catch {
+    return undefined
+  }
+}
 
 export class SyncPushService {
   async push(userId: string, operations: SyncPushOperation[]): Promise<SyncPushOutput> {
-    const [{ now }] = (await db.execute(sql`SELECT now() AS now`)) as unknown as [{ now: Date | string }]
-    const serverMs = new Date(now).getTime()
+    // 未来の時刻の丸めには、リクエストの開始時刻を使う
+    const serverMs = await dbNowMs()
     const results: SyncPushResult[] = []
     for (const op of operations) {
       results.push({ opId: op.opId, ...(await this.applyOne(userId, op, serverMs)) })
     }
-    return { serverTime: new Date(serverMs).toISOString(), results }
+    // 返す serverTime は処理の後の時刻（クライアントは「serverTime − 受信時刻」で時計のずれを補正するため）
+    return { serverTime: new Date(await dbNowMs()).toISOString(), results }
   }
 
   private applyOne(userId: string, op: SyncPushOperation, serverMs: number): Promise<Outcome> {
@@ -148,13 +165,27 @@ export class SyncPushService {
         .returning({ id: syncOperations.id })
       if (!inserted) {
         const [existing] = await tx
-          .select({ userId: syncOperations.userId })
+          .select({ userId: syncOperations.userId, payload: syncOperations.payload })
           .from(syncOperations)
           .where(eq(syncOperations.id, op.opId))
-        return existing?.userId === userId ? { status: "duplicate" } : rejected("op_conflict")
+        if (existing?.userId !== userId) return rejected("op_conflict")
+        // 最初に処理したときの結果を reason で返す（レスポンスが失われて再送したとき、
+        // 拒否された操作を「適用済み」と取り違えないように。例: "applied" / "rejected:not_found"）
+        return { status: "duplicate", reason: originalResult(existing.payload) }
       }
 
-      const outcome = await this.apply(tx, userId, op, serverMs)
+      let outcome: Outcome
+      try {
+        outcome = await this.apply(tx, userId, op, serverMs)
+      } catch (error) {
+        // リポジトリの「対象なし」（UPDATE が 0 行。DB のエラーではないのでトランザクションは続けられる）は、
+        // 決まって失敗する操作なので rejected にする（500 にすると、再送でもキュー全体が止まり続ける）
+        if (error instanceof RowNotFoundError) {
+          outcome = rejected("not_found")
+        } else {
+          throw error
+        }
+      }
 
       // 結果を記録する（rejected / conflict の件数を後から数えられるように）
       await tx
@@ -175,8 +206,12 @@ export class SyncPushService {
 
   private async apply(tx: DbExecutor, userId: string, op: SyncPushOperation, serverMs: number): Promise<Outcome> {
     const row = await lockRow(tx, op.entity, op.entityId)
+    // リストのアイテムは親のリストで判定する。親が削除済みなら、アイテムも削除済みと同じに扱う
+    const parent = op.entity === "listItem" && row ? await lockParentList(tx, row.listId as string) : undefined
+    const scope: OwnerScope | null = !row ? null : op.entity === "listItem" ? (parent ?? null) : row
     // 使えない行は、ないのと同じに扱う（存在の有無を漏らさない）
-    const usable = row !== undefined && (await canUse(tx, op.entity, row, userId))
+    const usable = scope !== null && (await canAccessScope(tx, scope, userId))
+    const deleted = !!row && (row.deletedAt !== null || (op.entity === "listItem" && (!parent || parent.deletedAt !== null)))
 
     switch (op.type) {
       case "create": {
@@ -187,17 +222,17 @@ export class SyncPushService {
           // 同じ ID の行があれば、フィールド単位の更新として扱う（作成の再送など）
           const fields = updatableFields(op.entity)
           const patch = Object.fromEntries(Object.entries(op.patch ?? {}).filter(([k]) => fields.includes(k)))
-          return this.update(tx, userId, { ...op, patch }, row, serverMs)
+          return this.update(tx, userId, { ...op, patch }, row, deleted, serverMs)
         }
-        return this.create(tx, userId, op, parsed.data, clampTime(op.clientTime, serverMs))
+        return this.create(tx, userId, op, parsed.data, clampTime(op.clientTime, serverMs), serverMs)
       }
       case "update": {
         if (!row || !usable) return rejected("not_found")
-        return this.update(tx, userId, op, row, serverMs)
+        return this.update(tx, userId, op, row, deleted, serverMs)
       }
       case "delete": {
         if (!row || !usable) return rejected("not_found")
-        if (row.deletedAt) return { status: "applied" }
+        if (deleted) return { status: "applied" }
         return this.delete(tx, userId, op.entity, row)
       }
     }
@@ -208,7 +243,8 @@ export class SyncPushService {
     userId: string,
     op: SyncPushOperation,
     patch: unknown,
-    opTime: string
+    opTime: string,
+    serverMs: number
   ): Promise<Outcome> {
     const times = Object.fromEntries(CREATED_FIELDS[op.entity].map((f) => [f, opTime]))
     const id = op.entityId
@@ -248,7 +284,7 @@ export class SyncPushService {
           name: p.name,
           quantity: p.quantity,
           memo: p.memo ?? null,
-          purchasedAt: toDate(p.purchasedAt) ?? null,
+          purchasedAt: p.purchasedAt ? new Date(clampTime(p.purchasedAt, serverMs)) : null,
           userId,
           groupId,
           fieldModifiedAt: times,
@@ -283,10 +319,11 @@ export class SyncPushService {
     userId: string,
     op: SyncPushOperation,
     row: Row,
+    deleted: boolean,
     serverMs: number
   ): Promise<Outcome> {
-    // 削除済みへの更新は適用しない（削除が勝つ）。クライアントはローカルの行を消す
-    if (row.deletedAt) {
+    // 削除済み（リストのアイテムは親のリストの削除も）への更新は適用しない（削除が勝つ）。クライアントはローカルの行を消す
+    if (deleted) {
       return { status: "conflict", reason: "deleted", serverRow: await toServerRow(tx, op.entity, row.id) }
     }
     const parsed = updatePatchSchemas[op.entity].safeParse(op.patch ?? {})
@@ -326,7 +363,10 @@ export class SyncPushService {
         .update(table)
         .set({
           ...columns,
-          ...(purchasedAt !== undefined ? { purchasedAt: toDate(purchasedAt) } : {}),
+          // 購入日時も、未来ならサーバー時刻に丸める
+          ...(purchasedAt !== undefined
+            ? { purchasedAt: typeof purchasedAt === "string" ? new Date(clampTime(purchasedAt, serverMs)) : null }
+            : {}),
           fieldModifiedAt: { ...row.fieldModifiedAt, ...appliedTimes },
           updatedAt: sql`now()`,
         })

@@ -15,8 +15,13 @@ const state = vi.hoisted(() => ({
   members: new Set<string>(),
   tagsInScope: true,
   deleted: [] as Array<[string, string]>,
+  throwRowNotFound: false,
 }))
 const recordDelete = vi.hoisted(() => (entity: string) => async (id: string) => {
+  if (state.throwRowNotFound) {
+    const { RowNotFoundError } = await import("@/infrastructure/db/errors")
+    throw new RowNotFoundError(entity)
+  }
   state.deleted.push([entity, id])
 })
 
@@ -125,6 +130,7 @@ beforeEach(() => {
   state.members = new Set()
   state.tagsInScope = true
   state.deleted = []
+  state.throwRowNotFound = false
 })
 
 describe("SyncPushService: 冪等化と結果の記録", () => {
@@ -140,8 +146,33 @@ describe("SyncPushService: 冪等化と結果の記録", () => {
   it("同じユーザーの opId の再送は duplicate、ほかのユーザーの opId は rejected", async () => {
     const create = op({ entity: "tag", type: "create", patch: { name: "x" } })
     await push1(create)
-    expect(await push1(create)).toEqual({ opId: create.opId, status: "duplicate" })
+    expect(await push1(create)).toEqual({ opId: create.opId, status: "duplicate", reason: "applied" })
     expect(await push1(create, OTHER)).toMatchObject({ status: "rejected", reason: "op_conflict" })
+  })
+
+  it("rejected になった操作の再送は、duplicate の reason に最初の結果を返す（適用済みと取り違えない）", async () => {
+    const update = op({ entity: "item", type: "update", patch: { name: "x" } })
+    expect(await push1(update)).toMatchObject({ status: "rejected", reason: "not_found" })
+    expect(await push1(update)).toEqual({ opId: update.opId, status: "duplicate", reason: "rejected:not_found" })
+  })
+
+  it("記録に結果がない（読めない）ときは reason なしの duplicate", async () => {
+    const opId = crypto.randomUUID()
+    rows("sync_operations").set(opId, { id: opId, userId: ME, payload: "not json" })
+    expect(await push1(op({ opId, entity: "tag", type: "delete" }))).toEqual({ opId, status: "duplicate", reason: undefined })
+  })
+
+  it("リポジトリの RowNotFoundError は、その操作だけ rejected（not_found）にする", async () => {
+    const item = putItem({ id: crypto.randomUUID() })
+    state.throwRowNotFound = true
+    const { results } = await syncPushService.push(ME, [
+      op({ entity: "item", type: "delete", entityId: item.id as string }),
+      op({ entity: "tag", type: "create", patch: { name: "続き" } }),
+    ])
+    expect(results.map((r) => [r.status, r.reason])).toEqual([
+      ["rejected", "not_found"],
+      ["applied", undefined],
+    ])
   })
 })
 
@@ -220,6 +251,17 @@ describe("SyncPushService: 作成", () => {
 })
 
 describe("SyncPushService: 更新（フィールド単位の LWW）", () => {
+  it("purchasedAt の値も、未来ならサーバー時刻に丸める", async () => {
+    const row = putItem({ id: crypto.randomUUID() })
+    await push1(op({ entity: "item", type: "update", entityId: row.id as string, patch: { purchasedAt: "2999-01-01T00:00:00.000Z" } }))
+    expect(row.purchasedAt).toEqual(new Date(SERVER))
+    await push1(op({ entity: "item", type: "update", entityId: row.id as string, patch: { purchasedAt: null }, clientTime: T2 }))
+    expect(row.purchasedAt).toBeNull()
+    const create = op({ entity: "item", type: "create", patch: { name: "x", purchasedAt: "2999-01-01T00:00:00.000Z" } })
+    await push1(create)
+    expect(rows("items").get(create.entityId)!.purchasedAt).toEqual(new Date(SERVER))
+  })
+
   it("キーがないフィールドは常に適用し、時刻を記録する", async () => {
     const row = putItem({ id: crypto.randomUUID() })
     expect(await push1(op({ entity: "item", type: "update", entityId: row.id as string, patch: { memo: "m", purchasedAt: T1 } }))).toMatchObject({
@@ -289,6 +331,22 @@ describe("SyncPushService: 更新（フィールド単位の LWW）", () => {
     expect(await push1(op({ entity: "listItem", type: "update", entityId: liId, patch: { checked: false } }))).toMatchObject({
       reason: "list_completed",
     })
+  })
+})
+
+describe("SyncPushService: 親のリストが削除済みのリストのアイテム", () => {
+  it("削除済みと同じに扱う（update は conflict、delete は何もせず applied）", async () => {
+    const listId = crypto.randomUUID()
+    rows("shopping_lists").set(listId, { id: listId, userId: ME, groupId: null, status: "in_progress", deletedAt: new Date() })
+    const liId = crypto.randomUUID()
+    rows("list_items").set(liId, { id: liId, listId, deletedAt: null, fieldModifiedAt: {}, checked: false })
+    expect(await push1(op({ entity: "listItem", type: "update", entityId: liId, patch: { checked: true } }))).toMatchObject({
+      status: "conflict",
+      reason: "deleted",
+    })
+    expect(await push1(op({ entity: "listItem", type: "delete", entityId: liId }))).toMatchObject({ status: "applied" })
+    expect(state.deleted).toEqual([])
+    expect(rows("list_items").get(liId)!.checked).toBe(false)
   })
 })
 

@@ -80,8 +80,13 @@ export const syncPushOperationSchema = z.object({
   type: syncPushOperationTypeSchema,
   /** 変更したフィールドだけ（作成では全フィールド）。JSON で REQUEST_LIMITS.recordBytes まで（#72） */
   patch: boundedRecordSchema.optional(),
-  /** patch の各フィールドの操作時刻。ないフィールドは clientTime を使う */
-  fieldTimes: z.record(z.string(), operationTimeSchema).optional(),
+  /** patch の各フィールドの操作時刻。ないフィールドは clientTime を使う。キーは REQUEST_LIMITS.pushFieldTimes 個まで */
+  fieldTimes: z
+    .record(z.string().max(64), operationTimeSchema)
+    .refine((times) => Object.keys(times).length <= REQUEST_LIMITS.pushFieldTimes, {
+      message: `fieldTimes は ${REQUEST_LIMITS.pushFieldTimes} 件までです`,
+    })
+    .optional(),
   /** 操作全体の時刻 */
   clientTime: operationTimeSchema,
 })

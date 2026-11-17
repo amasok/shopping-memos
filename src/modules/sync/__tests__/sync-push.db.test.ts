@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import postgres from "postgres"
 import type { SyncPushOperation } from "@/shared/schemas/sync"
 
 /**
@@ -108,8 +109,24 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
     it("同じ opId の再送は duplicate で、二重に適用しない", async () => {
       const create = op({ entity: "item", type: "create", patch: { name: "卵" } })
       expect(await push1(owner, create)).toMatchObject({ status: "applied" })
-      expect(await push1(owner, { ...create, patch: { name: "卵（再送）" } })).toEqual({ opId: create.opId, status: "duplicate" })
+      expect(await push1(owner, { ...create, patch: { name: "卵（再送）" } })).toEqual({
+        opId: create.opId,
+        status: "duplicate",
+        reason: "applied",
+      })
       expect((await rawItem(create.entityId)).name).toBe("卵")
+    })
+
+    it("同じ opId を同時に送っても、適用は 1 回だけで、ほかは duplicate", async () => {
+      const create = op({ entity: "item", type: "create", patch: { name: "同時" } })
+      const results = await Promise.all(Array.from({ length: 5 }, () => push1(owner, create)))
+      expect(results.map((r) => r.status).sort()).toEqual(["applied", "duplicate", "duplicate", "duplicate", "duplicate"])
+    })
+
+    it("rejected になった操作の再送は、duplicate の reason に最初の結果を返す", async () => {
+      const update = op({ entity: "item", type: "update", patch: { name: "x" } })
+      expect(await push1(owner, update)).toMatchObject({ status: "rejected", reason: "not_found" })
+      expect(await push1(owner, update)).toMatchObject({ status: "duplicate", reason: "rejected:not_found" })
     })
 
     it("ほかのユーザーが使った opId は rejected", async () => {
@@ -265,6 +282,93 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
       ).toMatchObject({ status: "applied" })
       expect(await push1(owner, op({ entity: "tag", type: "update", entityId: id, patch: { name: "x" } }))).toMatchObject({
         status: "rejected",
+      })
+    })
+  })
+
+  describe("グループを抜けた人", () => {
+    it("抜けたグループの行は、更新も削除もできない（not_found）", async () => {
+      const { db, schema, drizzle } = ctx
+      const leaveGroup = crypto.randomUUID()
+      const membershipId = crypto.randomUUID()
+      await db.insert(schema.groups).values({ id: leaveGroup, name: "抜ける", inviteCode: leaveGroup.slice(0, 8).toUpperCase() })
+      await db.insert(schema.groupMembers).values({ id: membershipId, groupId: leaveGroup, userId: owner })
+      const tag = await createTag(owner, leaveGroup)
+      await db.delete(schema.groupMembers).where(drizzle.eq(schema.groupMembers.id, membershipId))
+
+      expect(await push1(owner, op({ entity: "tag", type: "update", entityId: tag, patch: { name: "x" }, clientTime: T2 }))).toMatchObject({
+        status: "rejected",
+        reason: "not_found",
+      })
+      expect(await push1(owner, op({ entity: "tag", type: "delete", entityId: tag }))).toMatchObject({
+        status: "rejected",
+        reason: "not_found",
+      })
+      const [row] = await db.select().from(schema.tags).where(drizzle.eq(schema.tags.id, tag))
+      expect(row).toMatchObject({ name: "食品", deletedAt: null })
+      await db.delete(schema.groups).where(drizzle.eq(schema.groups.id, leaveGroup))
+    })
+  })
+
+  describe("リストの削除と、リストのアイテムの操作が同時に走ったとき", () => {
+    async function newList() {
+      const list = op({ entity: "list", type: "create", patch: { name: "同時" } })
+      await push1(owner, list)
+      return list.entityId
+    }
+
+    async function liveListItems(listId: string) {
+      const { db, schema, drizzle } = ctx
+      return db
+        .select()
+        .from(schema.listItems)
+        .where(drizzle.and(drizzle.eq(schema.listItems.listId, listId), drizzle.isNull(schema.listItems.deletedAt)))
+    }
+
+    it("リストの削除のコミットを待ち、削除済みのリストの下にアイテムを作らない", async () => {
+      const listId = await newList()
+      // 別の接続でリストを削除し、コミットを止めておく（リストの行のロックを持ったまま）
+      const holder = postgres(TEST_DB_URL!, { max: 1, onnotice: () => {} })
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => (release = resolve))
+      let markLocked!: () => void
+      const locked = new Promise<void>((resolve) => (markLocked = resolve))
+      const deleting = holder.begin(async (tx) => {
+        await tx.unsafe("UPDATE shopping_lists SET deleted_at = now(), updated_at = now() WHERE id = $1", [listId])
+        await tx.unsafe(
+          "UPDATE list_items SET deleted_at = now(), updated_at = now() WHERE list_id = $1 AND deleted_at IS NULL",
+          [listId]
+        )
+        markLocked()
+        await gate
+      })
+      await locked
+
+      const creating = push1(owner, op({ entity: "listItem", type: "create", patch: { listId, name: "パン" } }))
+      // ロックがなければ、この間に作成がコミットされてしまう
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      release()
+      await deleting
+      await holder.end()
+
+      expect(await creating).toMatchObject({ status: "rejected", reason: "invalid_reference" })
+      expect(await liveListItems(listId)).toEqual([])
+    })
+
+    it("親のリストが削除済みの、生きているリストのアイテムは、削除済みと同じに扱う（キューを止めない）", async () => {
+      const listId = await newList()
+      const li = op({ entity: "listItem", type: "create", patch: { listId, name: "取り残し" } })
+      await push1(owner, li)
+      // 競合でできうる状態を直接作る（リストだけ削除済み）
+      const { db, schema, drizzle } = ctx
+      await db.update(schema.shoppingLists).set({ deletedAt: new Date() }).where(drizzle.eq(schema.shoppingLists.id, listId))
+
+      expect(await push1(owner, op({ entity: "listItem", type: "update", entityId: li.entityId, patch: { checked: true } }))).toMatchObject({
+        status: "conflict",
+        reason: "deleted",
+      })
+      expect(await push1(owner, op({ entity: "listItem", type: "delete", entityId: li.entityId }))).toMatchObject({
+        status: "applied",
       })
     })
   })
