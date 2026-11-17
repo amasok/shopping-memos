@@ -58,17 +58,6 @@ export interface SyncQueueItem {
 }
 
 /**
- * 同期競合情報
- */
-export interface SyncConflict {
-  operationId: string
-  entity: SyncEntity
-  entityId: string
-  serverData: Record<string, unknown>
-  serverUpdatedAt: Date
-}
-
-/**
  * IDマッピング（ローカルID → サーバーID）
  */
 export interface IdMapping {

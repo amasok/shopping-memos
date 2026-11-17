@@ -45,44 +45,93 @@ export const syncQueueItemSchema = z.object({
 export type SyncQueueItem = z.infer<typeof syncQueueItemSchema>
 
 /**
- * 同期プッシュリクエスト
+ * 同期のプロトコルのバージョン（#62 O4）。
+ * サーバーは現在と 1 つ前のバージョンを、少なくとも 30 日間受け付ける（docs/features/offline-support.md）
+ */
+export const SYNC_PROTOCOL_VERSION = 1
+export const SUPPORTED_SYNC_PROTOCOL_VERSIONS: readonly number[] = [1]
+/** 対応外の protocolVersion のときの、エラーのメッセージ（クライアントはこれで強制更新に進む） */
+export const CLIENT_TOO_OLD = "CLIENT_TOO_OLD"
+
+/** sync.push で送れるエンティティ（履歴はリストとして送る） */
+export const syncPushEntitySchema = z.enum(["item", "tag", "list", "listItem"])
+
+export type SyncPushEntity = z.infer<typeof syncPushEntitySchema>
+
+/** sync.push の操作の種類 */
+export const syncPushOperationTypeSchema = z.enum(["create", "update", "delete"])
+
+export type SyncPushOperationType = z.infer<typeof syncPushOperationTypeSchema>
+
+/** 操作の時刻（クライアントの時刻をサーバー時刻で補正したもの。ISO 8601） */
+const operationTimeSchema = z.string().datetime({ offset: true })
+
+/**
+ * sync.push の 1 件の操作（#62 O4）。
+ * patch の中身はエンティティと種類ごとにサーバーで検証し、不正ならその操作だけ rejected にする
+ * （1 件の不正で、ほかの操作を止めない）。patch の大きさだけは入力の検証で拒否する（クライアントはキューに積むときに同じ上限で検証する）
+ */
+export const syncPushOperationSchema = z.object({
+  /** クライアントで採番した操作の ID（冪等キー） */
+  opId: z.string().uuid(),
+  entity: syncPushEntitySchema,
+  /** クライアントで採番したエンティティの ID */
+  entityId: z.string().uuid(),
+  type: syncPushOperationTypeSchema,
+  /** 変更したフィールドだけ（作成では全フィールド）。JSON で REQUEST_LIMITS.recordBytes まで（#72） */
+  patch: boundedRecordSchema.optional(),
+  /** patch の各フィールドの操作時刻。ないフィールドは clientTime を使う。キーは REQUEST_LIMITS.pushFieldTimes 個まで */
+  fieldTimes: z
+    .record(z.string().max(64), operationTimeSchema)
+    .refine((times) => Object.keys(times).length <= REQUEST_LIMITS.pushFieldTimes, {
+      message: `fieldTimes は ${REQUEST_LIMITS.pushFieldTimes} 件までです`,
+    })
+    .optional(),
+  /** 操作全体の時刻 */
+  clientTime: operationTimeSchema,
+})
+
+export type SyncPushOperation = z.infer<typeof syncPushOperationSchema>
+
+/**
+ * 同期プッシュリクエスト（#62 O4）
  */
 export const syncPushInputSchema = z.object({
-  operations: z
-    .array(
-      z.object({
-        id: z.string().uuid(),
-        entity: syncEntitySchema,
-        entityId: z.string().uuid(),
-        operation: syncOperationTypeSchema,
-        payload: boundedRecordSchema,
-        createdAt: z.coerce.date(),
-      }),
-    )
-    .max(REQUEST_LIMITS.pushOperations),
+  protocolVersion: z.number().int(),
+  operations: z.array(syncPushOperationSchema).max(REQUEST_LIMITS.pushOperations),
 })
 
 export type SyncPushInput = z.infer<typeof syncPushInputSchema>
 
 /**
- * 同期競合情報
+ * 操作の結果
+ * - applied: すべて適用した
+ * - partial: 一部のフィールドが新しい値に負けて捨てられた（serverRow に最新の行）
+ * - duplicate: 同じ opId の操作を処理済み
+ * - conflict: 削除済みの行への操作（serverRow に tombstone）
+ * - rejected: 適用できない（行がない・使えない・パッチが不正など。serverRow は返さない）
  */
-export const syncConflictSchema = z.object({
-  operationId: z.string().uuid(),
-  entity: syncEntitySchema,
-  entityId: z.string().uuid(),
-  serverData: z.record(z.string(), z.unknown()),
-  serverUpdatedAt: z.coerce.date(),
+export const syncPushStatusSchema = z.enum(["applied", "partial", "duplicate", "conflict", "rejected"])
+
+export type SyncPushStatus = z.infer<typeof syncPushStatusSchema>
+
+export const syncPushResultSchema = z.object({
+  opId: z.string().uuid(),
+  status: syncPushStatusSchema,
+  reason: z.string().optional(),
+  /** 呼び出し元が使える行だけ（#69） */
+  serverRow: z.record(z.string(), z.unknown()).optional(),
 })
 
-export type SyncConflict = z.infer<typeof syncConflictSchema>
+export type SyncPushResult = z.infer<typeof syncPushResultSchema>
 
 /**
  * 同期プッシュレスポンス
  */
 export const syncPushOutputSchema = z.object({
-  processedIds: z.array(z.string().uuid()),
-  conflicts: z.array(syncConflictSchema),
+  /** サーバーの時刻（クライアントは時計のずれの補正に使う） */
+  serverTime: z.string(),
+  results: z.array(syncPushResultSchema),
 })
 
 export type SyncPushOutput = z.infer<typeof syncPushOutputSchema>

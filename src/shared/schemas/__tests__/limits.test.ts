@@ -30,6 +30,16 @@ const operation = (payload: Record<string, unknown> = {}) => ({
   createdAt: new Date(),
 })
 
+/** sync.push（#62 O4）の操作 */
+const pushOperation = (patch: Record<string, unknown> = {}) => ({
+  opId: crypto.randomUUID(),
+  entity: "item",
+  entityId: crypto.randomUUID(),
+  type: "update",
+  patch,
+  clientTime: new Date().toISOString(),
+})
+
 const emptyMerge = { items: [], tags: [], lists: [], listItems: [], history: [] }
 
 describe("入力の上限（#72）", () => {
@@ -125,18 +135,18 @@ describe("入力の上限（#72）", () => {
 
   describe("sync.push", () => {
     it("100 件までの操作は受け付ける", () => {
-      const operations = Array.from({ length: REQUEST_LIMITS.pushOperations }, () => operation())
-      expect(syncPushInputSchema.safeParse({ operations }).success).toBe(true)
+      const operations = Array.from({ length: REQUEST_LIMITS.pushOperations }, () => pushOperation())
+      expect(syncPushInputSchema.safeParse({ protocolVersion: 1, operations }).success).toBe(true)
     })
 
     it("100 件を超える操作を拒否する", () => {
-      const operations = Array.from({ length: REQUEST_LIMITS.pushOperations + 1 }, () => operation())
-      expect(syncPushInputSchema.safeParse({ operations }).success).toBe(false)
+      const operations = Array.from({ length: REQUEST_LIMITS.pushOperations + 1 }, () => pushOperation())
+      expect(syncPushInputSchema.safeParse({ protocolVersion: 1, operations }).success).toBe(false)
     })
 
     it("8KB を超えるパッチを拒否する", () => {
-      const operations = [operation({ memo: "a".repeat(REQUEST_LIMITS.recordBytes) })]
-      expect(syncPushInputSchema.safeParse({ operations }).success).toBe(false)
+      const operations = [pushOperation({ memo: "a".repeat(REQUEST_LIMITS.recordBytes) })]
+      expect(syncPushInputSchema.safeParse({ protocolVersion: 1, operations }).success).toBe(false)
     })
 
     it("同期キューのパッチも 8KB までに制限する", () => {

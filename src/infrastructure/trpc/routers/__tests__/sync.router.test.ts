@@ -2,9 +2,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 
 const syncRepo = vi.hoisted(() => ({
-  checkEntityAccess: vi.fn(), findLatestEntityState: vi.fn(), createOperation: vi.fn(),
-  getChangedEntities: vi.fn(), countPendingOperations: vi.fn(),
+  createOperation: vi.fn(), getChangedEntities: vi.fn(), countPendingOperations: vi.fn(),
 }))
+const pushService = vi.hoisted(() => vi.fn())
 const groupRepo = vi.hoisted(() => ({ findByUserId: vi.fn() }))
 const merge = vi.hoisted(() => vi.fn())
 
@@ -12,72 +12,47 @@ vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
 vi.mock("@/modules/sync/infrastructure/repositories/DrizzleSyncRepository", () => ({ syncRepository: syncRepo }))
 vi.mock("@/modules/identity/infrastructure/repositories/DrizzleGroupRepository", () => ({ groupRepository: groupRepo }))
 vi.mock("@/modules/sync/application/services/DataMergeService", () => ({ dataMergeService: { merge } }))
+vi.mock("@/modules/sync/application/services/SyncPushService", () => ({ syncPushService: { push: pushService } }))
 
 import { syncRouter } from "../sync"
 
 const OP = "11111111-1111-4111-8111-111111111111"
-const OP2 = "11111111-1111-4111-8111-111111111112"
 const ENT = "33333333-3333-4333-8333-333333333333"
 const G1 = "22222222-2222-4222-8222-222222222221"
 const G2 = "22222222-2222-4222-8222-222222222222"
 const caller = () => syncRouter.createCaller({ userId: "user-1" } as never)
 
-const op = (id: string, createdAt: string) => ({
-  id, entity: "item" as const, entityId: ENT, operation: "update" as const, payload: { name: "x" }, createdAt: new Date(createdAt),
-})
-
 beforeEach(() => {
   vi.resetAllMocks()
   vi.spyOn(console, "warn").mockImplementation(() => {})
   vi.spyOn(console, "error").mockImplementation(() => {})
-  syncRepo.checkEntityAccess.mockResolvedValue("allowed")
 })
 
 describe("sync.push", () => {
-  it("他人のエンティティへの操作は記録せず、処理済みとして返す（競合データも返さない）", async () => {
-    syncRepo.checkEntityAccess.mockResolvedValue("denied")
-    const res = await caller().push({ operations: [op(OP, "2026-03-01")] })
-    expect(res).toEqual({ processedIds: [OP], conflicts: [] })
-    expect(syncRepo.findLatestEntityState).not.toHaveBeenCalled()
-    expect(syncRepo.createOperation).not.toHaveBeenCalled()
+  const push = (protocolVersion: number) =>
+    caller().push({
+      protocolVersion,
+      operations: [{ opId: OP, entity: "item", entityId: ENT, type: "update", patch: { name: "x" }, clientTime: "2026-03-01T00:00:00.000Z" }],
+    })
+
+  it("対応しているプロトコルなら、ユーザーと操作をそのまま SyncPushService に渡す（#62 O4）", async () => {
+    pushService.mockResolvedValue({ serverTime: "t", results: [] })
+    expect(await push(1)).toEqual({ serverTime: "t", results: [] })
+    expect(pushService).toHaveBeenCalledWith("user-1", [expect.objectContaining({ opId: OP, entityId: ENT })])
   })
 
-  it("サーバーに状態がなければ操作を記録する", async () => {
-    syncRepo.findLatestEntityState.mockResolvedValue(null)
-    const res = await caller().push({ operations: [op(OP, "2026-03-01")] })
-    expect(res.processedIds).toEqual([OP])
-    expect(syncRepo.createOperation).toHaveBeenCalledWith(expect.objectContaining({ id: OP, userId: "user-1", entityId: ENT }))
+  it("対応外の protocolVersion は CLIENT_TOO_OLD（PRECONDITION_FAILED）で、何も適用しない", async () => {
+    await expect(push(0)).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: "CLIENT_TOO_OLD" })
+    await expect(push(2)).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: "CLIENT_TOO_OLD" })
+    expect(pushService).not.toHaveBeenCalled()
   })
 
-  it("ローカルのほうが新しければ記録する（Last Write Wins）", async () => {
-    syncRepo.findLatestEntityState.mockResolvedValue({ createdAt: new Date("2026-02-01"), payload: "{}" })
-    const res = await caller().push({ operations: [op(OP, "2026-03-01")] })
-    expect(res.conflicts).toEqual([])
-    expect(syncRepo.createOperation).toHaveBeenCalled()
-  })
-
-  it("サーバーのほうが新しければ競合として返し、記録しない", async () => {
-    syncRepo.findLatestEntityState.mockResolvedValue({ createdAt: new Date("2026-04-01"), payload: '{"name":"server"}' })
-    const res = await caller().push({ operations: [op(OP, "2026-03-01")] })
-    expect(res.processedIds).toEqual([])
-    expect(res.conflicts).toEqual([
-      expect.objectContaining({ operationId: OP, entityId: ENT, serverData: { name: "server" }, serverUpdatedAt: new Date("2026-04-01") }),
-    ])
-    expect(syncRepo.createOperation).not.toHaveBeenCalled()
-  })
-
-  it("サーバーに存在しないエンティティは、自分の操作ログだけで競合判定する", async () => {
-    syncRepo.checkEntityAccess.mockResolvedValue("not_found")
-    syncRepo.findLatestEntityState.mockResolvedValue(null)
-    await caller().push({ operations: [op(OP, "2026-03-01")] })
-    expect(syncRepo.findLatestEntityState).toHaveBeenCalledWith("item", ENT, { userId: "user-1" })
-  })
-
-  it("1 件が失敗しても残りの操作は続けて処理する", async () => {
-    syncRepo.findLatestEntityState.mockResolvedValue(null)
-    syncRepo.createOperation.mockRejectedValueOnce(new Error("db")).mockResolvedValueOnce(undefined)
-    const res = await caller().push({ operations: [op(OP, "2026-03-01"), op(OP2, "2026-03-02")] })
-    expect(res.processedIds).toEqual([OP2])
+  it("101 件以上の操作は入力の検証で拒否する", async () => {
+    const operations = Array.from({ length: 101 }, () => ({
+      opId: OP, entity: "item" as const, entityId: ENT, type: "delete" as const, clientTime: "2026-03-01T00:00:00.000Z",
+    }))
+    await expect(caller().push({ protocolVersion: 1, operations })).rejects.toMatchObject({ code: "BAD_REQUEST" })
+    expect(pushService).not.toHaveBeenCalled()
   })
 })
 

@@ -55,7 +55,7 @@ export interface ShoppingListRepository {
   /**
    * リストアイテムを削除
    */
-  removeItem(id: string, actorUserId: string): Promise<void>
+  removeItem(id: string, actorUserId: string, executor?: DbExecutor): Promise<void>
 
   /**
    * リストアイテムをIDで取得
