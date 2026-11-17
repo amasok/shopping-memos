@@ -183,6 +183,31 @@ describe.skipIf(!TEST_DB_URL)("sync.pull（実 DB）", () => {
     expect(new Set(returned).size).toBe(600)
   })
 
+  it("所属グループのデータと、グループのない自分のデータの両方を、ページの境目をまたいで取れる", async () => {
+    const { db, schema } = ctx
+    const me = await newUser()
+    const other = await newUser()
+    const group = await newGroup(me, other)
+    const personal = Array.from({ length: 300 }, () => crypto.randomUUID())
+    const shared = Array.from({ length: 300 }, () => crypto.randomUUID())
+    await db.insert(schema.tags).values(personal.map((id) => ({ id, name: "個人", userId: me })))
+    await db.insert(schema.tags).values(shared.map((id) => ({ id, name: "共有", userId: other, groupId: group })))
+    await insertTag(other) // 他人の個人データは含まない
+
+    const { pages } = await pullAll(me)
+    expect(pages.map((p) => p.hasMore)).toEqual([true, false])
+    const returned = pages.flatMap((p) => p.changes.tags).map((t) => t.id as string)
+    expect(returned.sort()).toEqual([...personal, ...shared].sort())
+  })
+
+  it("時刻として正しくない値のカーソルは、DB に送らず InvalidCursorError", async () => {
+    const me = await newUser()
+    const cursor = Buffer.from(
+      JSON.stringify({ v: 1, pos: { tags: { at: "2026-13-45 99:99:99.000000", id: "x", started: false }, items: null, lists: null, listItems: null } })
+    ).toString("base64url")
+    await expect(ctx.pull.syncPullService.pull(me, cursor)).rejects.toBeInstanceOf(ctx.pull.InvalidCursorError)
+  })
+
   it("ページが埋まって取れなかったエンティティは、次のページで最初から（さかのぼって）取る", async () => {
     const { db, schema } = ctx
     const me = await newUser()

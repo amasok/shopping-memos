@@ -71,6 +71,17 @@ describe("カーソルの文字列", () => {
     expect(decodeCursor(encodeCursor(cursor))).toEqual(cursor)
   })
 
+  it("形は合っていても時刻として正しくない値・マイクロ秒の 6 桁がない値は InvalidCursorError（DB のエラーにしない）", () => {
+    const withAt = (at: string) =>
+      Buffer.from(JSON.stringify({ v: 1, pos: { tags: { at, id: "x", started: true }, items: null, lists: null, listItems: null } })).toString(
+        "base64url"
+      )
+    expect(() => decodeCursor(withAt("2026-13-45 99:99:99.000000"))).toThrow(InvalidCursorError)
+    expect(() => decodeCursor(withAt("2026-02-30 00:00:00.000000"))).toThrow(InvalidCursorError)
+    expect(() => decodeCursor(withAt("2026-01-01 00:00:00"))).toThrow(InvalidCursorError)
+    expect(decodeCursor(withAt("2026-02-28 23:59:59.999999")).pos.tags?.at).toBe("2026-02-28 23:59:59.999999")
+  })
+
   it("形が壊れている・時刻の形でない・バージョンが違うカーソルは InvalidCursorError", () => {
     const bad = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url")
     expect(() => decodeCursor("%%%")).toThrow(InvalidCursorError)
@@ -101,7 +112,7 @@ describe("SyncPullService のページング", () => {
     state.rows = { tags: rowsOf(PULL_PAGE_SIZE + 1, "t"), items: rowsOf(1, "i") }
     const start = encodeCursor({
       v: 1,
-      pos: { tags: null, items: { at: "2025-12-31 00:00:00", id: "old", started: false }, lists: null, listItems: null },
+      pos: { tags: null, items: { at: "2025-12-31 00:00:00.000000", id: "old", started: false }, lists: null, listItems: null },
     })
     const out = await syncPullService.pull("u1", start)
     expect(out.hasMore).toBe(true)
@@ -111,7 +122,7 @@ describe("SyncPullService のページング", () => {
     // 続きのページではさかのぼらない
     expect(pos.tags).toMatchObject({ id: `t-${PULL_PAGE_SIZE - 1}`, started: true })
     // 取れなかったエンティティは、次のページでさかのぼって取る
-    expect(pos.items).toEqual({ at: "2025-12-31 00:00:00", id: "old", started: false })
+    expect(pos.items).toEqual({ at: "2025-12-31 00:00:00.000000", id: "old", started: false })
   })
 
   it("行がなかったエンティティは、位置を変えずにさかのぼり済みにする（続きのページ）", async () => {
@@ -119,10 +130,10 @@ describe("SyncPullService のページング", () => {
     state.rows = { tags: [], items: rowsOf(PULL_PAGE_SIZE + 1, "i") }
     const start = encodeCursor({
       v: 1,
-      pos: { tags: { at: "2025-12-31 00:00:00", id: "x", started: false }, items: null, lists: null, listItems: null },
+      pos: { tags: { at: "2025-12-31 00:00:00.000000", id: "x", started: false }, items: null, lists: null, listItems: null },
     })
     const out = await syncPullService.pull("u1", start)
     expect(out.hasMore).toBe(true)
-    expect(decodeCursor(out.nextCursor).pos.tags).toEqual({ at: "2025-12-31 00:00:00", id: "x", started: true })
+    expect(decodeCursor(out.nextCursor).pos.tags).toEqual({ at: "2025-12-31 00:00:00.000000", id: "x", started: true })
   })
 })

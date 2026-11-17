@@ -8,7 +8,7 @@ import {
   shoppingLists,
   tags,
 } from "@/infrastructure/db/drizzle/schema"
-import { accessibleByUser, type DbExecutor } from "@/infrastructure/db/ownership"
+import { ownedOrInGroups, type DbExecutor } from "@/infrastructure/db/ownership"
 import { z } from "@/shared/schemas/z"
 import type { SyncPullEntity, SyncPullOutput } from "@/shared/schemas/sync"
 
@@ -24,6 +24,28 @@ import type { SyncPullEntity, SyncPullOutput } from "@/shared/schemas/sync"
  */
 
 export const PULL_PAGE_SIZE = 500
+
+/**
+ * カーソルの時刻の形。DateStyle の設定に左右されないよう to_char で固定する（::text はセッションの設定で形が変わる）
+ */
+const AT_FORMAT = "YYYY-MM-DD HH24:MI:SS.US"
+const AT_PATTERN = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.\d{6}$/
+
+/** 形は合っていても、時刻として正しいか（2026-13-45 などを ::timestamp で DB のエラーにしない） */
+function isValidTimestamp(value: string): boolean {
+  const m = AT_PATTERN.exec(value)
+  if (!m) return false
+  const [y, mo, d, h, mi, s] = m.slice(1).map(Number)
+  const date = new Date(Date.UTC(y, mo - 1, d, h, mi, s))
+  return (
+    date.getUTCFullYear() === y &&
+    date.getUTCMonth() === mo - 1 &&
+    date.getUTCDate() === d &&
+    date.getUTCHours() === h &&
+    date.getUTCMinutes() === mi &&
+    date.getUTCSeconds() === s
+  )
+}
 const ENTITIES = ["tags", "items", "lists", "listItems"] as const satisfies readonly SyncPullEntity[]
 
 /** カーソルの不正（形が壊れている・改ざん）。ルーターで BAD_REQUEST にする */
@@ -36,8 +58,8 @@ export class InvalidCursorError extends Error {
 
 const positionSchema = z
   .object({
-    /** 最後に返した行の updated_at（DB の文字列。マイクロ秒まで） */
-    at: z.string().max(40).regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$/),
+    /** 最後に返した行の updated_at（DB の文字列。マイクロ秒まで。AT_FORMAT の形） */
+    at: z.string().regex(AT_PATTERN).refine(isValidTimestamp),
     id: z.string().max(100),
     /** この pull の中で、もう最初のページを取ったか（取ったら 60 秒さかのぼらない） */
     started: z.boolean(),
@@ -75,25 +97,31 @@ function afterPosition(table: Table, pos: Position): SQL | undefined {
   if (!pos.started) {
     return sql`${table.updatedAt} > ${pos.at}::timestamp - interval '60 seconds'`
   }
-  return sql`(${table.updatedAt}, ${table.id}) > (${pos.at}::timestamp, ${pos.id})`
+  // 行の比較だけだとインデックスの範囲にならないので、updated_at の下限も付ける
+  return sql`${table.updatedAt} >= ${pos.at}::timestamp AND (${table.updatedAt}, ${table.id}) > (${pos.at}::timestamp, ${pos.id})`
 }
 
 type PageRow = { row: Record<string, unknown> & { id: string }; at: string }
+
+/** カーソルに入れる updated_at の文字列（形を固定する） */
+const atText = (table: Table) => sql<string>`to_char(${table.updatedAt}, ${AT_FORMAT})`
 
 async function fetchPage(
   tx: DbExecutor,
   entity: SyncPullEntity,
   userId: string,
+  groupIds: readonly string[],
   pos: Position,
   limit: number
 ): Promise<PageRow[]> {
   if (entity === "listItems") {
     // リストのアイテムは親のリストで判定する。親のリストが削除済みなら、tombstone として返す（O3b からの申し送り）
     const rows = await tx
-      .select({ row: listItems, at: sql<string>`${listItems.updatedAt}::text`, parentDeletedAt: shoppingLists.deletedAt })
+      .select({ row: listItems, at: atText(listItems), parentDeletedAt: shoppingLists.deletedAt })
       .from(listItems)
       .innerJoin(shoppingLists, eq(listItems.listId, shoppingLists.id))
-      .where(and(accessibleByUser(shoppingLists, userId), afterPosition(listItems, pos)))
+      // 親のリストで判定するので、list_items の (user_id|group_id, updated_at) のインデックスは使えない（件数が少ないうちは十分）
+      .where(and(ownedOrInGroups(shoppingLists, userId, groupIds), afterPosition(listItems, pos)))
       .orderBy(asc(listItems.updatedAt), asc(listItems.id))
       .limit(limit)
     return rows.map(({ row, at, parentDeletedAt }) => ({
@@ -103,9 +131,9 @@ async function fetchPage(
   }
   const table = { tags, items, lists: shoppingLists }[entity]
   const rows = await tx
-    .select({ row: table, at: sql<string>`${table.updatedAt}::text` })
+    .select({ row: table, at: atText(table) })
     .from(table)
-    .where(and(accessibleByUser(table, userId), afterPosition(table, pos)))
+    .where(and(ownedOrInGroups(table, userId, groupIds), afterPosition(table, pos)))
     .orderBy(asc(table.updatedAt), asc(table.id))
     .limit(limit)
   return rows as PageRow[]
@@ -130,10 +158,12 @@ export class SyncPullService {
     const cursor = decodeCursor(cursorValue)
     return db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL statement_timeout = '30s'`)
+      // 所属グループを先に読み、同じトランザクションの中でスコープの条件に使う
       const memberships = await tx
         .select({ groupId: groupMembers.groupId })
         .from(groupMembers)
         .where(eq(groupMembers.userId, userId))
+      const groupIds = memberships.map((m) => m.groupId)
 
       const changes: SyncPullOutput["changes"] = { tags: [], items: [], lists: [], listItems: [] }
       const next: Cursor = { v: 1, pos: { ...cursor.pos } }
@@ -147,7 +177,7 @@ export class SyncPullService {
           break
         }
         const pos = cursor.pos[entity]
-        const rows = await fetchPage(tx, entity, userId, pos, remaining + 1)
+        const rows = await fetchPage(tx, entity, userId, groupIds, pos, remaining + 1)
         const page = rows.slice(0, remaining)
         if (rows.length > remaining) hasMore = true
         const last = page.at(-1)
@@ -170,7 +200,7 @@ export class SyncPullService {
       return {
         serverTime: new Date(now).toISOString(),
         changes,
-        memberships: { groupIds: memberships.map((m) => m.groupId) },
+        memberships: { groupIds },
         nextCursor: encodeCursor(next),
         hasMore,
       }
