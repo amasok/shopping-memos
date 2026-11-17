@@ -3,6 +3,10 @@
 --
 -- updated_at がなかった shopping_lists / list_items は、既存行を created_at で埋めてから NOT NULL・既定値 now() にする
 -- （ADD COLUMN に DEFAULT now() を付けると、既存行がマイグレーションの時刻になってしまうため）
+--
+-- drizzle は未適用のマイグレーションを 1 トランザクションで流すので、4 テーブルの排他ロックがコミットまで続く。
+-- ロック待ちの後ろにアプリのクエリが詰まらないよう、ロックを 5 秒待って取れなければ失敗させる（やり直せばよい）
+SET LOCAL lock_timeout = '5s';--> statement-breakpoint
 ALTER TABLE "shopping_lists" ADD COLUMN IF NOT EXISTS "updated_at" timestamp;--> statement-breakpoint
 UPDATE "shopping_lists" SET "updated_at" = "created_at" WHERE "updated_at" IS NULL;--> statement-breakpoint
 ALTER TABLE "shopping_lists" ALTER COLUMN "updated_at" SET DEFAULT now();--> statement-breakpoint
