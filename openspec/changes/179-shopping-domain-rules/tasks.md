@@ -8,17 +8,17 @@
 
 ## 2. domain の純粋関数（`src/modules/shopping/domain/services/`）
 
-- [ ] 2.1 `catalogMatch.ts` のテストを書いてから実装する（「論理削除された商品は照合しない」、完了・取り消し・0 件の削除それぞれの購入状態の絞り込み）。domain から `@/infrastructure`・drizzle・dexie・tRPC を import していないことを grep で確かめるテストも置く
-- [ ] 2.2 `finishShopping.ts`（`planFinishShopping`）のテストを書いてから実装する（進行中でない・チェック 0 件・チェック済みの名前と外す商品の id・リストの状態に時刻と場所が入る）
+- [ ] 2.1 `catalogMatch.ts` のテストを書いてから実装する（「論理削除された商品は照合しない」、購入済みにするほうは購入状態を見ず、未購入に戻すほうは購入済みだけを選ぶ）。domain から `@/infrastructure`・drizzle・dexie・tRPC を import していないことを grep で確かめるテストも置く
+- [ ] 2.2 `finishShopping.ts`（`planFinishShopping`）のテストを書いてから実装する（進行中でないと `not_in_progress`、チェック済みの名前と外す商品の id、チェック 0 件でも完了の計画になる、リストの状態に時刻と場所が入る）
 - [ ] 2.3 `revertHistory.ts`（`planRevertHistory`）のテストを書いてから実装する（購入日時がないと `not_completed`、戻した状態は進行中で日時・場所が null）
 - [ ] 2.4 `snapshot.ts`（`snapshotListItem`）のテストを書いてから実装する（「カタログの商品の名前・数量・メモ・タグを写す」「リストの商品の groupId はリストの groupId にする」）
 - [ ] 2.5 `activeListExclusion.ts`（`excludeItemsInActiveLists`）のテストを書いてから実装する（名前が一致する商品だけ除く）
 
 ## 3. サーバーの完了（tRPC と sync.push）
 
-- [ ] 3.1 `src/modules/shopping/__tests__/` の完了のテストを、新しい規則に合わせて先に直す・足す（「チェック済みの商品と同じ名前の未購入の商品を購入済みにする」「同じ名前の購入済みの商品の購入日時は変えない」「未チェックの商品をリストから外す」「完了したリストに購入日時と場所が入る」「完了済みのリストは完了できない」「tRPC にチェック 0 件の完了が届くと断る」）
+- [ ] 3.1 `src/modules/shopping/__tests__/` の完了のテストを、specs に合わせて先に直す・足す（「チェック済みの商品と同じ名前の商品を購入済みにする」「同じ名前の購入済みの商品も購入日時を完了の時刻にする」「チェック 0 件のリストも完了でき空の購入履歴になる」「未チェックの商品をリストから外す」「完了したリストに購入日時と場所が入る」「完了済みのリストは完了できない」）
 - [ ] 3.2 完了の I/O の手順を application の関数にまとめ（D3）、`ShoppingService.finishShopping` をそれに置き換える。リストの商品をトランザクションの中で読む。3.1 のテストが通ることを確かめる
-- [ ] 3.3 `src/modules/sync/__tests__/syncPushService.test.ts` と `sync-push.db.test.ts` に完了のテストを足す（「同期で届いた完了済みのリストの完了は conflict にする」「同期で届いたチェック 0 件の完了は conflict にする」「同期で届いた完了は操作の時刻より新しい購入日時を上書きしない」）
+- [ ] 3.3 `src/modules/sync/__tests__/syncPushService.test.ts` と `sync-push.db.test.ts` に完了のテストを足す（「同期で届いた完了済みのリストの完了は conflict にする」「同期で届いた完了は操作の時刻より新しい購入日時を上書きしない」、sync.push 側の「チェック 0 件のリストも完了でき空の購入履歴になる」）
 - [ ] 3.4 `SyncPushService.finishShopping` を 3.2 の関数に置き換え、3.3 のテストと `npm run test:db` が通ることを確かめる
 
 ## 4. サーバーの取り消し
@@ -31,17 +31,11 @@
 - [ ] 5.1 `routers/shopping.ts` のスナップショットの 4 か所を `snapshotListItem` に置き換え、既存の router のテストが通ることを確かめる
 - [ ] 5.2 `routers/catalog.ts` の `getItems` の除外のテストを足し（「進行中のリストにある商品と同じ名前の商品は一覧に出ない」「完了したリストや削除したリストの商品は除かない」「ほかのスコープの進行中のリストの商品は除かない」）、名前での除外を `excludeItemsInActiveLists` に置き換える
 
-## 6. チェック 0 件の完了（削除の指定と画面）
+## 6. 確認
 
-- [ ] 6.1 `deleteListSchema` の `deleteCatalogItems` と、tRPC の `deleteList` のテストを先に書き（「リストの商品ごと消すとリストと同じ名前の未購入の商品を削除する」「リストだけ消すとカタログの商品は変えずに買いたいものに戻る」のサーバー側）、`ShoppingSyncService` に実装する
-- [ ] 6.2 ゲストの `useListMutations.deleteList` の指定のテストを先に書き（同じ 2 つの Scenario のゲスト側）、`selectItemsToDeleteWithList` を使って実装する
-- [ ] 6.3 `app/lists/detail/page.tsx` のダイアログを実装し、E2E（`e2e/shopping.spec.ts`）に「チェック 0 件で完了を押すと確認ダイアログを出す」「リストの商品ごと消す…」「リストだけ消す…」「キャンセルするとリストはそのまま」をゲストで、`e2e/auth/` にログイン中の「リストの商品ごと消す…」を足す。文言はユーザーの確認の結果に合わせる
-
-## 7. 確認
-
-- [ ] 7.1 `npm run lint`・`npm run test:run`・`npm run test:coverage`（80% 以上）・`npm run build` が通る
-- [ ] 7.2 `npm run test:db` が通る
-- [ ] 7.3 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く
+- [ ] 6.1 `npm run lint`・`npm run test:run`・`npm run test:coverage`（80% 以上）・`npm run build` が通る
+- [ ] 6.2 `npm run test:db` が通る
+- [ ] 6.3 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く
 
 ## Workflow follow-up
 
