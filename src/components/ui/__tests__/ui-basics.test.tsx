@@ -47,6 +47,23 @@ describe("Button", () => {
     expect(btn.style.backgroundColor).toBe("")
   })
 
+  it("利用側が onMouseEnter / onMouseLeave を渡しても、primary のホバー色が切り替わり、利用側のハンドラーも呼ばれる（#158）", () => {
+    const onMouseEnter = vi.fn()
+    const onMouseLeave = vi.fn()
+    render(
+      <Button onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+        保存
+      </Button>
+    )
+    const btn = screen.getByRole("button", { name: "保存" })
+    fireEvent.mouseEnter(btn)
+    expect(btn.style.backgroundColor).toBe("var(--theme-primary-hover)")
+    expect(onMouseEnter).toHaveBeenCalledTimes(1)
+    fireEvent.mouseLeave(btn)
+    expect(btn.style.backgroundColor).toBe("var(--theme-primary)")
+    expect(onMouseLeave).toHaveBeenCalledTimes(1)
+  })
+
   it("クリックで onClick を呼ぶ", () => {
     const onClick = vi.fn()
     render(<Button variant="ghost" size="sm" onClick={onClick}>x</Button>)
