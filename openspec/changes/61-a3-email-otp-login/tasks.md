@@ -5,7 +5,7 @@
 進め方（PR が大きいため。レビュー M2）:
 - 節（0〜6）ごとにコミットを分け、どのコミットも 1000 行を超えないようにする
 - どの節の終わりでも `npm run test:run` と `npm run build` が通る状態にする（next-auth は 5 の後まで残す。0.2）
-- 節の区切りごとに HEAD を tester と reviewer に渡し、少しずつ見てもらう
+- 節の区切りごとに HEAD を tester と reviewer に渡し、少しずつ見てもらう。3.3（tRPC の `createContext` の置き換え）から 4.1（`AuthContext` の置き換え）までは画面からのログインが動かないので、E2E は 5 の後に流す
 
 ## 0. 準備
 
