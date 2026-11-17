@@ -34,6 +34,7 @@ describe.skipIf(!TEST_DB_URL)("論理削除と同期用の列（実 DB）", () =
     areTagsInScope: typeof import("@/modules/catalog/application/services/ownership").areTagsInScope
     entityAccess: typeof import("@/modules/sync/infrastructure/entityAccess")
     merge: typeof import("@/modules/sync/application/services/DataMergeService").dataMergeService
+    ShoppingSyncService: typeof import("@/modules/shopping/application/services/ShoppingSyncService").ShoppingSyncService
   }
   let ctx: Ctx
 
@@ -55,6 +56,8 @@ describe.skipIf(!TEST_DB_URL)("論理削除と同期用の列（実 DB）", () =
       areTagsInScope: (await import("@/modules/catalog/application/services/ownership")).areTagsInScope,
       entityAccess: await import("@/modules/sync/infrastructure/entityAccess"),
       merge: (await import("@/modules/sync/application/services/DataMergeService")).dataMergeService,
+      ShoppingSyncService: (await import("@/modules/shopping/application/services/ShoppingSyncService"))
+        .ShoppingSyncService,
     }
     const { db, schema } = ctx
     await db
@@ -182,6 +185,14 @@ describe.skipIf(!TEST_DB_URL)("論理削除と同期用の列（実 DB）", () =
       expect(await ctx.items.canAccess(item.id, owner)).toBe(false)
       const listed = await ctx.items.findMany({ userId: owner, includePurchased: true })
       expect(listed.map((i) => i.id)).not.toContain(item.id)
+    })
+
+    it("タグの入れ替えに失敗したら、行の更新も戻す（1 つのトランザクション）", async () => {
+      const item = await newItem("update-rollback")
+      await expect(
+        ctx.items.update({ id: item.id, name: "renamed", tagIds: [id("no-such-tag")] }, owner)
+      ).rejects.toThrow()
+      expect((await rawItem(item.id)).name).toBe("update-rollback")
     })
 
     it("削除済みのアイテムは更新・再削除できない", async () => {
@@ -439,6 +450,39 @@ describe.skipIf(!TEST_DB_URL)("論理削除と同期用の列（実 DB）", () =
       expect(byId.get(deleted.id)).not.toBeNull()
       expect(byId.has(guestTagId)).toBe(true)
       expect(byId.get(guestTagId)).toBeNull()
+    })
+  })
+  describe("履歴の削除", () => {
+    it("リストの削除に失敗したら、同じトランザクションのカタログのアイテムの削除も戻す", async () => {
+      const catalog = await newItem("履歴の削除の巻き戻し")
+      const list = await ctx.lists.create({ id: id("hist-del"), name: "h", userId: owner })
+      const service = new ctx.ShoppingSyncService(ctx.lists)
+      const scope = { userId: owner, groupId: null }
+
+      // スコープ外のユーザーとしてリストを削除する（RowNotFoundError になる）
+      await expect(
+        service.deleteHistory(list.id, stranger, (tx) =>
+          ctx.scope.deleteScopedItemsByName(tx, scope, catalog.name)
+        )
+      ).rejects.toBeInstanceOf(ctx.errors.RowNotFoundError)
+
+      expect((await rawItem(catalog.id)).deletedAt).toBeNull()
+      expect(await ctx.lists.findById(list.id)).not.toBeNull()
+    })
+
+    it("成功すると、カタログのアイテムとリストの両方が論理削除され、削除したアイテムの ID を返す", async () => {
+      const catalog = await newItem("履歴の削除の成功")
+      const list = await ctx.lists.create({ id: id("hist-del-ok"), name: "h", userId: owner })
+      const service = new ctx.ShoppingSyncService(ctx.lists)
+      const scope = { userId: owner, groupId: null }
+
+      const ids = await service.deleteHistory(list.id, owner, (tx) =>
+        ctx.scope.deleteScopedItemsByName(tx, scope, catalog.name)
+      )
+
+      expect(ids).toEqual([catalog.id])
+      expect((await rawItem(catalog.id)).deletedAt).not.toBeNull()
+      expect(await ctx.lists.findById(list.id)).toBeNull()
     })
   })
 })

@@ -26,7 +26,15 @@ vi.mock("@/modules/shopping/application/services/ShoppingSyncService", () => ({
     canAccessHistory = async () => state.canAccess
     getHistoryById = async () => state.history
     revertHistory = state.revertHistory
-    deleteHistory = state.deleteHistory
+    // カタログのアイテムの削除（コールバック）を、記録用の DB で実行する（#62 O3b）
+    deleteHistory = async (
+      id: string,
+      userId: string,
+      deleteCatalogItems?: (tx: unknown) => Promise<string[]>
+    ) => {
+      await state.deleteHistory(id, userId)
+      return deleteCatalogItems ? deleteCatalogItems(state.fake.db) : []
+    }
   },
 }))
 

@@ -1,7 +1,7 @@
 import { eq, and, or, inArray, isNull, isNotNull, desc, type SQL } from "drizzle-orm"
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
 import { db } from "@/infrastructure/db/drizzle/client"
-import { accessibleByUser, canAccessScope } from "@/infrastructure/db/ownership"
+import { accessibleByUser, canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
 import { RowNotFoundError, rethrowDuplicateId } from "@/infrastructure/db/errors"
 import {
   createdFieldTimes,
@@ -210,22 +210,28 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     }
   }
 
-  async delete(id: string, actorUserId: string): Promise<void> {
-    // リストとリストのアイテムを論理削除する（物理削除の cascade の代わり）
-    await db.transaction(async (tx) => {
-      const deleted = await tx
-        .update(shoppingLists)
-        .set(softDeleteValues())
-        .where(writableList(id, actorUserId))
-        .returning({ id: shoppingLists.id })
-      if (deleted.length === 0) {
-        throw new RowNotFoundError("リスト")
-      }
-      await tx
-        .update(listItems)
-        .set(softDeleteValues())
-        .where(and(eq(listItems.listId, id), notDeleted(listItems)))
-    })
+  async delete(id: string, actorUserId: string, executor?: DbExecutor): Promise<void> {
+    // リストとリストのアイテムを論理削除する（物理削除の cascade の代わり）。
+    // executor を渡すと、そのトランザクションの中で行う（履歴の削除で、カタログのアイテムの削除とまとめるため）
+    if (executor) {
+      return this.softDeleteWithItems(executor, id, actorUserId)
+    }
+    await db.transaction((tx) => this.softDeleteWithItems(tx, id, actorUserId))
+  }
+
+  private async softDeleteWithItems(executor: DbExecutor, id: string, actorUserId: string): Promise<void> {
+    const deleted = await executor
+      .update(shoppingLists)
+      .set(softDeleteValues())
+      .where(writableList(id, actorUserId))
+      .returning({ id: shoppingLists.id })
+    if (deleted.length === 0) {
+      throw new RowNotFoundError("リスト")
+    }
+    await executor
+      .update(listItems)
+      .set(softDeleteValues())
+      .where(and(eq(listItems.listId, id), notDeleted(listItems)))
   }
 
   // === リストアイテム操作 ===

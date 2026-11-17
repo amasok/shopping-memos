@@ -446,20 +446,32 @@ describe("shopping の履歴", () => {
       await expect(caller().deleteHistory({ id: ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
     })
 
+    // 履歴の削除は、カタログのアイテムの削除をコールバックで受け取り、同じトランザクションで行う（#62 O3b）
+    const runDeleteCallback = () =>
+      sync.deleteHistory.mockImplementation(
+        async (_id: string, _userId: string, deleteCatalogItems: (tx: unknown) => Promise<string[]>) =>
+          deleteCatalogItems("tx")
+      )
+
     it("対応するカタログアイテムを消し、delete の同期ログを残して履歴を削除する", async () => {
       sync.getHistoryById.mockResolvedValue({ items: [{ name: "牛乳" }] })
       scope.getListScope.mockResolvedValue({ userId: "user-1", groupId: null })
       scope.deleteScopedItemsByName.mockResolvedValue(["c1"])
+      runDeleteCallback()
       expect(await caller().deleteHistory({ id: ID })).toEqual({ success: true })
       expect(syncRepo.createOperation).toHaveBeenCalledWith(
         expect.objectContaining({ entityId: "c1", operation: "delete", payload: { id: "c1" } })
       )
-      expect(sync.deleteHistory).toHaveBeenCalledWith(ID, "user-1")
+      expect(sync.deleteHistory).toHaveBeenCalledWith(ID, "user-1", expect.any(Function))
+      // カタログのアイテムの削除は、履歴の削除のトランザクションの中で行う
+      expect(scope.getListScope).toHaveBeenCalledWith("tx", ID)
+      expect(scope.deleteScopedItemsByName).toHaveBeenCalledWith("tx", { userId: "user-1", groupId: null }, "牛乳")
     })
 
     it("スコープが分からなければカタログは消さず履歴だけ削除する", async () => {
       sync.getHistoryById.mockResolvedValue({ items: [{ name: "牛乳" }] })
       scope.getListScope.mockResolvedValue(null)
+      runDeleteCallback()
       await caller().deleteHistory({ id: ID })
       expect(scope.deleteScopedItemsByName).not.toHaveBeenCalled()
       expect(sync.deleteHistory).toHaveBeenCalled()

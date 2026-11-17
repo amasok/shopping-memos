@@ -609,28 +609,33 @@ export const shoppingRouter = router({
         })
       }
 
-      // リストに含まれるアイテムに対応するカタログアイテムを削除
-      // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
-      const scope = await getListScope(db, input.id)
-      if (scope) {
-        for (const listItem of history.items) {
-          const ids = await deleteScopedItemsByName(db, scope, listItem.name)
-          for (const catalogItemId of ids) {
-            // 同期ログを記録
-            await syncRepository.createOperation({
-              id: crypto.randomUUID(),
-              userId: ctx.userId,
-              entity: "item",
-              entityId: catalogItemId,
-              operation: "delete",
-              payload: { id: catalogItemId },
-            })
+      // リストに含まれるアイテムに対応するカタログアイテムと、リスト（list_items も）を、1 つのトランザクションで論理削除する。
+      // カタログアイテムはリストと同じスコープ（グループ or 作成者の個人データ）のものに限定する
+      const deletedCatalogItemIds = await shoppingSyncService.deleteHistory(
+        input.id,
+        ctx.userId,
+        async (tx) => {
+          const scope = await getListScope(tx, input.id)
+          if (!scope) return []
+          const ids: string[] = []
+          for (const listItem of history.items) {
+            ids.push(...(await deleteScopedItemsByName(tx, scope, listItem.name)))
           }
+          return ids
         }
-      }
+      )
 
-      // リストを論理削除（list_items もまとめて論理削除される）
-      await shoppingSyncService.deleteHistory(input.id, ctx.userId)
+      // 同期ログを記録（コミットの後）
+      for (const catalogItemId of deletedCatalogItemIds) {
+        await syncRepository.createOperation({
+          id: crypto.randomUUID(),
+          userId: ctx.userId,
+          entity: "item",
+          entityId: catalogItemId,
+          operation: "delete",
+          payload: { id: catalogItemId },
+        })
+      }
 
       return { success: true }
     }),

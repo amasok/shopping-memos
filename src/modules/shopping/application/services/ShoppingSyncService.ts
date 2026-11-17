@@ -1,3 +1,5 @@
+import { db } from "@/infrastructure/db/drizzle/client"
+import type { DbExecutor } from "@/infrastructure/db/ownership"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
 import type {
@@ -155,9 +157,22 @@ export class ShoppingSyncService {
     return null
   }
 
-  async deleteHistory(id: string, userId: string): Promise<void> {
-    // 履歴削除 = リスト削除（list_items もまとめて論理削除される）
-    await this.shoppingListRepository.delete(id, userId)
+  /**
+   * 履歴を削除する（リスト削除。list_items もまとめて論理削除される）
+   * @param deleteCatalogItems 同じトランザクションで行う、カタログのアイテムの削除（削除したアイテムの ID を返す）。
+   *   リストの削除が失敗したら、カタログのアイテムの削除も戻す
+   * @returns deleteCatalogItems が削除したカタログのアイテムの ID
+   */
+  async deleteHistory(
+    id: string,
+    userId: string,
+    deleteCatalogItems?: (executor: DbExecutor) => Promise<string[]>
+  ): Promise<string[]> {
+    const deletedCatalogItemIds = await db.transaction(async (tx) => {
+      const ids = deleteCatalogItems ? await deleteCatalogItems(tx) : []
+      await this.shoppingListRepository.delete(id, userId, tx)
+      return ids
+    })
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -168,6 +183,8 @@ export class ShoppingSyncService {
       operation: "delete",
       payload: { id },
     })
+
+    return deletedCatalogItemIds
   }
 
   async revertHistory(id: string, userId: string): Promise<ShoppingList> {

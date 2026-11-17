@@ -1,3 +1,4 @@
+import type { DbExecutor } from "@/infrastructure/db/ownership"
 import type {
   ShoppingList,
   ShoppingListWithItems,
@@ -37,7 +38,7 @@ export interface ShoppingListRepository {
   /**
    * 買い物リストを削除
    */
-  delete(id: string, actorUserId: string): Promise<void>
+  delete(id: string, actorUserId: string, executor?: DbExecutor): Promise<void>
 
   // === リストアイテム操作 ===
 

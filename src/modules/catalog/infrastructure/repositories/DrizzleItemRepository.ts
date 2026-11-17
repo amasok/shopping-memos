@@ -181,32 +181,36 @@ export class DrizzleItemRepository implements ItemRepository {
       updateData.memo = input.memo
     }
 
-    const [updated] = await db
-      .update(items)
-      .set(updateData)
-      .where(writableItem(input.id, actorUserId))
-      .returning()
-    if (!updated) {
-      throw new RowNotFoundError("アイテム")
-    }
-
-    // タグを更新
-    if (input.tagIds !== undefined) {
-      // 既存のタグを削除
-      await db.delete(itemTags).where(eq(itemTags.itemId, input.id))
-
-      // 新しいタグを追加
-      if (input.tagIds.length > 0) {
-        await db.insert(itemTags).values(
-          input.tagIds.map((tagId) => ({
-            itemId: input.id,
-            tagId,
-          }))
-        )
+    // 行の更新とタグの入れ替えを 1 つのトランザクションにする。
+    // 行の UPDATE で行ロックを取るので、間に削除が入って削除済みのアイテムにタグが付き直ることはない
+    return db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(items)
+        .set(updateData)
+        .where(writableItem(input.id, actorUserId))
+        .returning()
+      if (!updated) {
+        throw new RowNotFoundError("アイテム")
       }
-    }
 
-    return updated
+      // タグを更新
+      if (input.tagIds !== undefined) {
+        // 既存のタグを削除
+        await tx.delete(itemTags).where(eq(itemTags.itemId, input.id))
+
+        // 新しいタグを追加
+        if (input.tagIds.length > 0) {
+          await tx.insert(itemTags).values(
+            input.tagIds.map((tagId) => ({
+              itemId: input.id,
+              tagId,
+            }))
+          )
+        }
+      }
+
+      return updated
+    })
   }
 
   async delete(id: string, actorUserId: string): Promise<void> {
