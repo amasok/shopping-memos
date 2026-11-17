@@ -9,7 +9,7 @@ const state = vi.hoisted(() => ({
   deleteHistory: vi.fn(),
 }))
 
-vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/infrastructure/auth/server", () => ({ getAuth: vi.fn() }))
 vi.mock("@/infrastructure/db/drizzle/client", () => ({
   db: new Proxy({}, { get: (_t, prop) => (state.fake.db as never)[prop] }),
 }))

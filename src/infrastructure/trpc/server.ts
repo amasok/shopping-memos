@@ -1,7 +1,7 @@
 import { initTRPC, TRPCError } from "@trpc/server"
 import { formatErrorShape, toClientError } from "./error-format"
 import superjson from "superjson"
-import { auth } from "@/infrastructure/auth"
+import { getAuth } from "@/infrastructure/auth/server"
 
 /**
  * tRPCコンテキスト
@@ -18,22 +18,24 @@ export interface Context {
 }
 
 /**
- * コンテキスト作成関数
- * API Route から呼び出される
+ * コンテキスト作成関数（API Route から呼び出される）
+ *
+ * Better Auth の DB のセッション（Cookie）から作る（#61 A3a 3.3。design の D5）。
+ * リクエストのたびに DB のセッションを確かめるので、ログアウトや失効はすぐ効く。
+ * Auth.js の Cookie は読まない（切り替えの前のセッションはログインしていない扱い）
  */
-export async function createContext(): Promise<Context> {
-  const session = await auth()
-
+export async function createContext(opts?: { req?: Request }): Promise<Context> {
+  if (!opts?.req) return {}
+  const session = await (await getAuth()).api.getSession({ headers: opts.req.headers })
+  if (!session) return {}
   return {
-    userId: session?.user?.id,
-    user: session?.user
-      ? {
-          id: session.user.id!,
-          name: session.user.name,
-          email: session.user.email,
-          image: session.user.image,
-        }
-      : undefined,
+    userId: session.user.id,
+    user: {
+      id: session.user.id,
+      name: session.user.name,
+      email: session.user.email,
+      image: session.user.image,
+    },
   }
 }
 

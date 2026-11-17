@@ -112,6 +112,8 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 - 認証の route では Cookie の有無にかかわらずかける。攻撃者が自分のアドレスで被害者のブラウザをログインさせ、`DataMergeContext` で被害者のゲストのデータを取り込む（ログインの CSRF）のを防ぐ。Better Auth の Origin の確認（`trustedOrigins`）も有効のままにする
 - GET（tRPC の query・セッションの取得）は変更しないので対象外
 
+- **実装（3.x で決めた）**: 認証の route の許可リスト・オリジン・送信の種類の確認は `src/infrastructure/auth/route.ts` の `createAuthRouteHandler`（`[...all]/route.ts` はそれに `getAuth` をつなぐだけ）。許可リストはメソッドとパスの組（`GET /get-session`、`POST` の送信・照合・`/sign-out`）で、末尾の `/` や `%2F` を含むパスも 404。GET はオリジンを確かめない。tRPC の `createContext` は `({ req })` を受け取り、`getAuth().api.getSession({ headers: req.headers })` から作る（リクエストがなければ空）
+
 ### D7. 実装を 2 つの PR に分ける（A3a・A3b）
 
 | PR・change | 中身 |

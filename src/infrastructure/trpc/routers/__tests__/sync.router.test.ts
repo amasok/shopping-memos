@@ -9,7 +9,7 @@ const pullService = vi.hoisted(() => vi.fn())
 const groupRepo = vi.hoisted(() => ({ findByUserId: vi.fn() }))
 const merge = vi.hoisted(() => vi.fn())
 
-vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/infrastructure/auth/server", () => ({ getAuth: vi.fn() }))
 vi.mock("@/modules/sync/infrastructure/repositories/DrizzleSyncRepository", () => ({ syncRepository: syncRepo }))
 vi.mock("@/modules/identity/infrastructure/repositories/DrizzleGroupRepository", () => ({ groupRepository: groupRepo }))
 vi.mock("@/modules/sync/application/services/DataMergeService", () => ({ dataMergeService: { merge } }))

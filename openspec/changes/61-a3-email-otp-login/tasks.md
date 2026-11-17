@@ -30,9 +30,9 @@
 
 ## 3. route とオリジンの確認
 
-- [ ] 3.1 `src/lib/security/origin.ts` のテストを先に書き、実装する（`Origin` が違う・`null`・`Sec-Fetch-Site: cross-site` で 403、`Origin` も `Sec-Fetch-Site` もなければ通す）
-- [ ] 3.2 `src/app/api/auth/[...all]/route.ts` を作り（`[...nextauth]` を消す）、許可リストにないパスは 404、送信の `type` が `sign-in` 以外は 400、POST にオリジンの確認をかける。テストを先に書く（「許可していないパスは 404 になる」「ログイン以外の種類のコードの送信は断る」「許可したパスは動く」「別のオリジンからのログインは 403 になる」「Origin が null のリクエストは 403 になる」）
-- [ ] 3.3 tRPC の route の POST にオリジンの確認をかけ、`createContext` を `auth.api.getSession` に置き換える。テストを先に書く（「別のオリジンからの mutation は 403 になる」「Origin が null のリクエストは 403 になる」「同じオリジンからの mutation は処理される」「セッションがないと保護された API は 401 になる」「ログインすると tRPC でそのユーザーとして扱われる」「切り替え前の Auth.js の Cookie ではログインしていない扱いになる」「セッションの Cookie の属性」「ログアウトした後は控えておいた Cookie も使えない」）
+- [x] 3.1 `src/lib/security/origin.ts` のテストを先に書き、実装する（`Origin` が違う・`null`・`Sec-Fetch-Site: cross-site` で 403、`Origin` も `Sec-Fetch-Site` もなければ通す）
+- [x] 3.2 `src/app/api/auth/[...all]/route.ts` を作り（`[...nextauth]` を消す）、許可リストにないパスは 404、送信の `type` が `sign-in` 以外は 400、POST にオリジンの確認をかける。テストを先に書く（「許可していないパスは 404 になる」「ログイン以外の種類のコードの送信は断る」「許可したパスは動く」「別のオリジンからのログインは 403 になる」「Origin が null のリクエストは 403 になる」）
+- [x] 3.3 tRPC の route の POST にオリジンの確認をかけ、`createContext` を `auth.api.getSession` に置き換える。テストを先に書く（「別のオリジンからの mutation は 403 になる」「Origin が null のリクエストは 403 になる」「同じオリジンからの mutation は処理される」「セッションがないと保護された API は 401 になる」「ログインすると tRPC でそのユーザーとして扱われる」「切り替え前の Auth.js の Cookie ではログインしていない扱いになる」「セッションの Cookie の属性」「ログアウトした後は控えておいた Cookie も使えない」）
 
 ## 4. クライアント
 

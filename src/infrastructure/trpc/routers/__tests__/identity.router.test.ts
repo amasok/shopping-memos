@@ -7,7 +7,7 @@ const repo = vi.hoisted(() => ({
   findMembers: vi.fn(), createInvite: vi.fn(), findInviteByToken: vi.fn(), acceptInvite: vi.fn(),
   recordInviteCodeAttempt: vi.fn(), findByInviteCode: vi.fn(), addMember: vi.fn(), removeMember: vi.fn(),
 }))
-vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/infrastructure/auth/server", () => ({ getAuth: vi.fn() }))
 vi.mock("@/modules/identity/infrastructure/repositories/DrizzleGroupRepository", () => ({ groupRepository: repo }))
 
 import { identityRouter } from "../identity"
