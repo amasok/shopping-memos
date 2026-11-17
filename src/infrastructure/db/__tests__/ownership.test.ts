@@ -3,34 +3,10 @@ import { describe, it, expect } from "vitest"
 import type { SQL } from "drizzle-orm"
 import { PgDialect } from "drizzle-orm/pg-core"
 import { items, shoppingLists, tags } from "@/infrastructure/db/drizzle/schema"
-import { accessibleByUser, canAccessScope, isSameScope, ownedOrInGroups, scopeCondition, type DbExecutor } from "../ownership"
+import { accessibleByUser, canAccessScope, ownedOrInGroups, scopeCondition, type DbExecutor } from "../ownership"
 
 const dialect = new PgDialect()
 const render = (where: SQL) => dialect.sqlToQuery(where)
-
-describe("isSameScope (#101)", () => {
-  it("グループのデータ同士は、groupId が一致するときだけ同じ", () => {
-    expect(isSameScope({ userId: "a", groupId: "g1" }, { userId: "b", groupId: "g1" })).toBe(true)
-    expect(isSameScope({ userId: "a", groupId: "g1" }, { userId: "a", groupId: "g2" })).toBe(false)
-  })
-
-  it("グループと個人は、作成者が同じでも別", () => {
-    expect(isSameScope({ userId: "a", groupId: "g1" }, { userId: "a", groupId: null })).toBe(false)
-  })
-
-  it("個人のデータ同士は、userId が一致するときだけ同じ", () => {
-    expect(isSameScope({ userId: "a", groupId: null }, { userId: "a", groupId: null })).toBe(true)
-    expect(isSameScope({ userId: "a", groupId: null }, { userId: "b", groupId: null })).toBe(false)
-  })
-
-  it("groupId の null と undefined は、どちらも「グループなし」", () => {
-    expect(isSameScope({ userId: "a", groupId: undefined }, { userId: "a", groupId: null })).toBe(true)
-  })
-
-  it("所有者が分からない個人データは、どれとも一致しない（同じ null 同士でも）", () => {
-    expect(isSameScope({ userId: null, groupId: null }, { userId: null, groupId: null })).toBe(false)
-  })
-})
 
 describe("scopeCondition (#101)", () => {
   it.each([

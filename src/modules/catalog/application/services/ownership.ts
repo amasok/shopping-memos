@@ -2,7 +2,8 @@ import { and, inArray } from "drizzle-orm"
 import { notDeleted } from "@/infrastructure/db/syncColumns"
 import { db } from "@/infrastructure/db/drizzle/client"
 import { tags } from "@/infrastructure/db/drizzle/schema"
-import { isSameScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
+import type { DbExecutor } from "@/infrastructure/db/ownership"
+import { isSameScope, type OwnerScope } from "@/shared/domain/ownerScope"
 
 // 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
 // ここからは再エクスポートしない（#151）

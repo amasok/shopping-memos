@@ -5,15 +5,15 @@ const sync = vi.hoisted(() => ({
   getLists: vi.fn(), getList: vi.fn(), canAccessList: vi.fn(), createList: vi.fn(), updateList: vi.fn(),
   deleteList: vi.fn(), addItem: vi.fn(), canAccessItem: vi.fn(), getItem: vi.fn(), removeItem: vi.fn(),
   updateItem: vi.fn(), getHistory: vi.fn(), canAccessHistory: vi.fn(), getHistoryById: vi.fn(),
-  revertHistory: vi.fn(), deleteHistory: vi.fn(),
+  deleteHistory: vi.fn(),
 }))
-const shopping = vi.hoisted(() => ({ finishShopping: vi.fn() }))
+const shopping = vi.hoisted(() => ({ finishShopping: vi.fn(), revertHistory: vi.fn() }))
 const catalog = vi.hoisted(() => ({ createItem: vi.fn() }))
 const itemRepo = vi.hoisted(() => ({ findById: vi.fn(), findMany: vi.fn() }))
 const groupRepo = vi.hoisted(() => ({ isMember: vi.fn(), findByUserId: vi.fn() }))
 const syncRepo = vi.hoisted(() => ({ createOperation: vi.fn() }))
 const scope = vi.hoisted(() => ({
-  getListScope: vi.fn(), markScopedItemsUnpurchasedByName: vi.fn(), deleteScopedItemsByName: vi.fn(),
+  getListScope: vi.fn(), deleteScopedItemsByName: vi.fn(),
 }))
 const areTagsInScope = vi.hoisted(() => vi.fn())
 // リストのアイテムの ID が使用済みかの確認（addNewItemToList）で返す行
@@ -412,26 +412,21 @@ describe("shopping の履歴", () => {
       await expect(caller().revertHistory({ historyId: ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
     })
 
-    it("リストと同じスコープのカタログアイテムを未購入に戻し、1 件ずつ同期ログを残す", async () => {
-      sync.getHistoryById.mockResolvedValue({ items: [{ name: "牛乳" }, { name: "卵" }] })
-      scope.getListScope.mockResolvedValue({ userId: "user-1", groupId: null })
-      scope.markScopedItemsUnpurchasedByName.mockResolvedValueOnce(["c1", "c2"]).mockResolvedValueOnce([])
-      sync.revertHistory.mockResolvedValue({ id: ID })
+    it("取り消しは ShoppingService に任せ、戻したリストと戻したカタログアイテムの ID を返す", async () => {
+      sync.getHistoryById.mockResolvedValue({ id: ID, items: [{ name: "牛乳" }] })
+      shopping.revertHistory.mockResolvedValue({ list: { id: ID }, revertedItemIds: ["c1", "c2"] })
       const res = await caller().revertHistory({ historyId: ID })
       expect(res).toEqual({ success: true, list: { id: ID }, revertedItemIds: ["c1", "c2"] })
-      expect(syncRepo.createOperation).toHaveBeenCalledTimes(2)
-      expect(syncRepo.createOperation).toHaveBeenCalledWith(
-        expect.objectContaining({ entity: "item", entityId: "c1", operation: "update", payload: { id: "c1", purchasedAt: null } })
-      )
+      expect(shopping.revertHistory).toHaveBeenCalledWith(ID, "user-1")
     })
 
-    it("リストのスコープが分からなければカタログには触らずリストだけ戻す", async () => {
-      sync.getHistoryById.mockResolvedValue({ items: [{ name: "牛乳" }] })
-      scope.getListScope.mockResolvedValue(null)
-      sync.revertHistory.mockResolvedValue({ id: ID })
-      const res = await caller().revertHistory({ historyId: ID })
-      expect(res.revertedItemIds).toEqual([])
-      expect(scope.markScopedItemsUnpurchasedByName).not.toHaveBeenCalled()
+    it("トランザクションの中で取り消せなければ（使えない・購入履歴でない）NOT_FOUND", async () => {
+      sync.getHistoryById.mockResolvedValue({ id: ID, items: [{ name: "牛乳" }] })
+      shopping.revertHistory.mockResolvedValue(null)
+      await expect(caller().revertHistory({ historyId: ID })).rejects.toMatchObject({
+        code: "NOT_FOUND",
+        message: "履歴が見つかりません",
+      })
     })
   })
 

@@ -97,14 +97,20 @@ vi.mock("@/infrastructure/db/ownership", () => ({
   canAccessScope: async (_tx: unknown, scope: { userId: string | null; groupId: string | null }, userId: string) =>
     scope.groupId ? state.members.has(`${scope.groupId}:${userId}`) : scope.userId === userId,
 }))
-vi.mock("@/modules/shopping/application/services/catalogItemScope", () => ({
-  markScopedItemsPurchasedByName: async (_tx: unknown, scope: unknown, name: string, at: Date, opTime: string) => {
-    state.scoped.push(["purchased", name, at.toISOString(), opTime, scope])
-    return []
+// 完了・取り消しの I/O（shoppingCompletion）は実 DB のテスト（sync-push.db.test.ts）で確かめる。
+// ここでは、規則（domain）の結果のどの計画を、どの時刻で適用に渡すかを記録する（#179）
+vi.mock("@/modules/shopping/application/services/shoppingCompletion", () => ({
+  readListEntries: async (_tx: unknown, listId: string) =>
+    [...(state.tables.get("list_items")?.values() ?? [])]
+      .filter((r) => r.listId === listId && !r.deletedAt)
+      .map((r) => ({ id: r.id, name: r.name, checked: r.checked })),
+  applyFinishPlan: async (_tx: unknown, list: unknown, plan: unknown, options: unknown) => {
+    state.scoped.push(["finish", list, plan, options])
+    return { purchasedItemIds: [], listUpdated: true }
   },
-  markScopedItemsUnpurchasedByName: async (_tx: unknown, scope: unknown, name: string, opTime: string) => {
-    state.scoped.push(["unpurchased", name, opTime, scope])
-    return []
+  applyRevertPlan: async (_tx: unknown, list: unknown, plan: unknown, options: unknown) => {
+    state.scoped.push(["revert", list, plan, options])
+    return { revertedItemIds: [], listRow: {} }
   },
 }))
 vi.mock("@/modules/catalog/application/services/ownership", () => ({
@@ -426,28 +432,63 @@ describe("SyncPushService: 複合操作（#62 O4b）", () => {
     return rows("list_items").get(id)!
   }
 
-  it("完了: チェック済みを操作の時刻で購入済みにし、未チェックを論理削除し、リストを完了にする", async () => {
+  it("完了: チェック済みの名前・未チェックの ID・完了の状態の計画を、操作の時刻で適用に渡す", async () => {
     const list = putList({ id: crypto.randomUUID() })
     putListItem(list.id as string, "牛乳", true)
     const egg = putListItem(list.id as string, "卵", false)
     const result = await push1(op({ entity: "list", type: "finishShopping", entityId: list.id as string, patch: { location: "店" }, clientTime: T2 }))
     expect(result).toMatchObject({ status: "applied" })
-    expect(state.scoped).toEqual([["purchased", "牛乳", T2, T2, { userId: ME, groupId: null }]])
-    expect(egg.deletedAt).toBeDefined()
-    expect(egg.deletedAt).not.toBeNull()
-    expect(list).toMatchObject({ status: "completed", location: "店", purchasedAt: new Date(T2), completedAt: new Date(T2) })
-    expect(list.fieldModifiedAt).toEqual({ status: T2, completedAt: T2, purchasedAt: T2, location: T2 })
+    expect(state.scoped).toEqual([
+      [
+        "finish",
+        { id: list.id, userId: ME, groupId: null, status: "in_progress", purchasedAt: null },
+        {
+          ok: true,
+          purchaseNames: ["牛乳"],
+          removeEntryIds: [egg.id],
+          listState: { status: "completed", completedAt: new Date(T2), purchasedAt: new Date(T2), location: "店" },
+        },
+        { opTime: T2 },
+      ],
+    ])
   })
 
-  it("取り消し: リストのアイテムと同名のものを操作の時刻で未購入に戻し、リストを進行中に戻す", async () => {
+  it("完了: チェック 0 件でも完了の計画を適用に渡す（今のサーバーの振る舞い）", async () => {
+    const list = putList({ id: crypto.randomUUID() })
+    const milk = putListItem(list.id as string, "牛乳", false)
+    expect(await push1(op({ entity: "list", type: "finishShopping", entityId: list.id as string, clientTime: T2 }))).toMatchObject({
+      status: "applied",
+    })
+    expect(state.scoped[0][2]).toMatchObject({ ok: true, purchaseNames: [], removeEntryIds: [milk.id] })
+  })
+
+  it("取り消し: リストのアイテムの名前と進行中の状態の計画を、操作の時刻で適用に渡す", async () => {
     const list = putList({ id: crypto.randomUUID(), status: "completed", purchasedAt: new Date(T1), fieldModifiedAt: { status: T1, name: T1 } })
     putListItem(list.id as string, "牛乳", true)
     expect(await push1(op({ entity: "list", type: "revertHistory", entityId: list.id as string, clientTime: T2 }))).toMatchObject({
       status: "applied",
     })
-    expect(state.scoped).toEqual([["unpurchased", "牛乳", T2, { userId: ME, groupId: null }]])
-    expect(list).toMatchObject({ status: "in_progress", purchasedAt: null, completedAt: null, location: null })
-    expect(list.fieldModifiedAt).toEqual({ name: T1, status: T2, completedAt: T2, purchasedAt: T2, location: T2 })
+    expect(state.scoped).toEqual([
+      [
+        "revert",
+        { id: list.id, userId: ME, groupId: null, status: "completed", purchasedAt: new Date(T1) },
+        {
+          ok: true,
+          revertNames: ["牛乳"],
+          listState: { status: "in_progress", completedAt: null, purchasedAt: null, location: null },
+        },
+        { opTime: T2 },
+      ],
+    ])
+  })
+
+  it("取り消しの stale: 購入日時が入っているリストで、状態が操作の時刻より新しければ conflict", async () => {
+    const list = putList({ id: crypto.randomUUID(), status: "completed", purchasedAt: new Date(T1), fieldModifiedAt: { status: T2 } })
+    expect(await push1(op({ entity: "list", type: "revertHistory", entityId: list.id as string, clientTime: T1 }))).toMatchObject({
+      status: "conflict",
+      reason: "stale",
+    })
+    expect(state.scoped).toEqual([])
   })
 
   it("完了済みの完了・未完了の取り消し・新しい状態がある古い操作は conflict", async () => {
