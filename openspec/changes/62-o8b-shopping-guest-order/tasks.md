@@ -9,7 +9,7 @@
 ## 2. 確認
 
 - [x] 2.1 `npm run lint`・`npm run test:run`・`npm run test:coverage`（80% 以上）・`npm run build` が通る
-- [ ] 2.2 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く
+- [x] 2.2 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く
 
 ## Workflow follow-up
 
