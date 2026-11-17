@@ -67,6 +67,7 @@ openspec list --json | jq -e --arg c "$C" '.changes[] | select(.name == $c) | .t
 ```
 
 - 未完了のタスクがあれば archive しない（tasks.md を直すか、残りを Issue にしてから流す）
+- `git merge develop` でコードが変わったら、`npm run test:run` を流し直す（tester が確かめた HEAD からずれるため。E2E に関わる変更なら tester に再確認を頼む）
 - `-y` を付けない `openspec archive` は、端末で答えられないと spec を更新する確認で止まって失敗する（2.1.0 で確かめた）。エージェントは端末で答えられないので、上のように未完了がないことを確かめてから `-y` で流す
 - 仕様の差分がない change（`skip_specs: true`）は `openspec archive "$C" -y --skip-specs`
 - 同じ capability を別の change が先に変えていないか、`openspec/specs/` の差分で確かめる（MODIFIED は Requirement ごと置き換えるので、git で衝突しなくても先の変更を消すことがある）
