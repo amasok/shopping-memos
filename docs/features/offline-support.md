@@ -391,6 +391,14 @@ output: {
 - `pull()`: `hasMore` が false になるまでカーソルで取得 → `bulkPut` / tombstone の削除 → メンバーシップの差分を処理。**ローカルに未送信の操作があるエンティティは上書きしない**（push が先、pull が後の順番を守る）
 - 同時実行の防止: 同期処理は 1 本だけにする（タブ間は Web Locks API の `navigator.locks.request("sync")`）
 - `SyncProvider` を providers に組み込む（`Auth > DataMerge > Sync > Group > DB`）。`useSync()` で `isOnline`, `isSyncing`, `pendingCount`, `failedCount`, `lastSyncAt`, `sessionExpired` を公開する
+- **O6 での細部（2026-11-17）**（`src/infrastructure/sync/SyncEngine.ts`、`applyServerRows.ts`、`src/contexts/SyncContext.tsx`）:
+  - push の取り出しと `inflight` への変更は 1 つのトランザクションで行う（取り出した後に積まれた変更が、送る前の操作にまとめられて消えないように）。前の実行で `inflight` のまま残った操作は、ロックの中で `pending` に戻してから送る
+  - 結果が返らなかった操作は `pending` に戻す。1 件も返らなければバックオフする。`partial` / `conflict` の `serverRow` は、同じエンティティに未送信の操作が残っていなければローカルに反映する。`duplicate` の `partial` / `conflict` は、次の pull をカーソルなしで行う（カーソルより前の行は差分で届かないため）
+  - push が入力ごと拒否された（4xx。401 と `CLIENT_TOO_OLD` を除く）ときは、その操作を `failed` にしてキューを止めない。429 は 5xx と同じく再試行する。`CLIENT_TOO_OLD` は `clientTooOld` にして止める（強制更新は O1b の仕組みで扱う）
+  - pull で上書きしないのは、`pending` / `inflight` の操作があるエンティティ。`failed` のものはサーバーの値で上書きする。壊れたカーソル（BAD_REQUEST）は捨てる
+  - 所属グループが変わったら、抜けたグループのローカルデータを消し、カーソルなしで取り直す（前回の一覧がない最初の pull では比べない）
+  - drain モードでは pull しない。エンジンは、ログイン中で merge が終わってから作る（`isMergeCompleted`）。`useSync()` は `engine`（O7 でリポジトリが時計と DB を使う）と `requestSync()`（書き込みの後の 2 秒のデバウンス）も返す
+  - `groups` / `groupMembers` のキャッシュ（`identity.getGroups` での上書き）と、ログアウト時のユーザー DB の削除は、まだ行わない（O7 / O9）
 
 **オフライン時のセッション（#61 に依存）**
 
