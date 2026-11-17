@@ -19,7 +19,7 @@
 - change は設計・実装の担当が作り、リーダーがユーザーに承認を取る。承認の前にコードを書かない
 - tester は、specs の Scenario ごとに対応するテストがあり、通っていることを確かめ、テストのない Scenario を報告に書く
 - reviewer は、実装が specs と合っているか、tasks.md のチェックと archive の要否を確かめる
-- archive（`openspec archive <change> -y`）はマージの前に同じブランチで行い、レビューの対象に含める
+- archive（`openspec archive <change> -y`）は、実装の担当が tester に渡す前に同じブランチで行ってコミットする。手順は `feature-design.md` のフロー 4。tester・reviewer は archive の後の HEAD を確かめる
 
 ## push・PR・マージ
 - チームメイトは push や PR 作成をしない。ローカルブランチにコミットしたら、tester → reviewer（ローカル差分でレビュー）の順に受け渡す

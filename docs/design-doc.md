@@ -6,7 +6,7 @@
 
 - システム全体の今の構成と、これから目指す構造・リファクタの段取りをまとめる。新しく入った人（人もエージェントも）が全体を掴むための文書
 - 機能ごとの振る舞いの正は `openspec/specs/`、進行中の変更は `openspec/changes/`（`.claude/rules/feature-design.md`）。タスクの正は GitHub Issues
-- 同期の詳しい設計とリリース手順は `docs/features/offline-support.md`。ADR（`docs/adr/`）と実装のずれは「9. ADR との関係」
+- 同期（#62）の詳しい設計・実装ステップ・リリース手順は `docs/features/offline-support.md`（#62 が終わるまで更新する。O7 以降の振る舞いの仕様は各 change の specs が正）。offline-support.md と実装のずれは 7.9、ADR（`docs/adr/`）とのずれは「9. ADR との関係」
 - コードと食い違ったらコードが正。気づいたらこの文書を直す（行番号は 392dbed 時点）
 
 ## 2. システムの全体像
@@ -91,7 +91,7 @@ flowchart TB
 
 | コンテキスト | 持つもの | 主なコード |
 |-------------|---------|-----------|
-| catalog | 商品（名前・数量・メモ・URL・購入日時）、タグ | `src/modules/catalog/`、`routers/catalog.ts` |
+| catalog | 商品（名前・数量・メモ・購入日時。URL の列はなく、メモの中の最初の URL から OGP を表示する）、タグ | `src/modules/catalog/`、`routers/catalog.ts` |
 | shopping | 買い物リスト（status: in_progress / completed）、リストの商品（カタログのスナップショット）、購入履歴（`purchasedAt` が入ったリスト） | `src/modules/shopping/`、`routers/shopping.ts` |
 | identity | グループ、メンバー（owner / member）、招待リンク（7 日・1 回） | `src/modules/identity/`、`routers/identity.ts` |
 | sync | 同期操作の記録（`sync_operations`）、push・pull・ゲストのデータの merge | `src/modules/sync/`、`routers/sync.ts`、`src/infrastructure/sync/` |
@@ -109,13 +109,16 @@ src/modules/<context>/
 │   └── repositories/    # リポジトリの interface（一部が DbExecutor を import）
 ├── application/
 │   ├── commands/ queries/   # .gitkeep だけ（ADR-003 の形は使っていない）
-│   └── services/        # CatalogSyncService, ShoppingService, ShoppingSyncService, catalogItemScope,
-│                        # SyncPushService, SyncPullService, DataMergeService（Drizzle を直接使う）
-└── infrastructure/repositories/   # Drizzle の実装
+│   ├── services/        # catalog: CatalogSyncService, ownership / shopping: ShoppingService, ShoppingSyncService,
+│   │                    # catalogItemScope / sync: SyncPushService, SyncPullService, DataMergeService（Drizzle を直接使う）
+│   └── pushPatches.ts   # sync だけ（push のパッチの検証）
+└── infrastructure/
+    ├── repositories/    # Drizzle の実装
+    └── entityAccess.ts  # sync だけ（エンティティごとの表と所有の判定）
 src/infrastructure/trpc/routers/*.ts   # 入力の検証・認可・サービスの呼び出し（一部は業務ロジックと Drizzle を直接）
 ```
 
-- identity には application の層がなく、router がリポジトリを直接呼ぶ
+- identity には application のサービスがなく（commands / queries の .gitkeep だけ）、router がリポジトリを直接呼ぶ
 - 純粋なドメイン規則の例: `shopping/domain/value-objects/ListStatus.ts`（`canTransition` / `isInProgress`）、`identity/domain/entities/InviteCode.ts`
 
 ### クライアントの構成
@@ -167,7 +170,7 @@ sequenceDiagram
 
 - 入力: `{ protocolVersion, operations[≤100] }`。1 操作は `{ opId(uuid), entity: item|tag|list|listItem, entityId, type: create|update|delete|finishShopping|revertHistory, patch?, fieldTimes?, clientTime }`。複合操作（finishShopping / revertHistory）は list だけ
 - 出力: `{ serverTime, results[{ opId, status, reason?, serverRow? }] }`。status は `applied` / `partial`（一部のフィールドが LWW で負けた）/ `duplicate` / `conflict`（削除済みなど。serverRow を返す）/ `rejected`
-- サーバーの処理（`SyncPushService.ts`）: 1 操作 = 1 トランザクション。先に `sync_operations` に opId を記録して冪等にする（既にあれば duplicate、reason に最初の結果）。フィールド単位の LWW（`field_modified_at`）、削除は常に勝つ、未来の時刻は serverTime に丸める。他人の行は not_found。対応外の protocolVersion は `CLIENT_TOO_OLD`
+- サーバーの処理（`SyncPushService.ts`）: 1 操作 = 1 トランザクション。先に `sync_operations` に opId を記録して冪等にする（既にあれば duplicate、reason に最初の結果）。フィールド単位の LWW（`field_modified_at`）、削除は常に勝つ、未来の時刻は serverTime に丸める。他人の行への update・delete・複合操作は not_found、他人の行と同じ ID の create は `rejected:id_conflict`、他人の opId は `rejected:op_conflict`。対応外の protocolVersion は `CLIENT_TOO_OLD`
 
 ### sync.pull
 
@@ -181,12 +184,12 @@ sequenceDiagram
 - 圧縮: まだ送っていない pending の操作だけをまとめる（create+update → create、update+update → update、create+delete → 両方消す、update+delete → delete）。複合操作はまとめない
 - 結果の扱い: applied / partial / conflict は消す（partial・conflict は未送信の操作がなければ serverRow を反映）。rejected は failed。duplicate は reason で分ける
 - pull の反映では、pending / inflight の操作があるエンティティは上書きしない
-- きっかけ: 起動・online・前面に戻ったとき（30 秒以上たっていれば）・手動・書き込み後（2 秒のデバウンス）。タブ間は Web Locks（`shopping-memos-sync-<userId>`）で 1 つだけ動く
+- きっかけ: 今動くのは、起動・online・前面に戻ったとき（30 秒以上たっていれば）だけ。手動の `sync()` と書き込み後の `requestSync()`（2 秒のデバウンス）は API だけあり、呼び出しは O7〜O9 で足す。タブ間は Web Locks（`shopping-memos-sync-<userId>`）で 1 つだけ動く
 - エラー: 401 は止める（sessionExpired）、CLIENT_TOO_OLD は止める、400 / 413 は半分に分けて送り直す、それ以外は指数バックオフ（2 秒〜5 分）
 
 ### まだのこと（#62）
 
-- O7: catalog の hooks をリポジトリ経由に、merge 後のゲスト DB の消去、初回の全件 pull
+- O7: catalog の hooks をリポジトリ経由に、初回の全件 pull（merge 後のゲスト DB の消去は #144 で実装済み。7.9）
 - O8: shopping の hooks、finishShopping / revertHistory の複合操作
 - O9: オフライン時のセッション保持、同期状態の UI、ログアウト時のユーザー DB の消去（`deleteUserDb` はまだ呼ばれない）
 - O10（docs）、O11（サーバーファーストの分岐とフラグの削除）。リリースは O6〜O9 を R3 でまとめて出す
@@ -201,7 +204,7 @@ sequenceDiagram
 | groups / group_members / invite_links / invite_code_attempts | グループ・メンバー・招待・招待コードの総当たり対策 |
 | items / tags / item_tags | カタログ。`groupId` が null なら個人用 |
 | shopping_lists / list_items | 買い物リストとリストの商品（カタログのスナップショット）。`purchasedAt` の入ったリストが購入履歴 |
-| sync_operations | push の操作の記録（id = opId、結果を payload に） |
+| sync_operations | 同期操作の記録。push（id = opId、結果を payload に）のほか、tRPC の mutation（`DrizzleSyncRepository` 経由）と merge も書く |
 
 - items・tags・shopping_lists・list_items には同期用の列 `updated_at`（pull のカーソル）・`field_modified_at`（LWW）・`deleted_at`（論理削除・tombstone）がある
 - migration は expand（足すだけ）を先に出し、contract は別のリリースにする（team-operation.md「DB の変更を含むリリース」）
@@ -233,7 +236,7 @@ sequenceDiagram
 
 **その他の重複**:
 - 進行中のリストにある商品をカタログの一覧から除く規則: `routers/catalog.ts:61-84`（Drizzle を router に直書き。論理削除・個人のスコープも見る）と `hooks/data/useItems.ts:36-45`（groupId だけ見る）
-- リストの商品のスナップショット（カタログの名前などの写し）を手で書き写している: `routers/shopping.ts` の 4 か所（:164-176, :189-202, :295-306, :376-387）と `useListMutations.ts` の 4 か所。groupId の写し方が違う（サーバーはリストの groupId、ゲストは item.groupId）
+- リストの商品のスナップショット（カタログの名前などの写し）を手で書き写している: `routers/shopping.ts` の 4 か所（:164-176, :189-202, :295-306, :376-387）と `useListMutations.ts` の 4 か所。groupId の写し方が違う（サーバーはリストの groupId。ゲストは混在していて、:122・:149・:207 は item.groupId、:235・:248 はリストの groupId）
 
 ### 7.2 router に業務ロジックと Drizzle がある
 
@@ -251,8 +254,8 @@ sequenceDiagram
 
 ### 7.5 コンテキストをまたいで具体実装を直接 import している
 
-- `SyncPushService.ts:13-28` が shopping の `catalogItemScope`・catalog の `ownership`・Drizzle のリポジトリを import し、:383-504 で各コンテキストの表に直接書く
-- CatalogSyncService・ShoppingService・ShoppingSyncService が sync の具体的なリポジトリを import。`routers/shopping.ts:23-27` も他コンテキストの Drizzle リポジトリを直接使う
+- `SyncPushService.ts:13-28` が shopping の `catalogItemScope`・catalog の `ownership`・Drizzle のリポジトリを import し、:366 あたりから :504 で各コンテキストの表に直接書く
+- CatalogSyncService・ShoppingService・ShoppingSyncService が sync の具体的なリポジトリを import。`routers/shopping.ts:23-27` も他コンテキストのリポジトリ（catalog・sync・identity の Drizzle 実装）とサービス（CatalogSyncService）を直接使う
 - ADR-002 の腐敗防止層（ACL）・ポートはない
 
 ### 7.6 エンティティが貧血で、不変条件が散らばっている
@@ -276,6 +279,8 @@ sequenceDiagram
 | 同期のロックの名前 | `navigator.locks.request("sync")`（:392） | ユーザーごとの `shopping-memos-sync-<userId>`（`src/contexts/SyncContext.tsx:63`） |
 | push の `duplicate` | 「`applied` / `duplicate` はキューから削除」（:390、テスト計画の :573）。:326 には reason で分ける記述もあり、文書の中で食い違う | reason で分ける: `applied` なら消す、`rejected:*` なら failed、それ以外は消して取り直す（`SyncEngine.ts` の `pushOutcome`） |
 | 「現状」の表 | 2026-11-16 時点（Dexie v8、`public/sw.js` だけなど。:19-31） | Dexie v10、Serwist の SW |
+| O7 の範囲 | O7 に「マージ後のゲスト DB 消去」を含める（:554） | #144 で実装済み。取り込めた行をゲスト DB から消し、残りを pendingMerge に移す（`src/lib/db/guestData.ts:163-182`） |
+| 同期のきっかけ | 書き込み後・手動でも同期する（「4. 同期のタイミング」） | `requestSync()` / `sync()` を呼ぶ画面・hooks はまだない（O7〜O9） |
 
 ## 8. 目指す構造
 
@@ -335,7 +340,7 @@ ADR はその時点の決定の記録として残し、直しは別の PR（下�
 | 003 | Command / Query の Handler、Item クラスと Item.create、Quantity | Handler はない。エンティティは interface |
 | 003 | FinishShopping で PurchaseHistory を作り、ID で購入済みにする | 履歴の行は作らない。名前で照合 |
 | 003 | 「現状」は Dexie で直接 CRUD | ゲストは今もそう。ログイン中は tRPC |
-| 004 / 005 | オフライン同期・PWA | 実装は offline-support.md が正。ADR の更新は O10 |
+| 004 / 005 | オフライン同期・PWA | 今の設計は offline-support.md（ずれは 7.9）。ADR の更新は O10 |
 
 ## 10. リファクタの段取り（ユーザー承認済み）
 

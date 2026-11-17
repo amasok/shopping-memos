@@ -6,7 +6,8 @@ context: |
   - 成果物は日本語で書く。識別子・コマンド・パスは原文のまま
   - アプリ: 家族と共有できるお買い物メモ帳の PWA。Next.js App Router / tRPC v11 / Drizzle（PostgreSQL・本番は Neon）/ Dexie（IndexedDB）/ Serwist / Vercel
   - データの持ち方は 3 通り: ゲスト（端末の Dexie だけ）、ログイン中のサーバーファースト（tRPC）、ローカルファースト（NEXT_PUBLIC_LOCAL_FIRST。Dexie に書いて sync.push / sync.pull で同期。#62）。振る舞いを変える change は、どのモードに当たるかを書き、ゲストとログイン中で結果が同じになるようにする
-  - 境界づけられたコンテキスト: catalog（商品・タグ）/ shopping（買い物リスト・履歴）/ identity（グループ・招待）/ sync。各コンテキストは domain / application / infrastructure の層。domain は他の層に依存しない方向へ寄せている（docs/design-doc.md の「目指す構造」）
+  - 境界づけられたコンテキスト: catalog（商品・タグ）/ shopping（買い物リスト・履歴）/ identity（グループ・招待）/ sync。各コンテキストは domain / application / infrastructure の層
+  - 新しいコードでは、domain から infrastructure・Drizzle・Dexie・tRPC を import しない。業務規則は domain の純粋関数に置き、サーバーとクライアントで共用する。既存のコードには守れていない import が残っている（docs/design-doc.md の「現状の課題」）ので、手本にしない
   - タスク管理の正は GitHub Issues。change は Issue に着手するときに作り、名前に Issue 番号を入れる（例: 62-o7-catalog-local-first）
   - テスト: Vitest（src/**/__tests__/）、実 DB は npm run test:db（*.db.test.ts）、E2E は Playwright（e2e/、push 前に npm run test:e2e:local）。カバレッジ 80% 以上
   - DB の migration は expand（足すだけ）を先に出し、contract（削除・名前の変更・型の変更）は別のリリースに分ける
@@ -27,7 +28,7 @@ rules:
   tasks:
     - 1 つの change の実装手順のチェックリストとしてだけ使う（タスク管理は Issues）
     - テストを先に書く順に並べ（RED → GREEN → REFACTOR）、各 Scenario のテストをどのタスクで書くか分かるようにする
-    - 最後に lint・test:run・build・test:e2e:local の確認と、archive のタスクを置く
+    - 最後に lint・test:run・build・test:e2e:local の確認を置く。archive はタスクにしない（.claude/rules/feature-design.md のフロー 4 で行う。タスクにすると未完了が必ず残り、archive -y の確認が意味をなくす）
 
 operations:
   apply:
@@ -35,4 +36,6 @@ operations:
       - tasks.md の順に進め、Scenario ごとのテストが通ったらチェックを付ける
   archive:
     guidance:
-      - archive はマージの前に同じ PR で行う（openspec archive <change> -y）。specs/ への取り込み結果を PR の差分で確かめる
+      - archive は実装の担当が tester に渡す前に行い、同じブランチにコミットする（openspec archive <change> -y）
+      - archive の前に openspec list で、その change のタスクがすべて完了していることを確かめる（-y は未完了のタスクがあっても警告だけで続く）
+      - archive の前に develop を取り込む。同じ capability を別の change が先に変えていると、MODIFIED が Requirement ごと置き換えて先の変更を消すことがあるので、specs/ への取り込み結果を差分で確かめる

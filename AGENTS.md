@@ -22,7 +22,7 @@ AI コーディングエージェント向けのプロジェクトガイド。`C
 - **ローカル DB**: Dexie (IndexedDB) + dexie-react-hooks
 - **バリデーション**: Zod v4
 - **スタイリング**: Tailwind CSS v4、lucide-react
-- **PWA**: `src/app/manifest.ts` + Serwist の Service Worker（`src/app/sw.ts`。アプリシェルのプリキャッシュ、`/api/**` はキャッシュしない。kill switch あり）
+- **PWA**: `src/app/manifest.ts` + Serwist の Service Worker（`src/app/sw.ts` を `@serwist/turbopack` で `/serwist/sw.js` として配る。アプリシェルのプリキャッシュ、`/api/**` はキャッシュしない。kill switch あり）。`public/sw.js` は古いインストールを解除するためだけに残す（O11 で削除）
 - **テスト**: Vitest + Testing Library（jsdom）/ Playwright
 - **ランタイム**: Node.js 22.22.0（`.tool-versions`、asdf）※ CI は Node 20
 - **ホスティング**: Vercel
@@ -136,7 +136,7 @@ src/
 e2e/                        # Playwright（fixtures/, auth/ はログイン必須のグループ系テスト）
 docs/design-doc.md          # 全体の設計書（構成・コンテキスト・同期・現状の課題と目指す構造）
 docs/adr/                   # ADR 001〜005（実装とのずれは design-doc.md に記載）
-docs/features/              # 以前の機能設計書（参照用。新しくは作らない）
+docs/features/              # 以前の機能設計書（新しくは作らない。offline-support.md は #62 が終わるまで更新、ほかは参照用）
 openspec/                   # OpenSpec。specs/ は今の振る舞いの正、changes/ は進行中の変更（feature-design.md）
 .agents/skills/openspec-*   # OpenSpec のスキル（.claude/skills/openspec-* はそこへのリンク）
 ```
@@ -151,7 +151,7 @@ openspec/                   # OpenSpec。specs/ は今の振る舞いの正、ch
   - ログイン直後: `DataMergeContext` がローカルのデータをサーバーへマージし、完了までは Dexie を使う。ログインのたびにゲストのデータがあれば送り、全部取り込めたら Dexie を空にする。ログアウトすると空のゲストに戻る（docs/features/offline-support.md「4b」）。
 - `src/hooks/data/*` のフックはこの判定で Dexie と tRPC を切り替えるので、ページ・コンポーネントはフック経由でデータにアクセスする。
 - グループ選択は `GroupContext`（`selectedGroupId`）。tRPC 側は `middleware/groupAuth.ts` でメンバーシップを検証する。
-- ログイン中でマージが終わると `SyncProvider` が `SyncEngine` を動かす（#62 O6）。`NEXT_PUBLIC_LOCAL_FIRST=true` のときだけ push と pull を行うが、画面の読み書きはまだ tRPC のまま（hooks をローカルのリポジトリ経由にするのは O7・O8）。詳しくは `docs/design-doc.md`。
+- ログイン中でマージが終わると `SyncProvider` が `SyncEngine` を動かす（#62 O6）。`NEXT_PUBLIC_LOCAL_FIRST=true` なら push と pull、false なら残ったキューの push だけ（drain）。どちらでも画面の読み書きはまだ tRPC のまま（hooks をローカルのリポジトリ経由にするのは O7・O8）。詳しくは `docs/design-doc.md`。
 
 ### データモデル
 

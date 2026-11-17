@@ -6,7 +6,7 @@
 
 - 全体の設計（システムの構成・コンテキスト・目指す構造）は `docs/design-doc.md`
 - 今の振る舞いの正は `openspec/specs/`、これから変える分は `openspec/changes/<change>/`
-- `docs/features/*.md` は新しく作らない。既存のもの（offline-support.md など）は参照用として残す
+- `docs/features/*.md` は新しく作らない。既存のうち `offline-support.md` は、#62 の全体の設計・実装ステップ・リリース手順として #62 が終わるまで更新する（O7 以降の振る舞いの仕様は各 change の specs に書き、archive で `openspec/specs/` に入ったものを正とする）。ほかのもの（passkey-email-auth.md など）は参照用
 
 ## GitHub Issues と OpenSpec の使い分け
 
@@ -46,10 +46,13 @@ openspec show <change>
 1. Issue を確認し、change を作る（proposal・specs、必要なら design、tasks）
 2. リーダーがユーザーに proposal と specs のレビューを依頼する
 3. 承認後に実装開始（/openspec-apply-change。tasks.md の順に、テストを先に書く）
-4. tester が Scenario ごとのテストと E2E を確かめ、reviewer がレビュー
-5. マージの前に、同じ PR で archive する（openspec archive <change> -y）
+4. 実装の担当が archive してコミットする（tester に渡す前）
+   - openspec list で、その change のタスクがすべて完了していることを確かめる（-y は未完了があっても続く）
+   - develop を取り込んでから openspec archive <change> -y
    → change は openspec/changes/archive/YYYY-MM-DD-<change>/ に移り、差分が openspec/specs/ に取り込まれる
-6. PR の本文に `Closes #N` と change のパスを書く
+   - 同じ capability を別の change が先に変えていないか、specs/ の差分で確かめる（MODIFIED は Requirement ごと置き換えるので、git で衝突しなくても先の変更を消すことがある）
+5. tester が Scenario ごとのテストと E2E を確かめ、reviewer が archive を含めてレビュー
+6. リーダーが PR を作り、本文に `Closes #N` と change のパス（archive 後のパス）を書く
 ```
 
 ## やってはいけないこと
@@ -58,3 +61,4 @@ openspec show <change>
 - ❌ proposal・specs の承認前にコードを書く
 - ❌ specs と異なる実装をする（変えるときは change の specs を先に直し、承認を取り直す）
 - ❌ archive しないまま PR をマージする
+- ❌ archive を tasks.md のタスクにする（必ず未完了が残り、未完了の確認が働かなくなる）

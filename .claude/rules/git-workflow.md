@@ -126,8 +126,12 @@ npm run lint
 ## 機能実装フロー
 
 ```
+0. 仕様 (OpenSpec の change。feature-design.md)
+   - 振る舞いが変わるなら change（proposal・specs）を作り、ユーザーの承認を得る
+   - 承認の前にコードを書かない（自明なバグ修正・依存の更新・振る舞いを変えないリファクタは不要）
+
 1. 計画 (planner エージェント)
-   - 実装計画を策定
+   - 実装計画を策定（change があれば design.md・tasks.md に書く）
    - 依存関係を特定
    - フェーズに分割
 
@@ -144,7 +148,10 @@ npm run lint
 4. コミット
    - Conventional Commits 形式
    - 適切な粒度で分割
+   - change があれば、tester に渡す前に archive してコミットする（feature-design.md）
 ```
+
+チームでの受け渡し（tester → reviewer → リーダー）は team-operation.md を参照。
 
 ## やってはいけないこと
 
