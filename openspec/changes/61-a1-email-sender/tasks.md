@@ -21,5 +21,5 @@
 
 ## 5. 確認
 
-- [ ] 5.1 `npm run lint`・`npm run test:run`・`npm run build` が通る
+- [x] 5.1 `npm run lint`・`npm run test:run`・`npm run build` が通る
 - [ ] 5.2 tester に `npm run test:e2e:local` を全部流してもらう（振る舞いは変えないので失敗 0 のはず）

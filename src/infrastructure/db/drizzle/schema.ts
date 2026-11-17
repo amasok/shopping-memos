@@ -3,6 +3,8 @@ import {
   text,
   integer,
   boolean,
+  bigint,
+  check,
   timestamp,
   jsonb,
   primaryKey,
@@ -38,7 +40,10 @@ export const users = pgTable("users", {
   id: text("id").primaryKey(),
   name: text("name"),
   email: text("email").notNull().unique(),
+  // Auth.js 用（timestamp）。contract（#61 A6）で削除する
   emailVerified: timestamp("email_verified"),
+  // Better Auth 用（boolean。#61 A2 の expand で追加し、email_verified から写した）
+  emailVerifiedFlag: boolean("email_verified_flag").default(false).notNull(),
   image: text("image"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -92,6 +97,119 @@ export const verificationTokens = pgTable(
     expires: timestamp("expires").notNull(),
   },
   (table) => [primaryKey({ columns: [table.identifier, table.token] })]
+)
+
+// ------------------------------------------------------------
+// Better Auth（#61。docs/features/passkey-email-auth.md の「### DB スキーマ」）
+// A2 の expand で追加。移行の間は Auth.js のテーブル（accounts / sessions / verification_tokens）と
+// 共存させるため、別の名前にする。key は Better Auth のフィールド名に合わせる（drizzleAdapter が key で引く）
+// ------------------------------------------------------------
+
+/** Better Auth のセッション（データベースセッション） */
+export const authSessions = pgTable(
+  "auth_sessions",
+  {
+    id: text("id").primaryKey(),
+    expiresAt: timestamp("expires_at").notNull(),
+    token: text("token").notNull().unique(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+  },
+  (table) => [index("auth_sessions_user_idx").on(table.userId)]
+)
+
+/** Better Auth のアカウント（ログイン方法ごとの行） */
+export const authAccounts = pgTable(
+  "auth_accounts",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at"),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [index("auth_accounts_user_idx").on(table.userId)]
+)
+
+/** Better Auth の検証（メールの OTP。value はハッシュ） */
+export const authVerifications = pgTable(
+  "auth_verifications",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [index("auth_verifications_identifier_idx").on(table.identifier)]
+)
+
+/** パスキー（@better-auth/passkey。A5 で使う） */
+export const passkeys = pgTable(
+  "passkeys",
+  {
+    id: text("id").primaryKey(),
+    name: text("name"),
+    publicKey: text("public_key").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    credentialID: text("credential_id").notNull().unique(),
+    counter: integer("counter").notNull(),
+    deviceType: text("device_type").notNull(),
+    backedUp: boolean("backed_up").notNull(),
+    transports: text("transports"),
+    aaguid: text("aaguid"),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => [index("passkeys_user_idx").on(table.userId)]
+)
+
+/** Better Auth のレート制限（storage: "database"。サーバーレスでメモリを共有できないため） */
+export const rateLimits = pgTable("rate_limits", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  count: integer("count").notNull(),
+  lastRequest: bigint("last_request", { mode: "number" }).notNull(),
+})
+
+/**
+ * OTP の送信と失敗の記録（#72。設計書「#### OTP 送信の乱用対策」）
+ * email_hash は OTP_EVENT_HMAC_KEY を鍵にした HMAC-SHA256。判定には直近 24 時間、保持は 30 日
+ */
+export const otpEvents = pgTable(
+  "otp_events",
+  {
+    id: text("id").primaryKey(),
+    emailHash: text("email_hash").notNull(),
+    // IP が取れないときは NULL
+    ip: text("ip"),
+    kind: text("kind").notNull(), // 'sent' | 'failed' | 'locked' | 'unlocked'
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("otp_events_email_created_idx").on(table.emailHash, table.createdAt),
+    index("otp_events_email_ip_created_idx").on(table.emailHash, table.ip, table.createdAt),
+    // 全体の送信数の監視と、古い行の削除に使う
+    index("otp_events_kind_created_idx").on(table.kind, table.createdAt),
+    check("otp_events_kind_check", sql`${table.kind} in ('sent', 'failed', 'locked', 'unlocked')`),
+  ]
 )
 
 /**
