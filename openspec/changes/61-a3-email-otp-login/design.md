@@ -88,6 +88,16 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 - Redis は入れない（#72 は Vercel WAF で閉じた）。将来入れたら `secondaryStorage` に切り替える
 - 値は承認済みの設計のまま。1 家族の規模には重いが、削らずに 2 つの PR に分ける（D7）
 
+- **本体の実装（2.x で決めた）**
+  - Better Auth は `src/infrastructure/auth/server.ts` の `createAuth(deps)`（DB・メール・`otp_events`・Turnstile・時計を渡す）と `getAuth()`（最初に呼んだときに作る）。Auth.js の `index.ts` は 5.5 まで残し、5.5 で `index.ts` を Better Auth の入口にする
+  - **IP ごとの 24 時間 20 通は `otp_events` で数える**: Better Auth の rateLimit は 1 つのパスに 1 つの窓しか持てないので、1 分 3 通（送信）・1 分 10 回（照合）だけを `customRules` でかけ、24 時間 20 通は送信の hooks で、その IP の直近 24 時間の `sent` を数えて 429 にする。IP のロックは取らないので同時の送信で 1〜2 通はみ出しうるが、1 分 3 通の rateLimit が先にかかるので受け入れる（D4 の「IP の上限は枠の目安」）
+  - hooks.before で本文を書き換えるときは、本文そのものを許したキーだけにする（`{ context: { body } }` を返すと Better Auth が元の本文と混ぜ、`name`・`image` が残るため）。送信は `{ email, type: "sign-in" }`、照合は `{ email, otp }` だけにする（新しいユーザーの `name` は `''`、`image` は入れない）
+  - 送信の hooks の順: 種類（`sign-in` だけ）→ 正規化 → Turnstile → IP の 24 時間 → 許可リスト → `guardSend`。許可リストの外も `guardSend` の見送りも `{ success: true }`（送ったときと同じ）を返し、Better Auth の送信に進まない（新しいコードを作らない）
+  - エラーのコード（4.3 で文言に対応させる）: `INVALID_OTP`（不一致）・`OTP_EXPIRED`（期限切れ）・`TOO_MANY_ATTEMPTS`（1 つのコードの 3 回。期限切れと同じ文言）・`OTP_LOCKED`（累積ロック）・`TURNSTILE_FAILED`（403）・`RATE_LIMITED`（IP の 24 時間。429）・Better Auth の rateLimit の 429・`INVALID_EMAIL`・`INVALID_OTP_TYPE`
+  - メールは `advanced.backgroundTasks.handler` に Next.js の `after()` を渡して応答と切り離す。送信の失敗は Better Auth がログに出す（応答は送れたときと同じ）
+  - Turnstile（2.4）: Cloudflare のテスト用の secret（`1x…` は常に成功、`2x…`・`3x…` は常に失敗）は、ネットワークに出ずにその決まりどおりに返す（テスト用のキーは本物の hostname・action を返さないため。本番ではテスト用のキーを使えない）。トークンはヘッダ `x-turnstile-token` で受け取る
+  - `nextCookies()` は Next.js のリクエストの外では何もしないので、テストでも常に入れる
+
 ### D5. セッションと `AuthContext`
 
 - DB のセッション（`expiresIn` 30 日、`updateAge` 1 日）。**`cookieCache` は使わない**（設計書からの変更。レビュー M4）。cookieCache があると、ログアウトやセッションの削除の後も、控えておいた Cookie が最大 5 分通る。家族の規模なら、リクエストごとのセッションの読み込み（主キーで 1 行）は軽いので、すぐ効くほうを取る。A4 の「すべての端末からログアウト」もすぐ効く
