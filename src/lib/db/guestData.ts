@@ -79,7 +79,12 @@ export function watchGuestWrites(onWrite: () => void): () => void {
   const notify = () => {
     if (fired) return
     fired = true
-    onWrite()
+    // hook の中で同期に呼ばれるので、例外を投げると書き込みのトランザクションまで失敗する。ログに出すだけにする
+    try {
+      onWrite()
+    } catch (error) {
+      console.error("[guestData] ゲストの書き込みの知らせに失敗しました", error)
+    }
   }
   // Dexie の hook は、返り値で書き込みの中身を変えられる。何も返さず、知らせるだけにする
   const creating = () => {

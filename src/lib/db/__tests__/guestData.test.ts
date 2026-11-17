@@ -237,6 +237,16 @@ describe("watchGuestWrites（#61 A3a。本物の Dexie）", () => {
     stop()
   })
 
+  it("知らせた先が例外を投げても、書き込みは失敗しない（localStorage が使えない環境など）", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const stop = watchGuestWrites(() => {
+      throw new Error("QuotaExceededError")
+    })
+    await db.items.add(item("w8"))
+    expect(await db.items.get("w8")).toBeDefined()
+    stop()
+  })
+
   it("見張りをやめた後は知らせない", async () => {
     const onWrite = vi.fn()
     const stop = watchGuestWrites(onWrite)
