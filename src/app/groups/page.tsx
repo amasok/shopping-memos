@@ -4,8 +4,6 @@ import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { BottomSheet, Button, EmptyState, Input, LoadingPage, PageContainer } from "@/components/ui"
 import { useAuth } from "@/contexts/AuthContext"
-import { db } from "@/lib/db"
-import { addGroupMember } from "@/lib/db/groups"
 import { cn } from "@/lib/utils"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useGroups } from "@/hooks/data"
@@ -41,32 +39,12 @@ export default function GroupsPage() {
     setIsCreating(true)
     try {
       // サーバーでグループを作成
-      const group = await createGroupMutation.mutateAsync({
+      await createGroupMutation.mutateAsync({
         name: newGroupName.trim(),
       })
 
-      // ローカルDBにも同期
-      await db.groups.put({
-        id: group.id,
-        name: group.name,
-        ownerId: user.id,
-        inviteCode: group.inviteCode,
-        createdAt: group.createdAt,
-        updatedAt: group.updatedAt,
-      })
-
-      // 自分をオーナーとして追加
-      await db.groupMembers.put({
-        id: crypto.randomUUID(),
-        groupId: group.id,
-        userId: user.id,
-        userName: user.name,
-        userEmail: user.email,
-        role: "owner",
-        joinedAt: new Date(),
-      })
-
-      // サーバーから最新のグループ一覧を再取得
+      // 最新のグループ一覧を取り直す（フラグ true なら同期して所属グループのキャッシュを更新する。#62 O7）
+      // 以前はゲスト DB にも書いていたが、ログイン中はどこからも読まれないのでやめた
       await refetchGroups()
 
       setNewGroupName("")
@@ -88,25 +66,11 @@ export default function GroupsPage() {
     setJoinError(null)
     try {
       // サーバーでグループに参加
-      const group = await joinGroupMutation.mutateAsync({
+      await joinGroupMutation.mutateAsync({
         inviteCode: inviteCode.trim(),
       })
 
-      // ローカルDBにも同期
-      // グループを追加
-      await db.groups.put({
-        id: group.id,
-        name: group.name,
-        ownerId: "", // サーバーではownerIdは別テーブルで管理
-        inviteCode: group.inviteCode,
-        createdAt: group.createdAt,
-        updatedAt: group.updatedAt,
-      })
-
-      // 自分をメンバーとして追加
-      await addGroupMember(group.id, user.id, user.name, user.email)
-
-      // サーバーから最新のグループ一覧を再取得
+      // 最新のグループ一覧を取り直す（フラグ true なら同期して所属グループのキャッシュを更新する。#62 O7）
       await refetchGroups()
 
       setInviteCode("")

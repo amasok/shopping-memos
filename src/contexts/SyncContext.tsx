@@ -55,6 +55,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     const transport: SyncTransport = {
       push: (input) => utils.client.sync.push.mutate(input),
       pull: (input) => utils.client.sync.pull.query(input),
+      // 所属グループのキャッシュ（full モードの pull の後。#62 O7）
+      getGroups: () => utils.client.identity.getGroups.query(),
     }
     return new SyncEngine({
       db: getUserDb(userId),

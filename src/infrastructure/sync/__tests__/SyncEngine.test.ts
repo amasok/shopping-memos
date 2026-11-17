@@ -556,3 +556,61 @@ describe("requestSync とその他", () => {
     expect(pushOutcome(r("duplicate", "rejected:not_found"))).toBe("failed")
   })
 })
+
+describe("所属グループのキャッシュ（#62 O7）", () => {
+  const group = (id: string, name: string, memberCount: number) => ({
+    id,
+    name,
+    inviteCode: "ABCD1234",
+    inviteEnabled: true,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+    memberCount,
+  })
+
+  async function cachedGroup(id: string, name: string) {
+    await database.groups.put({ id, name, ownerId: "", createdAt: new Date(0), updatedAt: new Date(0), memberCount: 1 })
+  }
+
+  it("pull の後に所属グループでキャッシュを上書きする", async () => {
+    await cachedGroup(uuid(1), "A（古い名前）")
+    await cachedGroup(uuid(2), "B")
+    const getGroups = vi.fn(async () => [group(uuid(1), "A", 2), group(uuid(3), "C", 3)])
+    const { instance } = engine({ transport: { push: vi.fn(applyAll), pull: vi.fn(async () => pullPage()), getGroups } })
+
+    await instance.sync()
+
+    const rows = await database.groups.orderBy("id").toArray()
+    expect(rows.map((r) => [r.id, r.name, r.memberCount, r.ownerId])).toEqual([
+      [uuid(1), "A", 2, ""],
+      [uuid(3), "C", 3, ""],
+    ])
+    expect(rows[0].createdAt).toEqual(new Date("2026-01-01T00:00:00.000Z"))
+  })
+
+  it("グループの一覧の取得に失敗しても同期は終わる", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    await cachedGroup(uuid(1), "A")
+    const getGroups = vi.fn(async () => {
+      throw new TypeError("Failed to fetch")
+    })
+    const { instance } = engine({ transport: { push: vi.fn(applyAll), pull: vi.fn(async () => pullPage()), getGroups } })
+
+    await instance.sync()
+
+    expect(instance.getState().lastSyncAt).not.toBeNull()
+    expect(await getMeta(database, "lastSyncAt")).toBeDefined()
+    expect((await database.groups.toArray()).map((r) => r.name)).toEqual(["A"])
+    expect(timers).toEqual([])
+  })
+
+  it("push だけの同期（drain）ではグループを取りにいかない", async () => {
+    const getGroups = vi.fn(async () => [group(uuid(1), "A", 1)])
+    const { instance } = engine({ mode: "drain", transport: { push: vi.fn(applyAll), pull: vi.fn(async () => pullPage()), getGroups } })
+
+    await instance.sync()
+
+    expect(getGroups).not.toHaveBeenCalled()
+    expect(await database.groups.count()).toBe(0)
+  })
+})

@@ -4,6 +4,7 @@ import { useCallback } from "react"
 import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
 import { useDataSource } from "./useDataSource"
+import { useCatalogSource } from "./useCatalogSource"
 
 type CreateListInput = {
   name: string
@@ -33,6 +34,8 @@ type AddNewItemToListInput = {
 export function useListMutations() {
   const { useServer } = useDataSource()
   const utils = trpc.useUtils()
+  // カタログの一覧を追いつかせる（フラグ false: キャッシュを無効に / フラグ true: すぐに同期。#62 O7）
+  const { refreshCatalog } = useCatalogSource()
 
   // サーバー側ミューテーション
   const createMutation = trpc.shopping.createList.useMutation({
@@ -55,21 +58,21 @@ export function useListMutations() {
     onSuccess: () => {
       utils.shopping.getList.invalidate()
       utils.shopping.getLists.invalidate()
-      utils.catalog.getItems.invalidate() // リストに追加したアイテムをカタログから除外
+      refreshCatalog() // リストに追加したアイテムをカタログから除外
     },
   })
   const addNewItemMutation = trpc.shopping.addNewItemToList.useMutation({
     onSuccess: () => {
       utils.shopping.getList.invalidate()
       utils.shopping.getLists.invalidate()
-      utils.catalog.getItems.invalidate() // リストに追加したアイテムをカタログから除外
+      refreshCatalog() // リストに追加したアイテムをカタログから除外
     },
   })
   const removeItemMutation = trpc.shopping.removeItemFromList.useMutation({
     onSuccess: () => {
       utils.shopping.getList.invalidate()
       utils.shopping.getLists.invalidate()
-      utils.catalog.getItems.invalidate() // リストから外したアイテムをカタログに表示
+      refreshCatalog() // リストから外したアイテムをカタログに表示
     },
   })
   const checkItemMutation = trpc.shopping.checkItem.useMutation({
@@ -82,7 +85,7 @@ export function useListMutations() {
     onSuccess: () => {
       utils.shopping.getLists.invalidate()
       utils.shopping.getHistory.invalidate()
-      utils.catalog.getItems.invalidate()
+      refreshCatalog()
     },
   })
 

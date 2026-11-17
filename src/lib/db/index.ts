@@ -59,6 +59,8 @@ export interface Group {
   inviteEnabled?: boolean
   createdAt: Date
   updatedAt: Date
+  /** メンバー数（ユーザー DB の所属グループのキャッシュだけが持つ。#62 O7） */
+  memberCount?: number
 }
 
 export interface GroupMember {

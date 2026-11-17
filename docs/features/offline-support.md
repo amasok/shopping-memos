@@ -204,6 +204,8 @@
 
 Background Sync API は iOS で使えないため、上記のアプリ側のきっかけで再送する。
 
+- O7 の時点（2026-11-17）で呼んでいる場所: カタログ（商品・タグ）の端末の DB への書き込みの後に `requestSync()`（2 秒のデバウンス）。買い物（O8 まで tRPC）の変更の後と、グループの作成・参加・更新・脱退（tRPC）の後に `sync()`（すぐ。待たない）。手動更新ボタンは O9
+
 ### 4b. ゲストのデータとログイン・ログアウト（2026-11-17 決定、#144 で改訂）
 
 R1 の時点（ゲスト用の `ShoppingMemosDB` だけがある）での振る舞い。5 の DB の分離（O7）を入れるときも、この振る舞いを保つ。
@@ -380,7 +382,7 @@ output: {
 - `itemRepository`, `tagRepository`, `listRepository` を作る。書き込みは `db.transaction("rw", [table, db.syncQueue], ...)` で、エンティティとキューを同時に更新する（ゲストではキューに積まない）
 - 既存の hook（`src/hooks/data/*`）の書き込みは、すべてこのリポジトリ経由にする。読み取りは `useLiveQuery` を使う
 - **フィーチャーフラグ `NEXT_PUBLIC_LOCAL_FIRST`**（本番で切り戻すための安全策）
-  - `true`（R3 以降の既定）: ログイン中もローカルファーストで動く
+  - `"true"`: ログイン中もローカルファーストで動く。**コードの既定は false**（値が `"true"` のときだけ有効。`src/lib/featureFlags.ts`）。R3 で Vercel の環境変数 `NEXT_PUBLIC_LOCAL_FIRST=true` を Production と Preview に入れて有効にする（2026-11-17、O7 で決定）。O11 でフラグごと消す
   - `false`: 従来のサーバーファースト（tRPC 直呼び）に戻す。このとき SyncEngine は **push だけを続けて未送信のキューを送り切る**（drain モード）。端末内の未送信の変更を失わずに戻せる
   - そのため、O7 / O8 では tRPC の分岐を**すぐには消さず**、フラグで切り替えられる形で残す。R3 から 2 週間安定したら、O11 でサーバーファーストの分岐とフラグを削除する
 - グループ管理（`identity.*`）は、tRPC を直接呼ぶオンライン限定のまま残す。`groups` / `groupMembers` は、pull のたびに `identity.getGroups` の結果で上書きして読み取り専用でキャッシュする（オフラインでもグループの切り替えと表示はできる）
@@ -398,7 +400,14 @@ output: {
   - pull で上書きしないのは、`pending` / `inflight` の操作があるエンティティ。`failed` のものはサーバーの値で上書きする。壊れたカーソル（BAD_REQUEST）は捨てる
   - 所属グループが変わったら、抜けたグループのローカルデータを消し、カーソルなしで取り直す（前回の一覧がない最初の pull では比べない）。保存は、カーソルを消してから一覧を書く順にする（一覧だけ保存して止まると、次の pull が古いカーソルの差分だけを取る）
   - drain モードでは pull しない。エンジンは、ログイン中で merge が終わってから作る（`isMergeCompleted`）。`useSync()` は `engine`（O7 でリポジトリが時計と DB を使う）と `requestSync()`（書き込みの後の 2 秒のデバウンス）も返す
-  - `groups` / `groupMembers` のキャッシュ（`identity.getGroups` での上書き）と、ログアウト時のユーザー DB の削除は、まだ行わない（O7 / O9）
+  - `groups` / `groupMembers` のキャッシュ（`identity.getGroups` での上書き）と、ログアウト時のユーザー DB の削除は、まだ行わない（O7 / O9）→ `groups` のキャッシュは O7 で入れた（下の「O7 での細部」）。`groupMembers` のキャッシュとユーザー DB の削除は O9
+- **O7 での細部（2026-11-17）**（`src/hooks/data/useCatalogSource.ts`、`src/infrastructure/local/catalogRepository.ts`、`src/hooks/data/catalogQueries.ts`。仕様は `openspec/changes/62-o7-catalog-local-first/`）:
+  - カタログの読み書きの経路: ゲスト（とログイン中で merge の前）はゲスト DB（キューに積まない）、ログイン中・フラグ false は tRPC、ログイン中・フラグ true はユーザー DB（キューに積み、書き込みの後に `requestSync()`）。買い物の hooks（`useDataSource`）は O8 まで tRPC のまま
+  - ローカルファーストの一覧の並びはサーバーと同じ（商品は作成の古い順、タグは名前の文字コードの順。タグは本番の DB の照合順序が C のときだけサーバーと一致）。ゲストの並びは今のまま（そろえるかは保留の change `62-o7b-catalog-guest-alignment`）
+  - ユーザー DB の初回の同期（`lastSyncAt` がない）が終わるまで、カタログとグループの一覧は読み込み中にする
+  - タグの削除は、外した商品ごとに `update {tagIds}` もキューに積む（送る前のタグの create + delete が圧縮で消えたとき、商品のパッチに消えたタグが残らないように）
+  - フラグが true の同期は、pull の後に `identity.getGroups` で `groups` のキャッシュを上書きし（失敗しても同期は成功）、`useGroups` はそれを読む。キャッシュは `ownerId` と `inviteCodeExpiresAt` を持たない（表示だけに使う）
+  - 買い物（tRPC）の変更の後は、`catalog.getItems` の invalidate の代わりに、フラグが true なら `sync()` する（「買いたいもの」の除外を追いつかせる）
 
 **オフライン時のセッション（#61 に依存）**
 
@@ -468,7 +477,7 @@ develop に PR をマージ
 | R1 | O1 + O1b + O2（SW、更新通知・強制更新、リスト詳細のルート変更） | **リリース後 1 週間は様子を見て**、問題がなければ R2 に進む |
 | R2a | O3（expand マイグレーションだけ） | 列を足すだけ。古いコードはそのまま動く |
 | R2b | O3b + O4 + O5（論理削除、サーバーの同期 API） | 画面は tRPC の直接呼び出しのまま |
-| R3 | O6 + O7 + O8 + O9（クライアントのローカルファースト化）。**分けずに同時にリリースする** | O7 / O8 だけを出すと、オフライン時にログイン状態が失われ、ゲストの表示に切り替わる（O9 で解消） |
+| R3 | O6 + O7 + O8 + O9（クライアントのローカルファースト化）。**分けずに同時にリリースする**。Vercel の環境変数 `NEXT_PUBLIC_LOCAL_FIRST=true` を Preview（確認の前）と Production（main へのマージの前）に入れる（ビルド時に埋め込むので、入れた後のデプロイから有効） | O7 / O8 だけを出すと、オフライン時にログイン状態が失われ、ゲストの表示に切り替わる（O9 で解消） |
 | R4 | O10 + O11（ドキュメント、移行用コードの削除） | R3 から 2 週間安定したあと。O11 の後は、フラグによる切り戻しができなくなる |
 
 #### Preview での確認チェックリスト（ユーザーが実施）
@@ -551,7 +560,7 @@ develop に PR をマージ
 | O4 | `feat: sync.push を実データに反映する冪等 API に作り直し` | 操作ごとの認可、パッチの検証と上限、フィールド単位の LWW と削除優先、`opId` による冪等化、`serverTime`、`protocolVersion`（#69 の push 部分を解消） | O3b、#68、#69（merge 部分） | ~500 |
 | O5 | `feat: sync.pull をカーソル差分取得に作り直し` | カーソル（60 秒のさかのぼり、ステートメントタイムアウト）、tombstone、`tagIds` の埋め込み、メンバーシップ、ページング、`protocolVersion` | O3b（O4 とは独立だが、ルールに従い O4 のマージ後に着手） | ~350 |
 | O6 | `feat: クライアント同期エンジン（push/pull/キュー圧縮）を実装` | 2 つの PR に分ける。**O6a**: Dexie v10（`versionchange` / `blocked` の処理）、ユーザーごとの DB、`meta`、時刻の補正、リポジトリ層の土台、キューの圧縮（`inflight` を除外、`fieldTimes` の統合）、使っていなかった旧 SyncEngine / SyncContext の削除。**O6b**: SyncEngine の push/pull/バックオフ/ロック/drain モード、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、SyncProvider の組み込み（O6b では hook はまだ tRPC 直呼びのまま。同期エンジンは「キューが空なら pull するだけ」で動く） | O4, O5 | ~500 |
-| O7 | `refactor: カタログ（items/tags）をローカルファーストに移行` | `useItems` / `useTags` / ミューテーションをリポジトリ経由に（フラグが false なら従来の tRPC の分岐）。マージ後のゲスト DB 消去と初回の全件 pull | O6 | ~400 |
+| O7 | `refactor: カタログ（items/tags）をローカルファーストに移行` | `useItems` / `useTags` / ミューテーションをリポジトリ経由に（フラグが false なら従来の tRPC の分岐）。初回の同期が終わるまでの読み込み中、`groups` のキャッシュ（「マージ後のゲスト DB 消去」は #144 で済み。初回の全件 pull は O6 の SyncEngine がカーソルなしで行う） | O6 | ~400 |
 | O8 | `refactor: 買い物（lists/listItems/history）をローカルファーストに移行` | `useLists` / `useListMutations` / `useHistory*` の移行（フラグで切り替え）、`finishShopping` / `revertHistory` の複合操作 | O7 | ~500 |
 | O9 | `feat: オフライン時のセッション保持と同期状態 UI を追加` | `lastKnownUser`、`status: "offline"`、セッション切れの処理、ログアウト時の消去と確認、OfflineBanner / SyncStatusBadge / FailedOperationsSheet / 手動更新、オンライン限定操作の無効化 | O8、#61 の A3（AuthContext の置き換え） | ~450 |
 | O10 | `docs: ADR-004/005 と同期実装状況を更新` | ADR の更新、`sync-implementation-status.md` の更新 | O9 | ~150 |

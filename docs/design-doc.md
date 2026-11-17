@@ -143,7 +143,7 @@ src/contexts/*       Auth → DataMerge → Sync → Group の Provider（src/ap
 | サーバーファースト | ログイン中で merge 済み（`useServer = !!user && isMergeCompleted`、`useDataSource.ts`） | tRPC。TanStack Query のキャッシュ |
 | ローカルファースト（#62） | 上に加えて `NEXT_PUBLIC_LOCAL_FIRST=true` | ユーザー DB `ShoppingMemosDB-u-<id>` に書いて `syncQueue` に積み、SyncEngine が push / pull |
 
-**O6 の時点の注意**: フラグを true にしても、変わるのは SyncEngine が `full`（push + pull）で動くことだけ。画面はまだユーザー DB を読まず、`infrastructure/local/repository.ts` の書き込みもテストからしか呼ばれていない。hooks をリポジトリ経由にするのは O7（catalog）・O8（shopping）。フラグの既定は false（`src/lib/featureFlags.ts`）で、false のとき SyncEngine は `drain`（残ったキューを送るだけ）。
+**O7 の時点の注意**: フラグを true にすると、SyncEngine が `full`（push + pull）で動き、カタログ（商品・タグ）とグループの一覧がユーザー DB を読む（書き込みは `infrastructure/local/catalogRepository.ts` 経由）。買い物（リスト・履歴）は O8 まで tRPC のまま。フラグの既定は false（`src/lib/featureFlags.ts`）で、R3 で環境変数で有効にする。false のとき SyncEngine は `drain`（残ったキューを送るだけ）。
 
 ```mermaid
 sequenceDiagram
@@ -274,13 +274,13 @@ sequenceDiagram
 
 | 項目 | offline-support.md | 実装（392dbed） |
 |------|-------------------|----------------|
-| ローカルファーストの範囲 | フラグが true ならログイン中もローカルファーストで動く（:383。O8 までそろった後の姿） | O6 ではフラグが true でも画面はユーザー DB を読まない。変わるのは SyncEngine が push + pull で動くことだけ（「4. データの流れ」の注意） |
-| フラグの既定 | `NEXT_PUBLIC_LOCAL_FIRST` は「R3 以降の既定」が true（:383） | 値が `"true"` のときだけ有効で、既定は false（`src/lib/featureFlags.ts`）。R3 で環境変数を入れるのか既定を変えるのかは未定 |
+| ローカルファーストの範囲 | フラグが true ならログイン中もローカルファーストで動く（:383。O8 までそろった後の姿） | **O7 で直した**: フラグが true ならカタログとグループの一覧はユーザー DB を読む。買い物は O8（offline-support.md の「O7 での細部」） |
+| フラグの既定 | `NEXT_PUBLIC_LOCAL_FIRST` は「R3 以降の既定」が true（:383） | **O7 で直した**: コードの既定は false のまま、R3 で Vercel の環境変数を true にする（offline-support.md の :383 を直した） |
 | 同期のロックの名前 | `navigator.locks.request("sync")`（:392） | ユーザーごとの `shopping-memos-sync-<userId>`（`src/contexts/SyncContext.tsx:63`） |
 | push の `duplicate` | 「`applied` / `duplicate` はキューから削除」（:390、テスト計画の :573）。:326 には reason で分ける記述もあり、文書の中で食い違う | reason で分ける: `applied` なら消す、`rejected:*` なら failed、それ以外は消して取り直す（`SyncEngine.ts` の `pushOutcome`） |
 | 「現状」の表 | 2026-11-16 時点（Dexie v8、`public/sw.js` だけなど。:19-31） | Dexie v10、Serwist の SW |
-| O7 の範囲 | O7 に「マージ後のゲスト DB 消去」を含める（:554） | #144 で実装済み。取り込めた行をゲスト DB から消し、残りを pendingMerge に移す（`src/lib/db/guestData.ts:163-182`） |
-| 同期のきっかけ | 書き込み後・手動でも同期する（「4. 同期のタイミング」） | `requestSync()` / `sync()` を呼ぶ画面・hooks はまだない（O7〜O9） |
+| O7 の範囲 | O7 に「マージ後のゲスト DB 消去」を含める（:554） | **O7 で直した**: ゲスト DB の消去は #144 で済み。O7 の行を実際の範囲に直した |
+| 同期のきっかけ | 書き込み後・手動でも同期する（「4. 同期のタイミング」） | **O7 で直した**: カタログの書き込みの後に `requestSync()`、買い物・グループの変更の後に `sync()`。手動更新ボタンは O9 |
 
 ## 8. 目指す構造
 
