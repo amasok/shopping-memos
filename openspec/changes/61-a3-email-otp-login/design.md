@@ -94,12 +94,13 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 
 ### D7. 実装を 2 つの PR に分ける（A3a・A3b）
 
-| PR | 中身 | specs の Requirement |
-|----|------|---------------------|
-| A3a | Better Auth への切り替え、コードのログイン、正規化、期限・試行・使い回しの禁止、再送の間隔、列挙対策、Turnstile（非表示）、IP ごとの上限、「アドレス × IP」の上限と累積ロック、許可リスト、紐付け、セッション、ログアウト、オリジンの確認、E2E のルート、next-auth と Credentials の削除、ログイン画面 | 「狙われたアドレスへの対話型のチャレンジ」「制限の通知と解除」「送信数の監視」と、「30 日より古い記録は消える」の Scenario 以外のすべて |
-| A3b | 対話型のチャレンジの段階、通知と解除、送信数の監視、30 日の記録の掃除 | 上の残り |
+| PR・change | 中身 |
+|-----------|------|
+| A3a（この change） | Better Auth への切り替え、コードのログイン、使わない API を閉じる、正規化、期限・試行・使い回しの禁止、再送の間隔、黙って送らないとき、列挙対策、Turnstile（非表示）、IP ごとの上限、「アドレス × IP」の上限と累積ロック（`otp_events` の記録と 30 日の掃除を含む）、許可リスト、紐付け、セッション、ログアウト、オリジンの確認、E2E のルート、next-auth と Credentials の削除、ログイン画面 |
+| A3b（`61-a3b-otp-abuse-escalation`） | 狙われたアドレスへの対話型のチャレンジ、制限の通知と解除、送信数の監視 |
 
-- 1 つの change は 1 つの PR で archive する決まりなので、A3a に着手するとき、A3b の分の Requirement と Scenario を、中身を変えずに新しい change `61-a3b-otp-abuse-escalation` に移す（承認は取り直さない）
+- 1 つの change は 1 つの PR で archive する決まりなので、承認の後（2026-11-18）に A3b の分の Requirement と Scenario を、中身を変えずに `61-a3b-otp-abuse-escalation` に移した（承認は取り直さない）。30 日の記録の掃除は、`otp_events` を作る A3a に入れた
+- A3a の時点では、ロックは 24 時間で解けるだけ（ログインの成功での解除は A3b）
 - main へは、A3b と A4 が develop に入ってから出す（乱用対策の一部だけで本番に出さない）
 
 ### D8. E2E のログイン

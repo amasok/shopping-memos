@@ -2,7 +2,7 @@
 
 Issue: #61（https://github.com/amasok/shopping-memos/issues/61）
 
-**状態: ユーザーの確認待ち**。方針（Better Auth・6 桁のコード・Resend・Turnstile・一括切り替え・独自ドメイン）は 2026-11-16 にユーザーが承認済み（`docs/features/passkey-email-auth.md` の「決定事項」）。この change は、そのうち #61 の A3（Better Auth への切り替えとメールのコードでのログイン）の振る舞いを specs に書き起こす。ユーザーは 2026-11-18 に #61 の進め方をリーダーに任せた。認証はセキュリティに関わるので、proposal と specs だけはユーザーに見てもらう（リーダーの判断、2026-11-18）。
+**状態: 承認済み（2026-11-18、ユーザーが「提案どおり承認」。下の「ユーザーに確認すること」4 点も提案どおり）**。方針（Better Auth・6 桁のコード・Resend・Turnstile・一括切り替え・独自ドメイン）は 2026-11-16 にユーザーが承認済み（`docs/features/passkey-email-auth.md` の「決定事項」）。この change は #61 の A3a（Better Auth への切り替えとメールのコードでのログイン）の振る舞いを書く。承認を取ったときはこの change に A3b の分も入っていたが、承認の後に、中身を変えずに `61-a3b-otp-abuse-escalation` に移した（1 つの change を 1 つの PR で archive するため。design の D7）
 
 ## Why
 
@@ -15,7 +15,7 @@ Issue: #61（https://github.com/amasok/shopping-memos/issues/61）
 - コードは 5 分で失効し、3 回まちがえると無効になる。DB にはハッシュだけを持つ
 - 送信の結果（ステータス・本文）を、登録の有無・上限・ロックで変えない（アドレスの存在を分からないようにする）
 - Cloudflare Turnstile（ボット対策）を送信フォームに付け、サーバーで確かめる
-- 送信の上限: IP ごと（3 通/分・20 通/日）、アドレスごとの再送の間隔（60 秒）、「アドレス × IP」ごとの上限と、失敗の累積によるロック。上限に達したアドレスは止めずに、対話型の Turnstile を必須にする段階に入れ、本人に知らせる。本人がログインに成功したら解除する
+- 送信の上限: IP ごと（3 通/分・20 通/日）、アドレスごとの再送の間隔（60 秒）、「アドレス × IP」ごとの上限と、失敗の累積によるロック。上限に達したアドレスを対話型の Turnstile の段階に入れること・本人への通知と解除・送信数の監視は `61-a3b-otp-abuse-escalation`（A3b）で行う
 - 既存の Google ユーザーは、同じメールアドレスでログインすれば同じユーザー（`users.id`）になり、データがそのまま見える
 - セッションを DB のセッションに変える（30 日、使っている間は延長）。ログアウトはすぐ効く（設計書にあった 5 分の Cookie のキャッシュは使わない）
 - tRPC の mutation と認証の API の POST で、別のオリジンからのリクエストを断る（#71 の残り。ログインの CSRF も防ぐ）
@@ -59,7 +59,7 @@ Issue: #61（https://github.com/amasok/shopping-memos/issues/61）
 - 削除: `src/infrastructure/auth/e2e-credentials.ts`
 - DB の migration: なし（テーブルは A2 で作る）
 - 環境変数: `BETTER_AUTH_SECRET`・`BETTER_AUTH_URL`・`OTP_EVENT_HMAC_KEY`・`OTP_ALERT_EMAIL`・`TURNSTILE_SECRET_KEY`・`TURNSTILE_CHALLENGE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY`・`NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY`・`EMAIL_RECIPIENT_ALLOWLIST`（Preview のみ）。Google と Auth.js の変数は A6 まで残す（戻すときに要るため）
-- 実装は 2 つの PR に分ける（design の D7）。main へは両方が develop に入ってから出す
+- 実装は 2 つの PR に分ける（design の D7）。この change は A3a。A3b は `61-a3b-otp-abuse-escalation`。main へは両方と A4 が develop に入ってから出す
 
 ## ユーザーに確認すること
 
