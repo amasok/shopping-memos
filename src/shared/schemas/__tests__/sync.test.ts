@@ -113,25 +113,11 @@ describe("同期スキーマ", () => {
     })
   })
 
-  describe("syncPullInputSchema", () => {
-    it("since日時を受け入れる", () => {
-      const result = syncPullInputSchema.parse({
-        since: "2025-01-01T00:00:00Z",
-      })
-      expect(result.since).toBeInstanceOf(Date)
-    })
-
-    it("groupIdsを受け入れる", () => {
-      const result = syncPullInputSchema.parse({
-        groupIds: ["123e4567-e89b-12d3-a456-426614174000"],
-      })
-      expect(result.groupIds?.length).toBe(1)
-    })
-
-    it("空のオブジェクトを受け入れる", () => {
-      const result = syncPullInputSchema.parse({})
-      expect(result.since).toBeUndefined()
-      expect(result.groupIds).toBeUndefined()
+  describe("syncPullInputSchema（#62 O5）", () => {
+    it("protocolVersion は必須で、カーソルは省略できる", () => {
+      expect(syncPullInputSchema.safeParse({ protocolVersion: 1 }).success).toBe(true)
+      expect(syncPullInputSchema.safeParse({ cursor: "abc" }).success).toBe(false)
+      expect(syncPullInputSchema.safeParse({}).success).toBe(false)
     })
   })
 

@@ -5,6 +5,7 @@ const syncRepo = vi.hoisted(() => ({
   createOperation: vi.fn(), getChangedEntities: vi.fn(), countPendingOperations: vi.fn(),
 }))
 const pushService = vi.hoisted(() => vi.fn())
+const pullService = vi.hoisted(() => vi.fn())
 const groupRepo = vi.hoisted(() => ({ findByUserId: vi.fn() }))
 const merge = vi.hoisted(() => vi.fn())
 
@@ -13,13 +14,16 @@ vi.mock("@/modules/sync/infrastructure/repositories/DrizzleSyncRepository", () =
 vi.mock("@/modules/identity/infrastructure/repositories/DrizzleGroupRepository", () => ({ groupRepository: groupRepo }))
 vi.mock("@/modules/sync/application/services/DataMergeService", () => ({ dataMergeService: { merge } }))
 vi.mock("@/modules/sync/application/services/SyncPushService", () => ({ syncPushService: { push: pushService } }))
+vi.mock("@/modules/sync/application/services/SyncPullService", async (orig) => ({
+  ...(await orig<typeof import("@/modules/sync/application/services/SyncPullService")>()),
+  syncPullService: { pull: pullService },
+}))
 
 import { syncRouter } from "../sync"
 
 const OP = "11111111-1111-4111-8111-111111111111"
 const ENT = "33333333-3333-4333-8333-333333333333"
 const G1 = "22222222-2222-4222-8222-222222222221"
-const G2 = "22222222-2222-4222-8222-222222222222"
 const caller = () => syncRouter.createCaller({ userId: "user-1" } as never)
 
 beforeEach(() => {
@@ -56,23 +60,30 @@ describe("sync.push", () => {
   })
 })
 
-describe("sync.pull", () => {
-  const changes = { items: [1], tags: [2], lists: [3], listItems: [4], history: [5] }
-
-  it("groupIds 未指定なら所属グループすべての変更を取る", async () => {
-    groupRepo.findByUserId.mockResolvedValue([{ id: G1 }, { id: G2 }])
-    syncRepo.getChangedEntities.mockResolvedValue(changes)
-    const res = await caller().pull({})
-    expect(syncRepo.getChangedEntities).toHaveBeenCalledWith([G1, G2], undefined)
-    expect(res).toMatchObject({ items: [1], tags: [2], lists: [3], listItems: [4], history: [5], syncedAt: expect.any(Date) })
+describe("sync.pull（#62 O5）", () => {
+  it("ユーザーとカーソルを SyncPullService に渡し、結果をそのまま返す", async () => {
+    const out = { serverTime: "t", changes: { tags: [], items: [], lists: [], listItems: [] }, memberships: { groupIds: [] }, nextCursor: "c", hasMore: false }
+    pullService.mockResolvedValue(out)
+    expect(await caller().pull({ protocolVersion: 1, cursor: "abc" })).toEqual(out)
+    expect(pullService).toHaveBeenCalledWith("user-1", "abc")
   })
 
-  it("groupIds は所属グループに絞り、所属していないグループは取らない", async () => {
-    groupRepo.findByUserId.mockResolvedValue([{ id: G1 }])
-    syncRepo.getChangedEntities.mockResolvedValue(changes)
-    const since = new Date("2026-03-01")
-    await caller().pull({ groupIds: [G1, G2], since })
-    expect(syncRepo.getChangedEntities).toHaveBeenCalledWith([G1], since)
+  it("対応外の protocolVersion は CLIENT_TOO_OLD で、何も読まない", async () => {
+    await expect(caller().pull({ protocolVersion: 2 })).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: "CLIENT_TOO_OLD" })
+    expect(pullService).not.toHaveBeenCalled()
+  })
+
+  it("カーソルが不正なら BAD_REQUEST", async () => {
+    const { InvalidCursorError } = await vi.importActual<typeof import("@/modules/sync/application/services/SyncPullService")>(
+      "@/modules/sync/application/services/SyncPullService"
+    )
+    pullService.mockRejectedValue(new InvalidCursorError())
+    await expect(caller().pull({ protocolVersion: 1, cursor: "x" })).rejects.toMatchObject({ code: "BAD_REQUEST" })
+  })
+
+  it("ほかのエラーはそのまま投げる", async () => {
+    pullService.mockRejectedValue(new Error("db"))
+    await expect(caller().pull({ protocolVersion: 1 })).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" })
   })
 })
 
