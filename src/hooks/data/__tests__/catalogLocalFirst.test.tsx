@@ -11,6 +11,7 @@ import { createClock } from "@/infrastructure/local/clock"
  */
 const state = vi.hoisted(() => ({
   user: null as null | { id: string; name: string; email: string },
+  dbReady: true,
   isMergeCompleted: false,
   localFirst: false,
   selectedGroupId: undefined as string | undefined,
@@ -36,6 +37,7 @@ vi.mock("@/contexts/SyncContext", () => ({
   useSync: () => ({ engine: state.engine, requestSync: state.requestSync, sync: state.sync, lastSyncAt: state.lastSyncAt }),
 }))
 vi.mock("@/lib/featureFlags", () => ({ isLocalFirstEnabled: () => state.localFirst }))
+vi.mock("@/lib/db/provider", () => ({ useDB: () => ({ isReady: state.dbReady }) }))
 vi.mock("@/lib/db/userDb", () => ({ getUserDb: () => state.userDb }))
 vi.mock("@/infrastructure/trpc/client", () => {
   const query = (fn: (...args: unknown[]) => unknown) => ({
@@ -113,6 +115,7 @@ function loginLocalFirst() {
 
 beforeEach(async () => {
   state.user = null
+  state.dbReady = true
   state.isMergeCompleted = false
   state.localFirst = false
   state.selectedGroupId = undefined
@@ -196,6 +199,36 @@ describe("モードによる読み書きの経路", () => {
 
     await expect(result.current.createItem({ name: "牛乳", quantity: 1, tagIds: [] })).rejects.toThrow("準備中です")
     expect(await userDb.items.count()).toBe(0)
+  })
+})
+
+describe("ゲストの DB の準備（#183）", () => {
+  it("ゲストの DB の準備（移行と初期タグ）が終わるまで、ゲストの一覧は読まずに読み込み中にする", async () => {
+    state.dbReady = false
+    await guestDb.items.add({ id: "old", name: "以前のアイテム", quantity: 1, tagIds: [], createdAt: new Date(), updatedAt: new Date() })
+
+    const { result, rerender } = renderHook(() => ({ source: useCatalogSource(), items: useItems() }))
+
+    expect(result.current.source.store).toBeNull()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(result.current.items.isLoading).toBe(true)
+    expect(result.current.items.items).toEqual([])
+
+    // 準備の間に移行がゲストの DB を空にした後で、準備ができる
+    await guestDb.items.clear()
+    state.dbReady = true
+    rerender()
+
+    await waitFor(() => expect(result.current.items.isLoading).toBe(false))
+    expect(result.current.items.items).toEqual([])
+  })
+
+  it("ゲストの DB の準備ができる前は、書き込みも受けない", async () => {
+    state.dbReady = false
+    const { result } = renderHook(() => useItemMutations())
+
+    await expect(result.current.createItem({ name: "牛乳", quantity: 1, tagIds: [] })).rejects.toThrow("準備中です")
+    expect(await guestDb.items.count()).toBe(0)
   })
 })
 

@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react"
 import { initializeDefaultTags } from "./tags"
+import { ensureGuestDataMigrated } from "./guestData"
 import { isDbBlocked, subscribeDbBlocked } from "./versionEvents"
 
 interface DBContextValue {
@@ -35,6 +36,13 @@ export function DBProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function init() {
       try {
+        // ゲストのデータの移行（以前の仕組みの端末では全テーブルを空にする）が終わってから準備完了にする（#183）。
+        // Dexie の liveQuery は最初の読み込みの途中の書き込みを拾わないので、一覧の最初の読み込みが移行と重なると、
+        // 空にした後も古いデータが画面に残る。一覧の hooks（useCatalogSource）は isReady まで読まない。
+        // 移行に失敗しても続ける（移行は次の読み込みでやり直す）
+        // ログイン中（merge 済み）の読み込みでも走る。以前の印がある端末では、ゲスト DB を空にするのが早まるだけ
+        // （ログイン中の画面はゲスト DB を読まない）。印がない端末では、バージョンを付けるだけ
+        await ensureGuestDataMigrated()
         await initializeDefaultTags()
         setIsReady(true)
       } catch (error) {

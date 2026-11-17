@@ -60,6 +60,16 @@ async function waitForDefaultTags(page: Page) {
   await expect.poll(() => countRows(page, "tags")).toBeGreaterThan(0)
 }
 
+/**
+ * アプリのページから離れる（同じオリジンの API の URL を開く。#183）。
+ * 最初のページは、認証の確認が終わった後（ゲストのとき）に、ログイン中だけの状態（merge 済みの印）を消す。
+ * アプリのページのまま以前の印を付けると、その後始末と競合して印が消え、移行が走らないことがあるので、
+ * アプリの JS が動いていない状態で IndexedDB と localStorage を仕込んでから、アプリを開く
+ */
+async function leaveApp(page: Page) {
+  await page.goto("/api/version")
+}
+
 const DEFAULT_TAGS = ["エンタメ", "日用品", "食品"]
 
 test.describe("以前の仕組みの端末からの移行 (ゲスト)", () => {
@@ -68,6 +78,7 @@ test.describe("以前の仕組みの端末からの移行 (ゲスト)", () => {
   }) => {
     await page.goto("/")
     await waitForDefaultTags(page)
+    await leaveApp(page)
     const list = createList({ name: "以前のリスト" })
     await seedTable(page, "items", [createItem({ name: "以前のアイテム" })])
     await seedTable(page, "lists", [list])
@@ -79,7 +90,7 @@ test.describe("以前の仕組みの端末からの移行 (ゲスト)", () => {
       [LEGACY_MARK, VERSION_KEY]
     )
 
-    await page.reload()
+    await page.goto("/")
 
     await expect.poll(() => countRows(page, "items")).toBe(0)
     expect(await countRows(page, "lists")).toBe(0)
@@ -106,6 +117,7 @@ test.describe("以前の仕組みの端末からの移行 (ゲスト)", () => {
   test("移行済み（バージョン 2）なら、印があっても（新しい意味の印）データは消さない", async ({ page }) => {
     await page.goto("/")
     await waitForDefaultTags(page)
+    await leaveApp(page)
     await seedTable(page, "items", [createItem({ name: "消えないアイテム" })])
     await page.evaluate(
       ([mark, key]) => {
@@ -115,7 +127,7 @@ test.describe("以前の仕組みの端末からの移行 (ゲスト)", () => {
       [LEGACY_MARK, VERSION_KEY]
     )
 
-    await page.reload()
+    await page.goto("/")
 
     await expect(page.getByText("消えないアイテム")).toBeVisible()
     expect(await countRows(page, "items")).toBe(1)
@@ -124,6 +136,7 @@ test.describe("以前の仕組みの端末からの移行 (ゲスト)", () => {
   test("移行は一度だけ。移行後に入れたデータは、再読み込みしても消えない", async ({ page }) => {
     await page.goto("/")
     await waitForDefaultTags(page)
+    await leaveApp(page)
     await page.evaluate(
       ([mark, key]) => {
         localStorage.setItem(mark, "true")
@@ -131,7 +144,7 @@ test.describe("以前の仕組みの端末からの移行 (ゲスト)", () => {
       },
       [LEGACY_MARK, VERSION_KEY]
     )
-    await page.reload()
+    await page.goto("/")
     await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), VERSION_KEY)).toBe("2")
     await waitForDefaultTags(page)
 
