@@ -2,7 +2,7 @@
 
 Issue: #179（https://github.com/amasok/shopping-memos/issues/179）
 
-**状態: 保留（ユーザーの確認待ち）**。ユーザーの不在中に、確認が要る部分を `179-shopping-domain-rules` から分けた（リーダーの指示、2026-11-17）。下の「ユーザーに確認すること」の答えが出るまで実装しない。`179-shopping-domain-rules` が archive されてから実装する（この change の specs は、それが作った `openspec/specs/shopping` の Requirement を置き換える）。
+**状態: 承認済み（2026-11-18、ユーザーが提案どおりで承認）**。ユーザーの不在中に、確認が要る部分を `179-shopping-domain-rules` から分けた（リーダーの指示、2026-11-17）。下の「ユーザーに確認すること」6 項目は、2026-11-18 にユーザーがすべて提案どおりで承認した。`179-shopping-domain-rules`・O7（#181）・O8（#182）は archive 済み。O8 が足したローカルファーストの完了の Requirement も、確認事項 5・6（3 つのモードで同じ動き）に合わせてこの change で置き換える（リーダーの判断、2026-11-18）。
 
 ## Why
 
@@ -12,9 +12,10 @@ Issue: #179（https://github.com/amasok/shopping-memos/issues/179）
 
 - **ユーザーの決定（2026-11-17）**: チェック済みが 0 件で「買い物を完了」したときは、確認ダイアログで「リストの商品ごと消す」か「リストだけ消して商品は元に戻す」を選ばせ、そのうえでリストを削除する。履歴は作らない
   - 画面（`app/lists/detail/page.tsx`）: 今は 0 件だと押せない（「カゴに入れたものがありません」）完了ボタンを押せるようにし、押すとダイアログを出す
-  - tRPC の `deleteList` に、リストの商品と同じ名前・同じスコープの未購入のカタログの商品も消す指定（省略可。既定は消さない）を足す。ゲストの `deleteList` にも同じ指定を足す
+  - tRPC の `deleteList` に、リストの商品と同じ名前・同じスコープの未購入のカタログの商品も消す指定（省略可。既定は消さない）を足す。端末の DB の `deleteList`（ゲスト・ローカルファースト）にも同じ指定を足す
   - サーバーに 0 件の完了が届いたら、リストを変えずに断る（tRPC は BAD_REQUEST、sync.push は conflict の `no_checked_items`）
-- 完了のカタログの照合を未購入の商品に限る（今のサーバーは、同じ名前の購入済みの商品の購入日時も上書きする）
+- 完了のカタログの照合を未購入の商品に限る（今のサーバーとローカルファーストは、同じ名前の購入済みの商品の購入日時も上書きする）
+- ローカルファーストの完了も、照合を未購入に限り、チェック 0 件はエラーにする（ゲストと同じ。画面は 0 件で完了を呼ばずダイアログを出すので、エラーになるのはほかの端末と競合したときだけ）
 
 ## Capabilities
 
@@ -24,25 +25,25 @@ Issue: #179（https://github.com/amasok/shopping-memos/issues/179）
 
 ### Modified Capabilities
 
-- `shopping`: 「買い物の完了」を「チェック済みの商品がある買い物の完了」に置き換え（チェック 1 件以上、照合は未購入だけ。OpenSpec の MODIFIED は Scenario を落とせないので REMOVED + ADDED）、「チェック 0 件の完了」と「リストと同じ名前の未購入の商品も消すリストの削除」を足す
+- `shopping`: 「買い物の完了」を「チェック済みの商品がある買い物の完了」に置き換え（チェック 1 件以上、照合は未購入だけ。OpenSpec の MODIFIED は Scenario を落とせないので REMOVED + ADDED）、「端末の DB の買い物の完了」（O8）を「ローカルファーストの買い物の完了」に置き換え（照合は未購入だけ、0 件はエラー。同じく REMOVED + ADDED）、「チェック 0 件の完了」と「リストと同じ名前の未購入の商品も消すリストの削除」を足す
 
 ## 影響するモード
 
 | モード | 影響 |
 |-------|------|
-| ゲスト（Dexie だけ） | 0 件の完了のダイアログ。「リストの商品ごと消す」は `deleteList` の指定で、domain の照合の関数を使う。完了の照合（ゲストは今も未購入だけ）は変わらない |
+| ゲスト（Dexie だけ） | 0 件の完了のダイアログ。「リストの商品ごと消す」は端末の DB の `deleteList` の指定で、domain の照合の関数を使う。完了（0 件はエラー、照合は未購入だけ）は変わらない |
 | サーバーファースト（tRPC） | 0 件の完了のダイアログ、`deleteList` の指定、0 件の完了を断る、完了の照合を未購入に限る |
-| ローカルファースト（`NEXT_PUBLIC_LOCAL_FIRST`） | 画面はまだ tRPC を使う（O6 の時点）のでサーバーファーストと同じ。sync.push の完了は 0 件で conflict、照合は未購入だけ |
+| ローカルファースト（`NEXT_PUBLIC_LOCAL_FIRST`） | 画面は端末の DB（O8 の `shoppingRepository`）を使う。0 件の完了のダイアログ、端末の DB の `deleteList` の指定（キューに削除を積む）、端末の DB の完了をゲストと同じ規則にする（照合は未購入だけ、0 件はエラー）。sync.push の完了は 0 件で conflict、照合は未購入だけ |
 
 ## Non-goals
 
-- ゲストの hooks の完了・取り消しなどを domain の関数に置き換えること（O7/O8）
+- 「リストを削除」のメニューのダイアログ（「買いたいものに戻す / 完全に削除する」）の動きを変えること
 - 履歴の削除（`deleteHistory`）の照合の変更、履歴の取り消しで「この履歴で買った商品だけ」を戻すこと
 - DB・Dexie のスキーマの変更（ない）
 
 ## Impact
 
-- 変更: `src/modules/shopping/domain/services/finishShopping.ts`・`catalogMatch.ts`（179 で作る関数）、`src/modules/shopping/application/services/ShoppingSyncService.ts`、`src/modules/sync/application/services/SyncPushService.ts`（reason の対応）、`src/infrastructure/trpc/routers/shopping.ts`、`src/shared/schemas/list.ts`（`deleteListSchema`）、`src/hooks/data/useListMutations.ts`（`deleteList` の指定だけ）、`src/app/lists/detail/page.tsx`（ダイアログ）
+- 変更: `src/modules/shopping/domain/services/finishShopping.ts`・`catalogMatch.ts`、`src/modules/shopping/application/services/ShoppingService.ts`（tRPC の完了）・`ShoppingSyncService.ts`（削除の指定）・`catalogItemScope.ts`、`src/modules/sync/application/services/SyncPushService.ts`（reason の対応）、`src/infrastructure/trpc/routers/shopping.ts`、`src/shared/schemas/list.ts`（`deleteListSchema`）、`src/infrastructure/local/shoppingRepository.ts`（端末の DB の完了の規則と `deleteList` の指定）、`src/hooks/data/useListMutations.ts`（`deleteList` の指定）、`src/app/lists/detail/page.tsx`（ダイアログとエラーの表示）
 - API: `shopping.deleteList` の入力に省略可の項目が増える（後方互換）。`shopping.finishShopping` はチェック 0 件で BAD_REQUEST になる。sync.push の結果の reason に `no_checked_items` が増える
 - DB の migration: なし
 
