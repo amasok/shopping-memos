@@ -86,7 +86,7 @@ const DataMergeContext = createContext<DataMergeContextValue | null>(null)
  * ログイン時にローカルデータをサーバーにマージする
  */
 export function DataMergeProvider({ children }: { children: ReactNode }) {
-  const { user, isLoading: isAuthLoading } = useAuth()
+  const { user, isLoading: isAuthLoading, sessionKnown } = useAuth()
   const [isMerging, setIsMerging] = useState(false)
   const [isMergeCompleted, setIsMergeCompleted] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -107,7 +107,8 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
       // 次にログインしたときに、ゲストのデータがあればもう一度 merge する。
       // 以前の印は移行の判定に使うので、移行が終わってから消す
       // 移行に失敗したら印を残す（次の読み込みで移行をやり直す）
-      if (!isAuthLoading) {
+      // セッションがわからない（通信のエラー）ときは消さない（オフラインやページの移動で印を失わない）
+      if (!isAuthLoading && sessionKnown) {
         void ensureGuestDataMigrated().then((migrated) => {
           if (migrated) clearLoginScopedState()
         })
@@ -123,7 +124,7 @@ export function DataMergeProvider({ children }: { children: ReactNode }) {
     // マージ後のリロードをまたいで、取り込めなかった件数を通知する
     const skipped = Number(localStorage.getItem(`${MERGE_SKIPPED_KEY}-${user.id}`) ?? 0)
     setSkippedCount(Number.isFinite(skipped) && skipped > 0 ? skipped : 0)
-  }, [user, isAuthLoading])
+  }, [user, isAuthLoading, sessionKnown])
 
   const dismissSkipped = useCallback(() => {
     if (user) localStorage.removeItem(`${MERGE_SKIPPED_KEY}-${user.id}`)

@@ -112,7 +112,11 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 
 - **実装（4.x で決めた）**: `login()` と、ログインの成功の後の移動、ログアウトの後のホームへの移動は、`window.location.assign` で読み込み直す（React Query のキャッシュなど、前のユーザーの状態を残さない。ゲストのデータの取り込みは読み込みの後に `DataMergeContext` が行う）。戻り先の検証は `src/lib/auth/callbackUrl.ts`（`/login` には戻さない）。ログイン画面は `src/components/auth/LoginForm.tsx`、文言は `otpMessages.ts`（エラーのコードから決める）、Turnstile は `useTurnstile.ts`（`execution: "execute"` の非表示のウィジェット。送信のたびに reset してトークンを取り直す。E2E のビルドでテスト用のサイトキーのときだけ、スクリプトを読まずに Cloudflare のダミーのトークンを使う）
 
-- **セッションがわからないときは loading（E2E の回帰から見つけた。2026-11-18）**: Better Auth のクライアントは、セッションの取得が通信のエラー（ページを離れるときに切れた通信・オフライン）やサーバーのエラーになると、`data: null`・`isPending: false` にする。これを「ログインしていない」とすると、GroupContext と DataMergeContext が、ログイン中だけの状態（選んでいたグループ・merge 済みの印）を消してしまう。そこで `AuthContext` は、401 以外のエラーでセッションがないときは `status: "loading"` にする（401 か、正常な応答でセッションがないときだけ `unauthenticated`）。ログイン中の取り直しのエラーでは、Better Auth が前のセッションを残すので `authenticated` のまま。オフラインで最初に開いたときは、ゲストではなく loading になる（データはゲストの DB を見る今の動きのまま。#62 の O9 で `offline` を足す）
+- **セッションがわからないときは、ゲストとして出すが、ログイン中だけの状態は消さない（E2E の回帰から見つけた。2026-11-18。レビューの High で loading 案から変えた）**: Better Auth のクライアントは、セッションの取得が通信のエラー（ページを離れるときに切れた通信・オフライン）やサーバーのエラーになると、`data: null`・`isPending: false` にする。これをそのまま「ログインしていない」として扱うと、GroupContext と DataMergeContext が、ログイン中だけの状態（選んでいたグループ・merge 済みの印）を消してしまう。loading にすると、ゲストの一覧（`isAuthLoading` を待つ）がオフラインで止まる。そこで:
+  - `status` はエラーなら `unauthenticated`（画面はゲストの DB で出す。オフラインでも止まらない）
+  - `AuthContext` に `sessionKnown` を足す。正常な応答か 401 のときだけ true（通信のエラー・5xx・読み込み中は false）
+  - GroupContext は、ゲストとして出している間はグループで絞り込まない（`selectedGroupId` を undefined として出す）が、保存した値を消すのは `sessionKnown` のときだけ。DataMergeContext の `clearLoginScopedState` も `sessionKnown` のときだけ
+  - ログイン中の取り直しのエラーでは、Better Auth が前のセッションを残すので `authenticated` のまま。#62 の O9 で `offline` を足すときは、`sessionKnown` が false の場合を `offline` に分けられる
 - **セッションの取得は rate limit をかけない**: `customRules` で `/get-session` を外した。画面はフォーカスのたびなどに呼び、IP が取れないとき（共有のキー）に Better Auth の既定（10 秒に 100 回）を使い切ると 429 になるため。Cookie を読むだけで、トークンは推測できない長さ
 
 ### D6. 別のオリジンからの POST（#71 の残り。レビュー H3）

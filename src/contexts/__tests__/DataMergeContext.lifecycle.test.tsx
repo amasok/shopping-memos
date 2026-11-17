@@ -7,13 +7,14 @@ import { render, screen, waitFor } from "@testing-library/react"
 const state = vi.hoisted(() => ({
   user: { id: "user-1" } as { id: string } | null,
   isLoading: false,
+  sessionKnown: true,
   tags: [] as unknown[],
   items: [] as unknown[],
   mutateAsync: vi.fn(),
 }))
 
 vi.mock("@/contexts/AuthContext", () => ({
-  useAuth: () => ({ user: state.user, isLoading: state.isLoading }),
+  useAuth: () => ({ user: state.user, isLoading: state.isLoading, sessionKnown: state.sessionKnown }),
 }))
 vi.mock("@/lib/db", () => ({
   db: {
@@ -79,6 +80,7 @@ beforeEach(() => {
   localStorage.clear()
   state.user = { id: "user-1" }
   state.isLoading = false
+  state.sessionKnown = true
   state.tags = defaultTags()
   state.items = []
   state.mutateAsync.mockReset().mockResolvedValue(result(0))
@@ -174,6 +176,17 @@ describe("ゲストに戻ったとき（ログアウト・セッション切れ�
     expect(localStorage.getItem("data-merge-completed-user-2")).toBeNull()
     expect(localStorage.getItem("selectedGroupId")).toBeNull()
     expect(state.mutateAsync).not.toHaveBeenCalled()
+  })
+
+  it("通信のエラーでセッションがわからないときは、ゲストとして出しても印と選んでいたグループを消さない", async () => {
+    state.user = null
+    state.sessionKnown = false
+    localStorage.setItem(MERGE_KEY, "true")
+    localStorage.setItem("selectedGroupId", "group-1")
+    renderProvider()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(localStorage.getItem(MERGE_KEY)).toBe("true")
+    expect(localStorage.getItem("selectedGroupId")).toBe("group-1")
   })
 
   it("認証の読み込み中は、ゲストとみなさず印を消さない", async () => {

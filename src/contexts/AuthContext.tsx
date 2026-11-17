@@ -19,6 +19,12 @@ interface AuthContextType {
   user: User | null
   status: AuthStatus
   isLoading: boolean
+  /**
+   * セッションの有無が確かか（正常な応答か 401）。通信のエラー（ページを離れるときに切れた通信・オフライン）や
+   * サーバーのエラーでは false。false の間は、画面はゲストとして出すが、ログイン中だけの状態
+   * （選んでいたグループ・merge 済みの印）は消さない
+   */
+  sessionKnown: boolean
   /** ログイン画面へ移る（今いる画面を戻り先にする） */
   login: () => Promise<void>
   logout: () => Promise<void>
@@ -42,11 +48,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         avatarUrl: data.user.image ?? undefined,
       }
     : null
-  // 401 以外のエラー（通信のエラー・ページを離れるときに切れた通信・サーバーのエラー）でセッションがわからないときは、
-  // ゲストにしない。ゲストにすると、GroupContext と DataMergeContext がログイン中だけの状態（選んでいたグループ・
-  // merge 済みの印）を消してしまう。ログイン中の取り直しのエラーでは、Better Auth が前のセッションを残すので authenticated のまま
-  const sessionUnknown = !user && !!error && (error as { status?: number }).status !== 401
-  const status: AuthStatus = isPending || sessionUnknown ? "loading" : user ? "authenticated" : "unauthenticated"
+  const status: AuthStatus = isPending ? "loading" : user ? "authenticated" : "unauthenticated"
+  // 401 以外のエラー（通信のエラー・ページを離れるときに切れた通信・サーバーのエラー）でセッションがないときは、
+  // ログインしているかわからない。画面はゲストとして出す（オフラインでもゲストの DB で表示できるように）が、
+  // ログイン中だけの状態は消さない。ログイン中の取り直しのエラーでは、Better Auth が前のセッションを残すので authenticated のまま
+  const sessionKnown = !isPending && (!!user || !error || (error as { status?: number }).status === 401)
 
   const login = useCallback(async () => {
     window.location.assign(loginUrl(`${window.location.pathname}${window.location.search}`))
@@ -64,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, status, isLoading: status === "loading", login, logout }}>
+    <AuthContext.Provider value={{ user, status, isLoading: status === "loading", sessionKnown, login, logout }}>
       {children}
     </AuthContext.Provider>
   )

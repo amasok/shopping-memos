@@ -38,11 +38,12 @@ beforeEach(() => {
 })
 
 function Probe() {
-  const { user, status, isLoading, login, logout } = useAuth()
+  const { user, status, isLoading, sessionKnown, login, logout } = useAuth()
   return (
     <div>
       <span data-testid="status">{status}</span>
       <span data-testid="loading">{String(isLoading)}</span>
+      <span data-testid="known">{String(sessionKnown)}</span>
       <span data-testid="user">{user ? `${user.id}:${user.name}:${user.email}` : "none"}</span>
       <button onClick={() => void login()}>login</button>
       <button onClick={() => void logout()}>logout</button>
@@ -84,23 +85,41 @@ describe("AuthContext", () => {
     ["通信のエラー（ページを離れるときに切れた通信・オフライン）", new TypeError("Failed to fetch")],
     ["サーバーのエラー", { status: 500 }],
     ["rate limit", { status: 429 }],
-  ])("%sでセッションがわからないときは、ゲストにせず loading のまま", (_label, error) => {
-    state.session = { data: null, isPending: false, error }
-    renderProbe()
-    expect(screen.getByTestId("status")).toHaveTextContent("loading")
-    expect(screen.getByTestId("loading")).toHaveTextContent("true")
-  })
+  ])(
+    "%sでセッションがわからないときは、ゲストとして出し（読み込み中で止めない）、sessionKnown は false",
+    (_label, error) => {
+      state.session = { data: null, isPending: false, error }
+      renderProbe()
+      expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated")
+      expect(screen.getByTestId("loading")).toHaveTextContent("false")
+      expect(screen.getByTestId("known")).toHaveTextContent("false")
+    }
+  )
 
-  it("401 ならログインしていない", () => {
+  it("401 ならログインしていないことが確か（sessionKnown は true）", () => {
     state.session = { data: null, isPending: false, error: { status: 401 } }
     renderProbe()
     expect(screen.getByTestId("status")).toHaveTextContent("unauthenticated")
+    expect(screen.getByTestId("known")).toHaveTextContent("true")
+  })
+
+  it("正常な応答でセッションがなければ、ログインしていないことが確か", () => {
+    state.session = { data: null, isPending: false, error: null }
+    renderProbe()
+    expect(screen.getByTestId("known")).toHaveTextContent("true")
+  })
+
+  it("読み込み中は sessionKnown は false", () => {
+    state.session = { data: null, isPending: true, error: null }
+    renderProbe()
+    expect(screen.getByTestId("known")).toHaveTextContent("false")
   })
 
   it("ログイン中に取り直しがエラーになっても、前のセッションのまま authenticated", () => {
     state.session = { data: { user: { id: "u1", name: "A", email: "a@example.com" } }, isPending: false, error: { status: 500 } }
     renderProbe()
     expect(screen.getByTestId("status")).toHaveTextContent("authenticated")
+    expect(screen.getByTestId("known")).toHaveTextContent("true")
   })
 
   it("login はログイン画面へ移り、今いる画面を戻り先にする", async () => {

@@ -70,7 +70,7 @@ describe("logout", () => {
 describe("GroupContext（ゲスト）", () => {
   it("ゲストのときに選んでいたグループが残っていたら、個人に戻す", async () => {
     vi.resetModules()
-    vi.doMock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: null, isLoading: false }) }))
+    vi.doMock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: null, isLoading: false, sessionKnown: true }) }))
     localStorage.setItem("selectedGroupId", "group-1")
     const { GroupProvider, useGroup } = await import("../GroupContext")
     function Probe() {
@@ -84,6 +84,25 @@ describe("GroupContext（ゲスト）", () => {
     )
     expect(screen.getByTestId("group")).toHaveTextContent("personal")
     expect(localStorage.getItem("selectedGroupId")).toBe("undefined")
+    vi.doUnmock("@/contexts/AuthContext")
+  })
+
+  it("通信のエラーでセッションがわからないときは、個人として出すが、選んでいたグループは消さない", async () => {
+    vi.resetModules()
+    vi.doMock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: null, isLoading: false, sessionKnown: false }) }))
+    localStorage.setItem("selectedGroupId", "group-1")
+    const { GroupProvider, useGroup } = await import("../GroupContext")
+    function Probe() {
+      const { selectedGroupId } = useGroup()
+      return <span data-testid="group">{selectedGroupId ?? "personal"}</span>
+    }
+    render(
+      <GroupProvider>
+        <Probe />
+      </GroupProvider>
+    )
+    expect(screen.getByTestId("group")).toHaveTextContent("personal")
+    expect(localStorage.getItem("selectedGroupId")).toBe("group-1")
     vi.doUnmock("@/contexts/AuthContext")
   })
 })
