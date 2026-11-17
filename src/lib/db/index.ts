@@ -89,6 +89,11 @@ export interface SyncQueueItem {
   clientTime: string
   retryCount: number
   status: "pending" | "inflight" | "failed"
+  /**
+   * 一度でも送ったか。送ったがレスポンスが届かずに pending に戻した操作は、サーバーで処理済みかもしれないので
+   * 圧縮しない（まとめると、再送が duplicate になって後の変更が届かない）
+   */
+  attempted?: boolean
   lastError?: string
 }
 

@@ -67,6 +67,11 @@ describe("ローカルのリポジトリの土台", () => {
     expect(await database.syncQueue.toArray()).toEqual([expect.objectContaining({ entity: "item", type: "delete" })])
   })
 
+  it("ローカルにない行の削除は何もしない（キューに積まない）", async () => {
+    await deleteRecord(store(true), "tags", ID)
+    expect(await database.syncQueue.count()).toBe(0)
+  })
+
   it("ゲストではキューに積まない", async () => {
     await createRecord<Tag>(store(false), "tags", tag(), { name: "野菜" })
     await updateRecord<Tag>(store(false), "tags", ID, { name: "果物" }, { name: "果物" })

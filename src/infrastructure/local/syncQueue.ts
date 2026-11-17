@@ -8,8 +8,9 @@ import type { SyncPushEntity, SyncPushOperationType } from "@/shared/schemas/syn
  * 同じエンティティの最後の操作が pending なら、次の操作とまとめる。
  * - create + update → create / update + update → update（パッチを統合。fieldTimes はフィールドごとに新しい方）
  * - create + delete → 両方消す / update + delete → delete
- * - 最後の操作が inflight（送信中）・failed、または複合操作のときはまとめずに積む
- *   （送信中の create と後からの delete を両方消すと、サーバーには作成だけが残るため）
+ * - 最後の操作が inflight（送信中）・failed・一度送った（attempted）もの、または複合操作のときはまとめずに積む
+ *   （送信中や、送ったがレスポンスが届かなかった create と後からの delete を両方消すと、サーバーには作成だけが残るため）
+ * - まとめた結果が push の上限を超えるときも、まとめずに積む
  */
 
 export interface NewOperation {
@@ -60,7 +61,7 @@ export function mergePatches(
 }
 
 export function planEnqueue(last: SyncQueueItem | undefined, next: NewOperation): QueuePlan {
-  if (!last || last.status !== "pending") return { kind: "append" }
+  if (!last || last.status !== "pending" || last.attempted) return { kind: "append" }
   if (last.type === "create" && next.type === "update") {
     return { kind: "merge", merged: { type: "create", ...mergePatches(last, next) } }
   }
@@ -83,33 +84,48 @@ export function assertWithinPushLimits(op: Pick<NewOperation, "patch" | "fieldTi
 }
 
 /**
- * キューに積む（圧縮つき）。呼び出し元のトランザクションに syncQueue を含めること（エンティティの書き込みと同時に記録する）
+ * キューに積む（圧縮つき）。エンティティの書き込みと同時に記録するため、呼び出し元のトランザクションに syncQueue を含めること
+ * （ここでも syncQueue のトランザクションを張るので、単独で呼んでも seq は重ならない）
  */
 export async function enqueue(database: ShoppingMemosDB, op: NewOperation): Promise<void> {
-  const sameEntity = await database.syncQueue
-    .where("entityId")
-    .equals(op.entityId)
-    .filter((q) => q.entity === op.entity)
-    .sortBy("seq")
-  const last = sameEntity.at(-1)
-  const plan = planEnqueue(last, op)
+  await database.transaction("rw", database.syncQueue, async () => {
+    const sameEntity = await database.syncQueue
+      .where("entityId")
+      .equals(op.entityId)
+      .filter((q) => q.entity === op.entity)
+      .sortBy("seq")
+    const last = sameEntity.at(-1)
+    let plan = planEnqueue(last, op)
 
-  if (plan.kind === "merge") {
-    const merged = { ...last!, ...plan.merged }
-    assertWithinPushLimits(merged)
-    await database.syncQueue.put(merged)
-    return
-  }
-  assertWithinPushLimits(op)
-  if (plan.kind === "dropBoth" || plan.kind === "replace") await database.syncQueue.delete(last!.id)
-  if (plan.kind === "dropBoth") return
+    if (plan.kind === "merge") {
+      const merged = { ...last!, ...plan.merged }
+      if (withinPushLimits(merged)) {
+        await database.syncQueue.put(merged)
+        return
+      }
+      // まとめると上限を超えるなら、まとめずに積む（新しい操作だけが上限内なら、ユーザーの変更を失敗させない）
+      plan = { kind: "append" }
+    }
+    assertWithinPushLimits(op)
+    if (plan.kind === "dropBoth" || plan.kind === "replace") await database.syncQueue.delete(last!.id)
+    if (plan.kind === "dropBoth") return
 
-  const tail = await database.syncQueue.orderBy("seq").last()
-  await database.syncQueue.add({
-    id: crypto.randomUUID(),
-    seq: (tail?.seq ?? 0) + 1,
-    ...op,
-    retryCount: 0,
-    status: "pending",
+    const tail = await database.syncQueue.orderBy("seq").last()
+    await database.syncQueue.add({
+      id: crypto.randomUUID(),
+      seq: (tail?.seq ?? 0) + 1,
+      ...op,
+      retryCount: 0,
+      status: "pending",
+    })
   })
+}
+
+function withinPushLimits(op: Pick<NewOperation, "patch" | "fieldTimes">): boolean {
+  try {
+    assertWithinPushLimits(op)
+    return true
+  } catch {
+    return false
+  }
 }

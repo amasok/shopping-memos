@@ -371,7 +371,7 @@ output: {
 - **キューの圧縮**: 同じエンティティへの `pending` の操作をまとめる
   - create + update → create（パッチを統合）、update + update → update（統合）、create + delete → 両方消す、update + delete → delete
   - パッチを統合するとき、`fieldTimes` は**フィールドごとに新しい方**を残す（操作全体の `clientTime` は最新のものにする）
-  - **`inflight`（送信中）の操作は圧縮の対象から外す**。例えば create を送信中に delete が来た場合、両方消すとサーバーには作成だけが残る。そのため、delete は新しい操作として積む
+  - **`inflight`（送信中）の操作は圧縮の対象から外す**。例えば create を送信中に delete が来た場合、両方消すとサーバーには作成だけが残る。そのため、delete は新しい操作として積む。一度送ってレスポンスが届かずに `pending` に戻した操作（`attempted`）も、サーバーで処理済みかもしれないので同じく圧縮しない（まとめると再送が `duplicate` になり、後の変更が届かない）。まとめた結果が push の上限を超えるときも、まとめずに積む
 - **Dexie のバージョン更新（v9 → v10）**: 古いタブが開いていると `blocked` になる。古いタブ側は `versionchange` を受けたら DB を閉じてリロードする。新しいタブ側は `blocked` のときに「他のタブを閉じてください」と表示する
 - ユーザー DB の `meta` テーブル: `cursor`, `serverTimeOffset`, `lastSyncAt`, `groupIds`
 

@@ -67,6 +67,12 @@ describe("planEnqueue（キューの圧縮）", () => {
     expect(planEnqueue(queued({ status: "inflight" }), update({ name: "豆乳" }))).toEqual({ kind: "append" })
   })
 
+  it("一度送った（attempted）操作は、pending に戻っていても圧縮しない", () => {
+    expect(planEnqueue(queued({ type: "create", attempted: true }), del())).toEqual({ kind: "append" })
+    expect(planEnqueue(queued({ attempted: true }), update({ name: "豆乳" }))).toEqual({ kind: "append" })
+    expect(planEnqueue(queued({ attempted: true }), del())).toEqual({ kind: "append" })
+  })
+
   it("failed の操作・複合操作・前の操作がないときはそのまま積む", () => {
     expect(planEnqueue(queued({ status: "failed" }), update({ name: "豆乳" }))).toEqual({ kind: "append" })
     expect(planEnqueue(queued({ entity: "list", type: "finishShopping" }), update({ name: "x" }))).toEqual({ kind: "append" })
@@ -166,10 +172,26 @@ describe("enqueue（Dexie）", () => {
     await expect(enqueue(database, update(patch))).rejects.toThrow("fieldTimes")
   })
 
-  it("まとめた結果が上限を超えると、まとめずに失敗する（前の操作は残る）", async () => {
+  it("まとめた結果が上限を超えるなら、まとめずに新しい操作として積む", async () => {
     const half = "a".repeat(REQUEST_LIMITS.recordBytes / 2 + 10)
     await enqueue(database, update({ name: half }))
-    await expect(enqueue(database, update({ memo: half }))).rejects.toBeInstanceOf(QueueLimitError)
-    expect((await all())[0].patch).toEqual({ name: half })
+    await enqueue(database, update({ memo: half }))
+    expect((await all()).map((op) => op.patch)).toEqual([{ name: half }, { memo: half }])
+  })
+
+  it("一度送って pending に戻した操作（レスポンスが届かなかった）は、まとめも消しもしない", async () => {
+    await enqueue(database, { ...update({ name: "A" }), type: "create" })
+    await database.syncQueue.toCollection().modify({ attempted: true })
+    await enqueue(database, update({ quantity: 2 }))
+    expect((await all()).map((op) => [op.type, op.patch])).toEqual([
+      ["create", { name: "A" }],
+      ["update", { quantity: 2 }],
+    ])
+    // 後から積んだ（まだ送っていない）update は、delete に置き換わる。送った create は残る
+    await enqueue(database, del())
+    expect((await all()).map((op) => [op.type, op.patch])).toEqual([
+      ["create", { name: "A" }],
+      ["delete", undefined],
+    ])
   })
 })

@@ -71,10 +71,11 @@ export async function updateRecord<T extends Row>(
   })
 }
 
-/** 削除する（ローカルからは消す。サーバーでは論理削除になる） */
+/** 削除する（ローカルからは消す。サーバーでは論理削除になる）。ローカルにない行は何もしない */
 export async function deleteRecord(store: LocalStore, name: LocalTableName, id: string): Promise<void> {
   const clientTime = store.clock.now().toISOString()
   await store.db.transaction("rw", [table(store, name), store.db.syncQueue], async () => {
+    if (!(await table(store, name).get(id))) return
     await table(store, name).delete(id)
     if (store.queue) {
       await enqueue(store.db, { entity: ENTITY_OF[name], entityId: id, type: "delete", clientTime })
