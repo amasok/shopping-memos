@@ -16,11 +16,11 @@
 ## 3. 削除の指定
 
 - [x] 3.1 `deleteListSchema` の `deleteCatalogItems` と、tRPC の `deleteList` のテストを先に書き（「指定するとリストと同じ名前の未購入の商品を論理削除する」「ほかのスコープ・購入済み・削除済みの同じ名前の商品は消さない」「指定しないとリストだけを消す」「使えないリストは商品ごと消せない」「途中で失敗したら何も消さない」）、`ShoppingSyncService`・`catalogItemScope.ts` に実装する。実 DB が要るものは `*.db.test.ts` に置く。`getList` の入力は id だけのスキーマに分ける
-- [ ] 3.2 端末の DB の `shoppingRepository.deleteList` の指定のテストを先に書き（`shoppingRepository.test.ts` に「ゲストでは同じ groupId の未購入の商品を消す」「ローカルファーストでは端末の DB で消してキューに削除を積む」）、`selectItemsToDeleteWithList` で実装する。`useListMutations.deleteList` に指定を通す
+- [x] 3.2 端末の DB の `shoppingRepository.deleteList` の指定のテストを先に書き（`shoppingRepository.test.ts` に「ゲストでは同じ groupId の未購入の商品を消す」「ローカルファーストでは端末の DB で消してキューに削除を積む」）、`selectItemsToDeleteWithList` で実装する。`useListMutations.deleteList` に指定を通す
 
 ## 4. 端末の DB の完了
 
-- [ ] 4.1 `shoppingRepository.test.ts`・`catalogLocalFirst.test.tsx` の完了のテストを先に直す（「ローカルファーストの完了は端末の DB を更新し複合操作を 1 つ積む」「ローカルファーストの完了は同じ名前の購入済みの商品の購入日時を変えない」「ローカルファーストではチェック 0 件で完了するとエラーになる」「完了済みのリストは端末の DB でも完了できない」）。O8 の「…購入済みの商品も更新する」「…チェック 0 件でも完了できる」のテストは消す。`FinishRules` をなくし、ゲストとローカルファーストを同じ規則にする
+- [x] 4.1 `shoppingRepository.test.ts`・`catalogLocalFirst.test.tsx` の完了のテストを先に直す（「ローカルファーストの完了は端末の DB を更新し複合操作を 1 つ積む」「ローカルファーストの完了は同じ名前の購入済みの商品の購入日時を変えない」「ローカルファーストではチェック 0 件で完了するとエラーになる」「完了済みのリストは端末の DB でも完了できない」）。O8 の「…購入済みの商品も更新する」「…チェック 0 件でも完了できる」のテストは消す。`FinishRules` をなくし、ゲストとローカルファーストを同じ規則にする
 
 ## 5. 画面
 

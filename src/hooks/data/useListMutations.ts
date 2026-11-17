@@ -52,6 +52,7 @@ export function useListMutations() {
   const deleteMutation = trpc.shopping.deleteList.useMutation({
     onSuccess: () => {
       utils.shopping.getLists.invalidate()
+      refreshCatalog() // リストの商品が「買いたいもの」に戻る（商品も消す指定なら消える。179b）
     },
   })
   const addItemMutation = trpc.shopping.addItemToList.useMutation({
@@ -119,14 +120,15 @@ export function useListMutations() {
     [useServer, updateMutation, source]
   )
 
-  // リスト削除
+  // リスト削除（deleteCatalogItems: リストと同じ名前の未購入のカタログの商品も消す。179b）
   const deleteList = useCallback(
-    async (id: string) => {
+    async (id: string, options: shoppingRepository.DeleteListOptions = {}) => {
+      const deleteCatalogItems = options.deleteCatalogItems ?? false
       if (useServer) {
-        return deleteMutation.mutateAsync({ id })
+        return deleteMutation.mutateAsync({ id, deleteCatalogItems })
       }
 
-      await shoppingRepository.deleteList(requireStore(source), id)
+      await shoppingRepository.deleteList(requireStore(source), id, { deleteCatalogItems })
       source.afterWrite()
       return { success: true }
     },
@@ -196,13 +198,8 @@ export function useListMutations() {
         return finishMutation.mutateAsync({ listId, location })
       }
 
-      // ゲストは 179b が決まるまで今の規則（チェック 0 件はエラー、照合は未購入だけ）。ローカルファーストはサーバーと同じ
-      const result = await shoppingRepository.finishShopping(
-        requireStore(source),
-        listId,
-        location,
-        source.mode === "local" ? "server" : "guest"
-      )
+      // ゲストもローカルファーストもサーバーと同じ規則（チェック 0 件はエラー、照合は未購入だけ。179b）
+      const result = await shoppingRepository.finishShopping(requireStore(source), listId, location)
       source.afterWrite()
       return result
     },

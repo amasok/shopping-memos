@@ -26,6 +26,7 @@ const state = vi.hoisted(() => ({
   getGroupsQuery: vi.fn(),
   createItemMutate: vi.fn(async () => ({ id: "server-item" })),
   createListMutate: vi.fn(async () => ({ id: "server-list" })),
+  deleteListMutate: vi.fn(async () => ({ success: true })),
   getListsQuery: vi.fn(),
   getHistoryQuery: vi.fn(),
 }))
@@ -79,7 +80,7 @@ vi.mock("@/infrastructure/trpc/client", () => {
         getHistory: query(state.getHistoryQuery),
         createList: mutation((...args) => state.createListMutate(...(args as []))),
         updateList: mutation(),
-        deleteList: mutation(),
+        deleteList: mutation((...args) => state.deleteListMutate(...(args as []))),
         addItemToList: mutation(),
         addNewItemToList: mutation(),
         removeItemFromList: mutation(),
@@ -403,7 +404,42 @@ describe("買い物の hooks（端末の DB）", () => {
     expect(state.requestSync).toHaveBeenCalled()
   })
 
-  it("ゲストの hooks の完了は今の規則（チェック 0 件はエラー）", async () => {
+  it("ローカルファーストの hooks のリストの削除は、商品も消す指定を端末の DB に渡し、同期を予約する（179b）", async () => {
+    loginLocalFirst()
+    const { result } = renderHook(() => useListMutations())
+    let listId = ""
+    await act(async () => {
+      listId = (await result.current.createList({ name: "買い物" }))!.id
+      await result.current.addNewItemToList({ listId, name: "牛乳" })
+    })
+    state.requestSync.mockClear()
+
+    await act(async () => {
+      await result.current.deleteList(listId, { deleteCatalogItems: true })
+    })
+
+    expect(await userDb.lists.count()).toBe(0)
+    expect(await userDb.items.filter((i) => i.name === "牛乳").count()).toBe(0)
+    expect(state.requestSync).toHaveBeenCalled()
+  })
+
+  it("サーバーファーストの hooks のリストの削除は、商品も消す指定を tRPC に渡す（179b）", async () => {
+    state.user = USER
+    state.isMergeCompleted = true
+    const { result } = renderHook(() => useListMutations())
+
+    await act(async () => {
+      await result.current.deleteList("list-1", { deleteCatalogItems: true })
+    })
+    expect(state.deleteListMutate).toHaveBeenCalledWith({ id: "list-1", deleteCatalogItems: true })
+
+    await act(async () => {
+      await result.current.deleteList("list-2")
+    })
+    expect(state.deleteListMutate).toHaveBeenLastCalledWith({ id: "list-2", deleteCatalogItems: false })
+  })
+
+  it("ゲストの hooks の完了はチェック 0 件でエラーになる", async () => {
     const { result } = renderHook(() => useListMutations())
     let listId = ""
     await act(async () => {
