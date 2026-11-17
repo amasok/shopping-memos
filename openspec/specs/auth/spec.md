@@ -1,7 +1,7 @@
 # auth Specification
 
 ## Purpose
-TBD - created by archiving change 61-a3-email-otp-login. Update Purpose after archive.
+ログイン（認証）を定める。メールアドレスに送るワンタイムコードでのログインとログアウト、DB のセッション、コードの送信と照合の上限・乱用対策、使わない認証の API を閉じること、別のオリジンからの変更を断ること、既存の Google ユーザーの紐付け、E2E 用のログインの守りを含む（#61）。パスキー・表示名は、触れる change で足す。
 
 ## Requirements
 
