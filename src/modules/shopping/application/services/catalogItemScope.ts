@@ -4,8 +4,8 @@ import { scopeCondition, type DbExecutor } from "@/infrastructure/db/ownership"
 import type { OwnerScope } from "@/shared/domain/ownerScope"
 import { fieldNotNewerThan, notDeleted, softDeleteValues, touchFields } from "@/infrastructure/db/syncColumns"
 
-// 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
-// ここからは再エクスポートしない（#151）
+// 所有スコープの型と純粋な判定（OwnerScope・isSameScope）は src/shared/domain/ownerScope.ts、
+// DB を使う判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101・#179）。ここからは再エクスポートしない（#151）
 
 /** リストの所有スコープ（共通の OwnerScope と同じ） */
 export type ListScope = OwnerScope
