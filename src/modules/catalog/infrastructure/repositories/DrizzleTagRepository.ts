@@ -1,7 +1,7 @@
 import { eq, and, sql, isNull, inArray } from "drizzle-orm"
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
 import { db } from "@/infrastructure/db/drizzle/client"
-import { accessibleByUser, canAccessScope } from "@/infrastructure/db/ownership"
+import { accessibleByUser, canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
 import { RowNotFoundError, rethrowDuplicateId } from "@/infrastructure/db/errors"
 import {
   createdFieldTimes,
@@ -120,30 +120,37 @@ export class DrizzleTagRepository implements TagRepository {
     return updated
   }
 
-  async delete(id: string, actorUserId: string): Promise<void> {
+  async delete(id: string, actorUserId: string, executor?: DbExecutor): Promise<void> {
     // 論理削除。タグの関連は消し、関連を外したアイテムの updated_at / tagIds のキーを更新する
     // （中間テーブルの削除は pull で伝わらないので、アイテムの変更として伝える）
-    await db.transaction(async (tx) => {
-      const deleted = await tx
-        .update(tags)
-        .set(softDeleteValues())
-        .where(writableTag(id, actorUserId))
-        .returning({ id: tags.id })
-      if (deleted.length === 0) {
-        throw new RowNotFoundError("タグ")
-      }
-      const unlinked = await tx
-        .delete(itemTags)
-        .where(eq(itemTags.tagId, id))
-        .returning({ itemId: itemTags.itemId })
-      if (unlinked.length > 0) {
-        await tx
-          .update(items)
-          .set(touchFields(items, ["tagIds"]))
-          .where(inArray(items.id, unlinked.map((row) => row.itemId)))
-      }
-    })
+    // executor を渡すと、そのトランザクションの中で行う（sync.push の 1 操作 1 トランザクション。#62 O4）
+    if (executor) {
+      return this.softDelete(executor, id, actorUserId)
+    }
+    await db.transaction((tx) => this.softDelete(tx, id, actorUserId))
   }
+
+  private async softDelete(tx: DbExecutor, id: string, actorUserId: string): Promise<void> {
+    const deleted = await tx
+      .update(tags)
+      .set(softDeleteValues())
+      .where(writableTag(id, actorUserId))
+      .returning({ id: tags.id })
+    if (deleted.length === 0) {
+      throw new RowNotFoundError("タグ")
+    }
+    const unlinked = await tx
+      .delete(itemTags)
+      .where(eq(itemTags.tagId, id))
+      .returning({ itemId: itemTags.itemId })
+    if (unlinked.length > 0) {
+      await tx
+        .update(items)
+        .set(touchFields(items, ["tagIds"]))
+        .where(inArray(items.id, unlinked.map((row) => row.itemId)))
+    }
+  }
+
 
   async canAccess(tagId: string, userId: string): Promise<boolean> {
     // タグを取得

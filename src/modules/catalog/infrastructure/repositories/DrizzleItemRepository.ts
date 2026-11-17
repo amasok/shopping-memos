@@ -1,7 +1,7 @@
 import { eq, and, inArray, isNull, like } from "drizzle-orm"
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
 import { db } from "@/infrastructure/db/drizzle/client"
-import { accessibleByUser, canAccessScope } from "@/infrastructure/db/ownership"
+import { accessibleByUser, canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
 import { RowNotFoundError, rethrowDuplicateId } from "@/infrastructure/db/errors"
 import {
   createdFieldTimes,
@@ -213,19 +213,25 @@ export class DrizzleItemRepository implements ItemRepository {
     })
   }
 
-  async delete(id: string, actorUserId: string): Promise<void> {
+  async delete(id: string, actorUserId: string, executor?: DbExecutor): Promise<void> {
     // 論理削除。tombstone にタグは要らないので、タグの関連は消す（タグの使用数にも数えない）
-    await db.transaction(async (tx) => {
-      const deleted = await tx
-        .update(items)
-        .set(softDeleteValues())
-        .where(writableItem(id, actorUserId))
-        .returning({ id: items.id })
-      if (deleted.length === 0) {
-        throw new RowNotFoundError("アイテム")
-      }
-      await tx.delete(itemTags).where(eq(itemTags.itemId, id))
-    })
+    // executor を渡すと、そのトランザクションの中で行う（sync.push の 1 操作 1 トランザクション。#62 O4）
+    if (executor) {
+      return this.softDelete(executor, id, actorUserId)
+    }
+    await db.transaction((tx) => this.softDelete(tx, id, actorUserId))
+  }
+
+  private async softDelete(executor: DbExecutor, id: string, actorUserId: string): Promise<void> {
+    const deleted = await executor
+      .update(items)
+      .set(softDeleteValues())
+      .where(writableItem(id, actorUserId))
+      .returning({ id: items.id })
+    if (deleted.length === 0) {
+      throw new RowNotFoundError("アイテム")
+    }
+    await executor.delete(itemTags).where(eq(itemTags.itemId, id))
   }
 
   async markAsPurchased(id: string, actorUserId: string): Promise<Item> {

@@ -1,6 +1,8 @@
 import { TRPCError } from "@trpc/server"
 import { router, protectedProcedure } from "../server"
 import {
+  CLIENT_TOO_OLD,
+  SUPPORTED_SYNC_PROTOCOL_VERSIONS,
   syncPushInputSchema,
   syncPullInputSchema,
   syncMergeInputSchema,
@@ -10,17 +12,7 @@ import {
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
 import { dataMergeService } from "@/modules/sync/application/services/DataMergeService"
-import type { SyncConflict } from "@/modules/sync/domain/entities/SyncOperation"
-
-/**
- * Last Write Wins による競合解決
- */
-function resolveConflict(
-  localTime: Date,
-  serverTime: Date
-): "local" | "server" {
-  return localTime.getTime() > serverTime.getTime() ? "local" : "server"
-}
+import { syncPushService } from "@/modules/sync/application/services/SyncPushService"
 
 /**
  * Sync コンテキストのルーター
@@ -28,75 +20,18 @@ function resolveConflict(
  */
 export const syncRouter = router({
   /**
-   * ローカル操作をサーバーにプッシュ
-   * - 各操作を処理し、成功したIDと競合を返す
-   * - Last Write Winsで競合解決
+   * ローカルの操作をサーバーの実データに反映する（#62 O4）
+   * - 操作ごとに認可・検証し、フィールド単位の LWW と削除優先で適用する
+   * - opId で冪等（再送は duplicate）
+   * - 対応外の protocolVersion は CLIENT_TOO_OLD（クライアントは強制更新に進む）
    */
   push: protectedProcedure
     .input(syncPushInputSchema)
     .mutation(async ({ input, ctx }) => {
-      const processedIds: string[] = []
-      const conflicts: SyncConflict[] = []
-
-      for (const op of input.operations) {
-        try {
-          // アクセス権確認
-          // 他人・他グループのエンティティへの操作は記録せず破棄する（競合データも返さない）
-          const access = await syncRepository.checkEntityAccess(
-            op.entity,
-            op.entityId,
-            ctx.userId
-          )
-          if (access === "denied") {
-            console.warn(`Sync operation rejected (forbidden): ${op.id}`)
-            processedIds.push(op.id)
-            continue
-          }
-
-          // サーバー側の最新状態を確認
-          // サーバーに存在しない（削除済み等）エンティティは所有者を判定できないため、
-          // 自分自身の操作ログのみを競合判定に使う
-          const serverState = await syncRepository.findLatestEntityState(
-            op.entity,
-            op.entityId,
-            access === "not_found" ? { userId: ctx.userId } : undefined
-          )
-
-          if (serverState) {
-            // 競合チェック（Last Write Wins）
-            const winner = resolveConflict(op.createdAt, serverState.createdAt)
-
-            if (winner === "server") {
-              // サーバーが勝ち → 競合として返す
-              conflicts.push({
-                operationId: op.id,
-                entity: op.entity,
-                entityId: op.entityId,
-                serverData: JSON.parse(serverState.payload),
-                serverUpdatedAt: serverState.createdAt,
-              })
-              continue
-            }
-          }
-
-          // ローカルが勝ち or 新規 → 操作を記録
-          await syncRepository.createOperation({
-            id: op.id,
-            userId: ctx.userId,
-            entity: op.entity,
-            entityId: op.entityId,
-            operation: op.operation,
-            payload: op.payload,
-          })
-
-          processedIds.push(op.id)
-        } catch (error) {
-          console.error(`Sync operation failed: ${op.id}`, error)
-          // 個別操作のエラーは無視して続行
-        }
+      if (!SUPPORTED_SYNC_PROTOCOL_VERSIONS.includes(input.protocolVersion)) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: CLIENT_TOO_OLD })
       }
-
-      return { processedIds, conflicts }
+      return syncPushService.push(ctx.userId, input.operations)
     }),
 
   /**

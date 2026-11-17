@@ -317,6 +317,15 @@ output: {
 - 操作ごとに**認可**する（自分の個人データ、または所属しているグループのデータだけ）。既存の catalog / shopping のサービス層を再利用し、tRPC の通常ミューテーションと同じ検証を通す
 - 操作は 1 件ずつのトランザクションで適用し、1 件の失敗で全体を止めない。`opId` が処理済みなら `duplicate` を返す
 - update の適用: 行を `SELECT ... FOR UPDATE` で取り、`fieldTimes[f] >= field_modified_at[f]` のフィールドだけを書き込み、`field_modified_at` を更新する。`updated_at` は `now()` にする
+- **O4 での細部（2026-11-17）**（`src/modules/sync/application/services/SyncPushService.ts`）:
+  - 冪等化: `sync_operations.id` を `opId` にし、操作の記録（`INSERT ... ON CONFLICT DO NOTHING`）を適用と同じトランザクションの最初に行う。同じユーザーの `opId` は `duplicate`、ほかのユーザーの `opId` と重なれば `rejected`（`op_conflict`）。処理の結果は `payload` の JSON（`{ patch, fieldTimes, clientTime, status, reason }`）に入れる（列は足さない。件数は `payload::jsonb->>'status'` で数える）
+  - 結果: create は新しい行なら `applied`。同じ ID の行が使えるならフィールド単位の更新、削除済みなら `conflict`（`serverRow` に tombstone）、使えなければ `rejected`（`id_conflict`）。update は行がない・使えないなら `rejected`（`not_found`。区別しない）、削除済みなら `conflict`、捨てたフィールドがあれば `partial`（`serverRow` に最新の行。アイテムは `tagIds` つき）。delete は時刻に関係なく論理削除し、削除済みなら `applied`、行がない・使えないなら `rejected`（`not_found`）
+  - パッチは、エンティティと種類ごとの strict な Zod スキーマで検証する（未知のフィールドは拒否）。受け付けるフィールドは tRPC と同じ範囲（update: アイテムは `name` / `quantity` / `memo` / `tagIds` / `purchasedAt`、タグとリストは `name`、リストのアイテムは `checked`）。不正ならその操作だけ `rejected`（`invalid_patch`）。パッチの大きさ（`REQUEST_LIMITS.recordBytes`）と件数（100）は入力の検証で拒否する（#72。クライアントはキューに積むときに同じ上限で検証する）
+  - 認可と参照: グループへの作成はメンバーだけ（`forbidden`）。タグは同じスコープのものだけ（`invalid_reference`）。リストのアイテムは、使える進行中のリストにだけ作り、`group_id` はリストの値にする（#68）。完了したリストのアイテムの作成・チェック・削除は `rejected`（`list_completed`。tRPC と同じ）
+  - 時刻: フィールドの時刻は `fieldTimes[f]`、なければ `clientTime`。`serverTime`（DB の `now()`）より未来なら `serverTime` に丸め、UTC・ミリ秒の ISO で保存する。create は、書き込んだすべてのフィールドに操作の時刻を入れる
+  - 予期しないエラー（DB の障害など）は、リクエスト全体を 500 にする（クライアントがまとめて再送する。適用済みの操作は `duplicate` になる）。1 操作 1 トランザクションで、`statement_timeout` は 30 秒
+  - 対応外の `protocolVersion` は `PRECONDITION_FAILED`（メッセージ `CLIENT_TOO_OLD`）。今は 1 だけを受け付ける
+  - 複合操作（`finishShopping` / `revertHistory`）は O4b で足す（リストとカタログのアイテムのフィールドを、操作の時刻でフィールド単位の LWW にする）
 
 **`sync.pull`（作り直し）**
 

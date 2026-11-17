@@ -4,7 +4,6 @@ import {
   syncOperationTypeSchema,
   syncQueueItemSchema,
   syncPushInputSchema,
-  syncConflictSchema,
   syncPullInputSchema,
   syncMergeInputSchema,
   idMappingSchema,
@@ -74,44 +73,43 @@ describe("同期スキーマ", () => {
     })
   })
 
-  describe("syncPushInputSchema", () => {
-    const validInput = {
-      operations: [
-        {
-          id: "123e4567-e89b-12d3-a456-426614174000",
-          entity: "item",
-          entityId: "123e4567-e89b-12d3-a456-426614174001",
-          operation: "create",
-          payload: { name: "テスト" },
-          createdAt: new Date("2025-01-01"),
-        },
-      ],
-    }
-
-    it("有効なプッシュ入力を受け入れる", () => {
-      const result = syncPushInputSchema.parse(validInput)
-      expect(result.operations.length).toBe(1)
-    })
-
-    it("空の操作配列を受け入れる", () => {
-      const result = syncPushInputSchema.parse({ operations: [] })
-      expect(result.operations).toEqual([])
-    })
-  })
-
-  describe("syncConflictSchema", () => {
-    const validConflict = {
-      operationId: "123e4567-e89b-12d3-a456-426614174000",
+  describe("syncPushInputSchema（#62 O4）", () => {
+    const op = {
+      opId: "123e4567-e89b-12d3-a456-426614174000",
       entity: "item",
       entityId: "123e4567-e89b-12d3-a456-426614174001",
-      serverData: { name: "サーバー側の値" },
-      serverUpdatedAt: new Date("2025-01-01"),
+      type: "update",
+      patch: { name: "テスト" },
+      fieldTimes: { name: "2026-11-17T05:00:00.000Z" },
+      clientTime: "2026-11-17T05:00:00.000+09:00",
     }
 
-    it("有効な競合情報を受け入れる", () => {
-      const result = syncConflictSchema.parse(validConflict)
-      expect(result.entity).toBe("item")
-      expect(result.serverData).toEqual({ name: "サーバー側の値" })
+    it("protocolVersion と操作を受け入れる（時刻はタイムゾーン付きの ISO も可）", () => {
+      const result = syncPushInputSchema.parse({ protocolVersion: 1, operations: [op] })
+      expect(result.operations[0].opId).toBe(op.opId)
+      expect(syncPushInputSchema.parse({ protocolVersion: 1, operations: [] }).operations).toEqual([])
+    })
+
+    it("protocolVersion がない、opId が uuid でない、時刻が ISO でない入力は拒否する", () => {
+      expect(syncPushInputSchema.safeParse({ operations: [op] }).success).toBe(false)
+      expect(syncPushInputSchema.safeParse({ protocolVersion: 1, operations: [{ ...op, opId: "x" }] }).success).toBe(false)
+      expect(
+        syncPushInputSchema.safeParse({ protocolVersion: 1, operations: [{ ...op, clientTime: "yesterday" }] }).success
+      ).toBe(false)
+      expect(
+        syncPushInputSchema.safeParse({ protocolVersion: 1, operations: [{ ...op, fieldTimes: { name: "x" } }] }).success
+      ).toBe(false)
+    })
+
+    it("history エンティティと未知の操作の種類は受け付けない", () => {
+      expect(syncPushInputSchema.safeParse({ protocolVersion: 1, operations: [{ ...op, entity: "history" }] }).success).toBe(false)
+      expect(syncPushInputSchema.safeParse({ protocolVersion: 1, operations: [{ ...op, type: "upsert" }] }).success).toBe(false)
+    })
+
+    it("操作は 100 件まで", () => {
+      const ops = (n: number) => Array.from({ length: n }, () => op)
+      expect(syncPushInputSchema.safeParse({ protocolVersion: 1, operations: ops(100) }).success).toBe(true)
+      expect(syncPushInputSchema.safeParse({ protocolVersion: 1, operations: ops(101) }).success).toBe(false)
     })
   })
 

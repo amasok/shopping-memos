@@ -7,57 +7,25 @@ import {
 
 describe("Sync API スキーマテスト", () => {
   describe("syncPushInputSchema", () => {
-    it("有効な操作配列を受け入れる", () => {
-      const input = {
-        operations: [
-          {
-            id: "123e4567-e89b-12d3-a456-426614174000",
-            entity: "item" as const,
-            entityId: "123e4567-e89b-12d3-a456-426614174001",
-            operation: "create" as const,
-            payload: { name: "テストアイテム" },
-            createdAt: new Date(),
-          },
-        ],
-      }
-
-      const result = syncPushInputSchema.parse(input)
-      expect(result.operations).toHaveLength(1)
-      expect(result.operations[0].entity).toBe("item")
-    })
-
-    it("複数の操作を受け入れる", () => {
-      const input = {
-        operations: [
-          {
-            id: "123e4567-e89b-12d3-a456-426614174000",
-            entity: "item" as const,
-            entityId: "123e4567-e89b-12d3-a456-426614174001",
-            operation: "create" as const,
-            payload: { name: "アイテム1" },
-            createdAt: new Date(),
-          },
-          {
-            id: "223e4567-e89b-12d3-a456-426614174000",
-            entity: "tag" as const,
-            entityId: "223e4567-e89b-12d3-a456-426614174001",
-            operation: "update" as const,
-            payload: { name: "タグ1" },
-            createdAt: new Date(),
-          },
-          {
-            id: "323e4567-e89b-12d3-a456-426614174000",
-            entity: "list" as const,
-            entityId: "323e4567-e89b-12d3-a456-426614174001",
-            operation: "delete" as const,
-            payload: {},
-            createdAt: new Date(),
-          },
-        ],
-      }
-
-      const result = syncPushInputSchema.parse(input)
-      expect(result.operations).toHaveLength(3)
+    it("エンティティごとの操作（create / update / delete）を受け入れる（#62 O4）", () => {
+      const op = (entity: "item" | "tag" | "list" | "listItem", type: "create" | "update" | "delete") => ({
+        opId: crypto.randomUUID(),
+        entity,
+        entityId: crypto.randomUUID(),
+        type,
+        patch: type === "delete" ? undefined : { name: "x" },
+        clientTime: new Date().toISOString(),
+      })
+      const result = syncPushInputSchema.parse({
+        protocolVersion: 1,
+        operations: [op("item", "create"), op("tag", "update"), op("list", "delete"), op("listItem", "update")],
+      })
+      expect(result.operations.map((o) => [o.entity, o.type])).toEqual([
+        ["item", "create"],
+        ["tag", "update"],
+        ["list", "delete"],
+        ["listItem", "update"],
+      ])
     })
   })
 

@@ -278,8 +278,8 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     return updated
   }
 
-  async removeItem(id: string, actorUserId: string): Promise<void> {
-    const removed = await db
+  async removeItem(id: string, actorUserId: string, executor: DbExecutor = db): Promise<void> {
+    const removed = await executor
       .update(listItems)
       .set(softDeleteValues())
       .where(writableListItem(id, actorUserId))
