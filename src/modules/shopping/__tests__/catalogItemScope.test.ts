@@ -23,7 +23,8 @@ describe("catalogItemScopeCondition", () => {
 
   it("所有者が特定できない個人リストでは何にも一致しない", () => {
     const q = toQuery({ userId: null, groupId: null })
-    expect(q.sql).toBe("false")
+    // 論理削除の条件（#62 O3b）と AND でつなぐが、false なので何にも一致しない
+    expect(q.sql).toBe('(false and "items"."deleted_at" is null)')
     expect(q.params).toEqual([])
   })
 })

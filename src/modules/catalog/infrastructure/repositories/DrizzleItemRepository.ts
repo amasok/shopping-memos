@@ -1,6 +1,15 @@
 import { eq, and, inArray, isNull, like } from "drizzle-orm"
+import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
 import { db } from "@/infrastructure/db/drizzle/client"
-import { canAccessScope } from "@/infrastructure/db/ownership"
+import { accessibleByUser, canAccessScope } from "@/infrastructure/db/ownership"
+import { RowNotFoundError, rethrowDuplicateId } from "@/infrastructure/db/errors"
+import {
+  createdFieldTimes,
+  definedFields,
+  notDeleted,
+  softDeleteValues,
+  touchFields,
+} from "@/infrastructure/db/syncColumns"
 import {
   items,
   tags,
@@ -15,13 +24,23 @@ import type {
   ItemWithTags,
 } from "../../domain/entities/Item"
 
+/** field_modified_at に記録するアイテムのフィールド（API のフィールド名） */
+const ITEM_FIELDS = ["name", "quantity", "memo", "tagIds", "purchasedAt"] as const
+
+/** 更新・削除の対象: 論理削除されておらず、操作したユーザーが使えるアイテム（#73-1） */
+function writableItem(id: string, actorUserId: string) {
+  return and(eq(items.id, id), notDeleted(items), accessibleByUser(items, actorUserId))
+}
+
 /**
  * Drizzleを使用したアイテムリポジトリ実装
+ *
+ * 削除は論理削除（deleted_at）。取得系は削除済みを返さない。更新・削除は updated_at / field_modified_at を
+ * DB の now() で更新し、WHERE に操作したユーザーのスコープを付ける（#62 O3b）
  */
 export class DrizzleItemRepository implements ItemRepository {
   async create(input: CreateItemInput): Promise<Item> {
-    const now = new Date()
-
+    // created_at / updated_at は DB の既定値（now()）にする
     const [item] = await db
       .insert(items)
       .values({
@@ -31,10 +50,10 @@ export class DrizzleItemRepository implements ItemRepository {
         memo: input.memo ?? null,
         userId: input.userId,
         groupId: input.groupId ?? null,
-        createdAt: now,
-        updatedAt: now,
+        fieldModifiedAt: createdFieldTimes(ITEM_FIELDS),
       })
       .returning()
+      .catch((error: unknown) => rethrowDuplicateId(error, "items", "アイテム"))
 
     // タグを関連付け
     if (input.tagIds && input.tagIds.length > 0) {
@@ -50,7 +69,10 @@ export class DrizzleItemRepository implements ItemRepository {
   }
 
   async findById(id: string): Promise<ItemWithTags | null> {
-    const result = await db.select().from(items).where(eq(items.id, id))
+    const result = await db
+      .select()
+      .from(items)
+      .where(and(eq(items.id, id), notDeleted(items)))
 
     if (result.length === 0) {
       return null
@@ -66,7 +88,7 @@ export class DrizzleItemRepository implements ItemRepository {
       })
       .from(itemTags)
       .innerJoin(tags, eq(itemTags.tagId, tags.id))
-      .where(eq(itemTags.itemId, id))
+      .where(and(eq(itemTags.itemId, id), notDeleted(tags)))
 
     return {
       ...item,
@@ -75,8 +97,8 @@ export class DrizzleItemRepository implements ItemRepository {
   }
 
   async findMany(query: GetItemsQuery): Promise<ItemWithTags[]> {
-    // 基本のクエリ条件を構築
-    const conditions = []
+    // 基本のクエリ条件を構築（論理削除済みは返さない）
+    const conditions = [notDeleted(items)]
 
     // グループフィルタ
     // groupId が指定されている場合はグループアイテム
@@ -131,7 +153,7 @@ export class DrizzleItemRepository implements ItemRepository {
         })
         .from(itemTags)
         .innerJoin(tags, eq(itemTags.tagId, tags.id))
-        .where(eq(itemTags.itemId, item.id))
+        .where(and(eq(itemTags.itemId, item.id), notDeleted(tags)))
 
       result.push({
         ...item,
@@ -142,9 +164,9 @@ export class DrizzleItemRepository implements ItemRepository {
     return result
   }
 
-  async update(input: UpdateItemInput): Promise<Item> {
-    const updateData: Partial<typeof items.$inferInsert> = {
-      updatedAt: new Date(),
+  async update(input: UpdateItemInput, actorUserId: string): Promise<Item> {
+    const updateData: PgUpdateSetSource<typeof items> = {
+      ...touchFields(items, definedFields(input, ["name", "quantity", "memo", "tagIds"])),
     }
 
     if (input.name !== undefined) {
@@ -160,8 +182,11 @@ export class DrizzleItemRepository implements ItemRepository {
     const [updated] = await db
       .update(items)
       .set(updateData)
-      .where(eq(items.id, input.id))
+      .where(writableItem(input.id, actorUserId))
       .returning()
+    if (!updated) {
+      throw new RowNotFoundError("アイテム")
+    }
 
     // タグを更新
     if (input.tagIds !== undefined) {
@@ -182,34 +207,38 @@ export class DrizzleItemRepository implements ItemRepository {
     return updated
   }
 
-  async delete(id: string): Promise<void> {
-    // itemTagsはonDelete: cascadeなので自動削除
-    await db.delete(items).where(eq(items.id, id))
+  async delete(id: string, actorUserId: string): Promise<void> {
+    // 論理削除。tombstone にタグは要らないので、タグの関連は消す（タグの使用数にも数えない）
+    await db.transaction(async (tx) => {
+      const deleted = await tx
+        .update(items)
+        .set(softDeleteValues())
+        .where(writableItem(id, actorUserId))
+        .returning({ id: items.id })
+      if (deleted.length === 0) {
+        throw new RowNotFoundError("アイテム")
+      }
+      await tx.delete(itemTags).where(eq(itemTags.itemId, id))
+    })
   }
 
-  async markAsPurchased(id: string): Promise<Item> {
-    const [updated] = await db
-      .update(items)
-      .set({
-        purchasedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(items.id, id))
-      .returning()
-
-    return updated
+  async markAsPurchased(id: string, actorUserId: string): Promise<Item> {
+    return this.setPurchasedAt(id, actorUserId, new Date())
   }
 
-  async markAsUnpurchased(id: string): Promise<Item> {
+  async markAsUnpurchased(id: string, actorUserId: string): Promise<Item> {
+    return this.setPurchasedAt(id, actorUserId, null)
+  }
+
+  private async setPurchasedAt(id: string, actorUserId: string, purchasedAt: Date | null): Promise<Item> {
     const [updated] = await db
       .update(items)
-      .set({
-        purchasedAt: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(items.id, id))
+      .set({ purchasedAt, ...touchFields(items, ["purchasedAt"]) })
+      .where(writableItem(id, actorUserId))
       .returning()
-
+    if (!updated) {
+      throw new RowNotFoundError("アイテム")
+    }
     return updated
   }
 

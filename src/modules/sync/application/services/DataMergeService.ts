@@ -3,6 +3,7 @@ import { db } from "@/infrastructure/db/drizzle/client"
 import { describeDbError, formatDbErrorKind, type DbErrorKind } from "@/infrastructure/db/errors"
 import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
 import { canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
+import { createdFieldTimes, notDeleted, touchFields } from "@/infrastructure/db/syncColumns"
 import { findEntityScope, findListScope } from "@/modules/sync/infrastructure/entityAccess"
 import type { SyncEntity } from "@/modules/sync/domain/entities/SyncOperation"
 import type { MergeEntityName } from "@/shared/schemas/sync"
@@ -227,7 +228,8 @@ export class DataMergeService {
           userId, // 作成者を設定
           groupId,
           createdAt: tag.createdAt,
-          updatedAt: now,
+          // updated_at は DB の既定値（now()）にする（#62 O3b）
+          fieldModifiedAt: createdFieldTimes(["name"]),
         })
 
         // 同期ログを記録
@@ -251,7 +253,8 @@ export class DataMergeService {
           and(
             eq(tags.userId, userId),
             groupId ? eq(tags.groupId, groupId) : isNull(tags.groupId),
-            eq(tags.name, name)
+            eq(tags.name, name),
+            notDeleted(tags)
           )
         )
         .limit(1)
@@ -340,7 +343,7 @@ export class DataMergeService {
               groupId,
               purchasedAt: item.purchasedAt ?? null,
               createdAt: item.createdAt,
-              updatedAt: now,
+              fieldModifiedAt: createdFieldTimes(["name", "quantity", "memo", "tagIds", "purchasedAt"]),
             })
 
             // タグの関連を中間テーブルに挿入
@@ -405,6 +408,7 @@ export class DataMergeService {
               completedAt: list.completedAt ?? null,
               purchasedAt: list.purchasedAt ?? null,
               location: list.location ?? null,
+              fieldModifiedAt: createdFieldTimes(["name", "status", "completedAt", "purchasedAt", "location"]),
             })
 
             await sp.insert(syncOperations).values({
@@ -454,6 +458,7 @@ export class DataMergeService {
               groupId,
               checked: listItem.checked,
               createdAt: listItem.createdAt,
+              fieldModifiedAt: createdFieldTimes(["name", "quantity", "memo", "tagIds", "checked"]),
             })
 
             await sp.insert(syncOperations).values({
@@ -495,11 +500,15 @@ export class DataMergeService {
               .set({
                 purchasedAt: history.purchasedAt,
                 location: history.location ?? null,
+                ...touchFields(shoppingLists, ["purchasedAt", "location"]),
               })
               .where(
-                mergedListIds.has(history.listId)
-                  ? eq(shoppingLists.id, history.listId)
-                  : and(eq(shoppingLists.id, history.listId), eq(shoppingLists.userId, userId))
+                and(
+                  notDeleted(shoppingLists),
+                  mergedListIds.has(history.listId)
+                    ? eq(shoppingLists.id, history.listId)
+                    : and(eq(shoppingLists.id, history.listId), eq(shoppingLists.userId, userId))
+                )
               )
               .returning({ id: shoppingLists.id })
             if (updated.length === 0) {

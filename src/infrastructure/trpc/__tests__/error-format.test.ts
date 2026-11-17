@@ -6,8 +6,9 @@ import { z } from "@/shared/schemas/z"
 
 vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn(async () => null) }))
 
-import { router, publicProcedure } from "../server"
-import { INTERNAL_ERROR_MESSAGE, formatErrorShape } from "../error-format"
+import { router, publicProcedure, protectedProcedure } from "../server"
+import { INTERNAL_ERROR_MESSAGE, formatErrorShape, toClientError } from "../error-format"
+import { DuplicateIdError, RowNotFoundError } from "@/infrastructure/db/errors"
 
 const LEAKY = 'Failed query: select "groups"."invite_code_expires_at" from "groups" params: user-123'
 
@@ -103,5 +104,42 @@ describe("formatErrorShape (#135)", () => {
   it("本番でなければ何も変えない", () => {
     const original = shape()
     expect(formatErrorShape(original, { code: "INTERNAL_SERVER_ERROR" }, { isProduction: false })).toBe(original)
+  })
+})
+
+describe("リポジトリのエラーの変換（#62 O3b）", () => {
+  const scopedRouter = router({
+    rowNotFound: protectedProcedure.mutation(() => {
+      throw new RowNotFoundError("アイテム")
+    }),
+    duplicateId: protectedProcedure.mutation(() => {
+      throw new DuplicateIdError("タグ")
+    }),
+    other: protectedProcedure.mutation(() => {
+      throw new Error("boom")
+    }),
+  })
+  const caller = scopedRouter.createCaller({ userId: "user-1" } as never)
+
+  it("RowNotFoundError は NOT_FOUND にする", async () => {
+    await expect(caller.rowNotFound()).rejects.toMatchObject({
+      code: "NOT_FOUND",
+      message: "アイテムが見つかりません",
+    })
+  })
+
+  it("DuplicateIdError は CONFLICT にする", async () => {
+    await expect(caller.duplicateId()).rejects.toMatchObject({
+      code: "CONFLICT",
+      message: "このタグの ID はすでに使われています",
+    })
+  })
+
+  it("ほかのエラーは INTERNAL_SERVER_ERROR のまま", async () => {
+    await expect(caller.other()).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" })
+  })
+
+  it("toClientError は対象外のエラーに null を返す", () => {
+    expect(toClientError(new TRPCError({ code: "BAD_REQUEST" }))).toBeNull()
   })
 })

@@ -42,7 +42,7 @@ export class ShoppingSyncService {
   }
 
   async updateList(input: UpdateShoppingListInput, userId: string): Promise<ShoppingList> {
-    const list = await this.shoppingListRepository.update(input)
+    const list = await this.shoppingListRepository.update(input, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -58,7 +58,7 @@ export class ShoppingSyncService {
   }
 
   async deleteList(id: string, userId: string): Promise<void> {
-    await this.shoppingListRepository.delete(id)
+    await this.shoppingListRepository.delete(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -103,7 +103,7 @@ export class ShoppingSyncService {
   }
 
   async updateItem(input: UpdateListItemInput, userId: string): Promise<ListItem> {
-    const item = await this.shoppingListRepository.updateItem(input)
+    const item = await this.shoppingListRepository.updateItem(input, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -119,7 +119,7 @@ export class ShoppingSyncService {
   }
 
   async removeItem(id: string, userId: string): Promise<void> {
-    await this.shoppingListRepository.removeItem(id)
+    await this.shoppingListRepository.removeItem(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -156,8 +156,8 @@ export class ShoppingSyncService {
   }
 
   async deleteHistory(id: string, userId: string): Promise<void> {
-    // 履歴削除 = リスト削除（cascade でlist_itemsも削除される）
-    await this.shoppingListRepository.delete(id)
+    // 履歴削除 = リスト削除（list_items もまとめて論理削除される）
+    await this.shoppingListRepository.delete(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -172,7 +172,7 @@ export class ShoppingSyncService {
 
   async revertHistory(id: string, userId: string): Promise<ShoppingList> {
     // リストを未購入に戻す
-    const list = await this.shoppingListRepository.markAsUnpurchased(id)
+    const list = await this.shoppingListRepository.markAsUnpurchased(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({

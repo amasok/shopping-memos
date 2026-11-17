@@ -275,6 +275,14 @@ R1 の時点（ゲスト用の `ShoppingMemosDB` だけがある）での振る�
 
 - 既存の取得系クエリは、すべて `deleted_at IS NULL` で絞り込む（リポジトリ層で共通化する）
 - `updated_at` は、サーバーの DB の `now()` だけで入れる。JS の `new Date()` と混ぜない（列はタイムゾーンなしの `timestamp` で、接続のタイムゾーンは UTC 前提。アプリの時計と DB の時計がずれると、pull のカーソルが行を取りこぼす）
+- **論理削除の細部（O3b で決定）**:
+  - アイテムの削除は論理削除にし、`item_tags` の行は物理削除する（tombstone にタグは要らない。タグの使用数にも数えない）
+  - タグの削除は論理削除にし、そのタグの `item_tags` の行を物理削除する。関連を外したアイテムは `updated_at` と `field_modified_at.tagIds` を更新する（中間テーブルの削除は pull で伝わらないので、アイテムの変更として伝える）
+  - リストの削除は、リストとその `list_items` をまとめて論理削除する（物理削除の cascade の代わり）。リストからアイテムを外す操作と、買い物の完了で未チェックの行を消す処理も論理削除にする
+  - 削除済みの行は、取得・アクセス判定では「見つからない」扱いにする（既存の API の応答は変わらない）。削除済みの行の ID で作成すると、ID の重複として扱う
+- **通常の mutation での同期用の列（O3b）**: `field_modified_at` のキーは API のフィールド名（`name` / `quantity` / `memo` / `tagIds` / `purchasedAt` / `checked` / `status` / `completedAt` / `location`）。値は DB の `now()` を UTC・ミリ秒の ISO 文字列（`2026-11-17T05:00:00.000Z`）にしたもので、作成時は書き込んだすべてのフィールドに、更新時は書き込んだフィールドだけに入れる（`src/infrastructure/db/syncColumns.ts`）
+- **更新・削除の WHERE のスコープ（#73-1。O3b）**: リポジトリの更新・削除には操作したユーザーを渡し、WHERE に「自分の個人データ、または所属しているグループのデータ」と `deleted_at IS NULL` を付ける。`list_items` は親のリストで判定する（`list_items.user_id` は入っていないことがあるため）。一致する行がなければ `RowNotFoundError` を投げ、tRPC では NOT_FOUND にする（存在しない・削除済み・スコープ外を区別しない）
+- **作成時のクライアント ID（O3b）**: `createItem` / `createTag` / `createList` / `addItemToList` / `addNewItemToList`（リストのアイテムの ID。同時に作るカタログのアイテムの ID はサーバーで採番する）で、任意の uuid の `id` を受け付ける。使用済みの ID は CONFLICT にする
 - tombstone（`deleted_at` が入った行）は 30 日後に物理削除する（定期ジョブは別 Issue。当面は削除しない）。30 日を超えてオフラインだったクライアントは、全件の再同期にする
 
 **`sync.push`（作り直し）**

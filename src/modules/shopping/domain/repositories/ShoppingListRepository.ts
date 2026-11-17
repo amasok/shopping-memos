@@ -32,12 +32,12 @@ export interface ShoppingListRepository {
   /**
    * 買い物リストを更新
    */
-  update(input: UpdateShoppingListInput): Promise<ShoppingList>
+  update(input: UpdateShoppingListInput, actorUserId: string): Promise<ShoppingList>
 
   /**
    * 買い物リストを削除
    */
-  delete(id: string): Promise<void>
+  delete(id: string, actorUserId: string): Promise<void>
 
   // === リストアイテム操作 ===
 
@@ -49,12 +49,12 @@ export interface ShoppingListRepository {
   /**
    * リストアイテムを更新（チェック状態変更）
    */
-  updateItem(input: UpdateListItemInput): Promise<ListItem>
+  updateItem(input: UpdateListItemInput, actorUserId: string): Promise<ListItem>
 
   /**
    * リストアイテムを削除
    */
-  removeItem(id: string): Promise<void>
+  removeItem(id: string, actorUserId: string): Promise<void>
 
   /**
    * リストアイテムをIDで取得
@@ -83,10 +83,10 @@ export interface ShoppingListRepository {
   /**
    * リストを購入完了にする
    */
-  markAsPurchased(id: string, location?: string): Promise<ShoppingList>
+  markAsPurchased(id: string, actorUserId: string, location?: string): Promise<ShoppingList>
 
   /**
    * リストを未購入に戻す
    */
-  markAsUnpurchased(id: string): Promise<ShoppingList>
+  markAsUnpurchased(id: string, actorUserId: string): Promise<ShoppingList>
 }

@@ -16,6 +16,9 @@ import {
   removeListItemSchema,
 } from "@/shared/schemas"
 import { db } from "@/infrastructure/db/drizzle/client"
+import { listItems } from "@/infrastructure/db/drizzle/schema"
+import { DuplicateIdError } from "@/infrastructure/db/errors"
+import { eq } from "drizzle-orm"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
@@ -126,7 +129,7 @@ export const shoppingRouter = router({
       // グループ指定時はメンバーシップを検証
       await verifyGroupMembership(input.groupId, ctx.userId)
 
-      const listId = crypto.randomUUID()
+      const listId = input.id ?? crypto.randomUUID()
       const listGroupId = input.groupId ?? null
       const listScope = { userId: ctx.userId, groupId: listGroupId }
 
@@ -291,7 +294,7 @@ export const shoppingRouter = router({
       // リストにアイテムを追加（スナップショット、同期ログ記録付き）
       return shoppingSyncService.addItem(
         {
-          id: crypto.randomUUID(),
+          id: input.id ?? crypto.randomUUID(),
           listId: input.listId,
           name: item.name,
           quantity: item.quantity,
@@ -343,6 +346,17 @@ export const shoppingRouter = router({
         })
       }
 
+      // リストのアイテムの ID が使用済みなら、カタログのアイテムを作る前に止める（作りかけを残さない。#62 O3b）
+      if (input.id) {
+        const [existing] = await db
+          .select({ id: listItems.id })
+          .from(listItems)
+          .where(eq(listItems.id, input.id))
+        if (existing) {
+          throw new DuplicateIdError("リストのアイテム")
+        }
+      }
+
       // カタログにもアイテムを作成（リストから外した時に「買いたいもの」に戻れるようにする）
       const catalogItemId = crypto.randomUUID()
       await catalogSyncService.createItem(
@@ -361,7 +375,7 @@ export const shoppingRouter = router({
       // リストにアイテムを追加（スナップショット、同期ログ記録付き）
       return shoppingSyncService.addItem(
         {
-          id: crypto.randomUUID(),
+          id: input.id ?? crypto.randomUUID(),
           listId: input.listId,
           name: input.name,
           quantity: input.quantity ?? 1,
@@ -615,7 +629,7 @@ export const shoppingRouter = router({
         }
       }
 
-      // リストを削除（list_itemsはcascadeで削除される）
+      // リストを論理削除（list_items もまとめて論理削除される）
       await shoppingSyncService.deleteHistory(input.id, ctx.userId)
 
       return { success: true }

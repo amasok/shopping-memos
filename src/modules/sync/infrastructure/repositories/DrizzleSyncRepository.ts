@@ -1,4 +1,5 @@
 import { eq, and, desc, gte, inArray, isNull, isNotNull } from "drizzle-orm"
+import { notDeleted } from "@/infrastructure/db/syncColumns"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   syncOperations,
@@ -177,7 +178,8 @@ export class DrizzleSyncRepository implements SyncRepository {
               .where(
                 and(
                   inArray(items.groupId, groupIds),
-                  gte(items.updatedAt, sinceDate)
+                  gte(items.updatedAt, sinceDate),
+                  notDeleted(items)
                 )
               )
           : Promise.resolve([]),
@@ -188,7 +190,8 @@ export class DrizzleSyncRepository implements SyncRepository {
               .where(
                 and(
                   inArray(tags.groupId, groupIds),
-                  gte(tags.updatedAt, sinceDate)
+                  gte(tags.updatedAt, sinceDate),
+                  notDeleted(tags)
                 )
               )
           : Promise.resolve([]),
@@ -199,7 +202,8 @@ export class DrizzleSyncRepository implements SyncRepository {
               .where(
                 and(
                   inArray(shoppingLists.groupId, groupIds),
-                  gte(shoppingLists.createdAt, sinceDate)
+                  gte(shoppingLists.createdAt, sinceDate),
+                  notDeleted(shoppingLists)
                 )
               )
           : Promise.resolve([]),
@@ -210,7 +214,8 @@ export class DrizzleSyncRepository implements SyncRepository {
               .where(
                 and(
                   inArray(listItems.groupId, groupIds),
-                  gte(listItems.createdAt, sinceDate)
+                  gte(listItems.createdAt, sinceDate),
+                  notDeleted(listItems)
                 )
               )
           : Promise.resolve([]),
@@ -223,7 +228,8 @@ export class DrizzleSyncRepository implements SyncRepository {
                 and(
                   inArray(shoppingLists.groupId, groupIds),
                   isNotNull(shoppingLists.purchasedAt),
-                  gte(shoppingLists.purchasedAt, sinceDate)
+                  gte(shoppingLists.purchasedAt, sinceDate),
+                  notDeleted(shoppingLists)
                 )
               )
           : Promise.resolve([]),

@@ -114,7 +114,8 @@ describe("履歴の差し戻し・削除のカタログアイテム更新範囲 
       const qs = itemQueries()
       expect(qs).toHaveLength(2)
       for (const q of qs) {
-        expect(q.kind).toBe("delete")
+        // カタログアイテムの削除は論理削除（#62 O3b）
+        expect(q.kind).toBe("update")
         expect(q.sql).toContain('"items"."group_id" is null')
         expect(q.params[1]).toBe("user-A")
       }

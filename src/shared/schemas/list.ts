@@ -8,6 +8,8 @@ export type ListStatus = z.infer<typeof listStatusSchema>
 
 // リスト作成
 export const createListSchema = z.object({
+  // クライアントで採番した ID（#62 O3b）。省略するとサーバーで採番する。使用済みなら CONFLICT
+  id: z.string().uuid().optional(),
   name: z.string().min(1, "名前は必須です").max(TEXT_LIMITS.listName, `名前は${TEXT_LIMITS.listName}文字以内です`),
   tagIds: tagIdsSchema.optional(), // タグでフィルタしてアイテムを追加
   itemIds: z
@@ -21,6 +23,8 @@ export type CreateListInput = z.infer<typeof createListSchema>
 
 // リストにアイテム追加（既存アイテムを追加）
 export const addItemToListSchema = z.object({
+  // 作るリストのアイテムの ID（クライアントで採番。#62 O3b）。省略するとサーバーで採番する。使用済みなら CONFLICT
+  id: z.string().uuid().optional(),
   listId: z.string().uuid(),
   itemId: z.string().uuid(),
 })
@@ -29,6 +33,8 @@ export type AddItemToListInput = z.infer<typeof addItemToListSchema>
 
 // リストに新規アイテム追加（直接入力）
 export const addNewItemToListSchema = z.object({
+  // 作るリストのアイテムの ID（クライアントで採番。#62 O3b）。同時に作るカタログのアイテムの ID はサーバーで採番する
+  id: z.string().uuid().optional(),
   listId: z.string().uuid(),
   name: z.string().min(1, "名前は必須です").max(TEXT_LIMITS.listName, `名前は${TEXT_LIMITS.listName}文字以内です`),
   quantity: quantitySchema.default(1),

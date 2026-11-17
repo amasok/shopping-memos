@@ -37,6 +37,10 @@ export function createFakeDb(options: FakeDbOptions = {}) {
     if (tableName === "shopping_lists" && kind === "select") {
       return options.listScope ? [options.listScope] : []
     }
+    if (tableName === "shopping_lists" && kind === "update") {
+      // 買い物完了のリストの更新（returning で更新した行を確かめる。#62 O3b）
+      return [{ id: "updated-list" }]
+    }
     if (tableName === "items") {
       return q.params.flatMap((p) => options.itemIdsByName?.[String(p)] ?? []).map((id) => ({ id }))
     }

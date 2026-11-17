@@ -1,6 +1,7 @@
-import { and, eq, isNotNull, type SQL } from "drizzle-orm"
-import { items, shoppingLists } from "@/infrastructure/db/drizzle/schema"
+import { and, eq, inArray, isNotNull, type SQL } from "drizzle-orm"
+import { items, itemTags, shoppingLists } from "@/infrastructure/db/drizzle/schema"
 import { scopeCondition, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
+import { notDeleted, softDeleteValues, touchFields } from "@/infrastructure/db/syncColumns"
 
 // 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
 // ここからは再エクスポートしない（#151）
@@ -14,9 +15,10 @@ export type ListScope = OwnerScope
  * リスト内アイテム（スナップショット）からカタログアイテムを名前で引く処理は、
  * 必ずこの条件を付けて他ユーザー・他グループのアイテムを対象外にすること。
  * スコープが特定できない場合（所有者なしの個人リスト）は何にも一致しない。
+ * 論理削除済みのアイテムは対象外（#62 O3b）
  */
 export function catalogItemScopeCondition(scope: ListScope): SQL {
-  return scopeCondition(items, scope)
+  return and(scopeCondition(items, scope), notDeleted(items)) as SQL
 }
 
 /**
@@ -29,7 +31,7 @@ export async function getListScope(
   const [row] = await executor
     .select({ userId: shoppingLists.userId, groupId: shoppingLists.groupId })
     .from(shoppingLists)
-    .where(eq(shoppingLists.id, listId))
+    .where(and(eq(shoppingLists.id, listId), notDeleted(shoppingLists)))
   return row ?? null
 }
 
@@ -45,7 +47,7 @@ export async function markScopedItemsPurchasedByName(
 ): Promise<string[]> {
   const rows = await executor
     .update(items)
-    .set({ purchasedAt: now, updatedAt: now })
+    .set({ purchasedAt: now, ...touchFields(items, ["purchasedAt"]) })
     .where(and(eq(items.name, name), catalogItemScopeCondition(scope)))
     .returning({ id: items.id })
   return rows.map((r) => r.id)
@@ -62,7 +64,7 @@ export async function markScopedItemsUnpurchasedByName(
 ): Promise<string[]> {
   const rows = await executor
     .update(items)
-    .set({ purchasedAt: null, updatedAt: new Date() })
+    .set({ purchasedAt: null, ...touchFields(items, ["purchasedAt"]) })
     .where(
       and(
         eq(items.name, name),
@@ -75,7 +77,7 @@ export async function markScopedItemsUnpurchasedByName(
 }
 
 /**
- * スコープ内の同名カタログアイテムを削除する
+ * スコープ内の同名カタログアイテムを論理削除する（タグの関連は消す。#62 O3b）
  * @returns 削除したカタログアイテムID
  */
 export async function deleteScopedItemsByName(
@@ -83,10 +85,14 @@ export async function deleteScopedItemsByName(
   scope: ListScope,
   name: string
 ): Promise<string[]> {
-  // itemTags は onDelete: cascade なので自動削除
   const rows = await executor
-    .delete(items)
+    .update(items)
+    .set(softDeleteValues())
     .where(and(eq(items.name, name), catalogItemScopeCondition(scope)))
     .returning({ id: items.id })
-  return rows.map((r) => r.id)
+  const ids = rows.map((r) => r.id)
+  if (ids.length > 0) {
+    await executor.delete(itemTags).where(inArray(itemTags.itemId, ids))
+  }
+  return ids
 }

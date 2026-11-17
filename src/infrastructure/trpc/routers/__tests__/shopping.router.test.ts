@@ -16,9 +16,13 @@ const scope = vi.hoisted(() => ({
   getListScope: vi.fn(), markScopedItemsUnpurchasedByName: vi.fn(), deleteScopedItemsByName: vi.fn(),
 }))
 const areTagsInScope = vi.hoisted(() => vi.fn())
+// リストのアイテムの ID が使用済みかの確認（addNewItemToList）で返す行
+const existingListItems = vi.hoisted(() => ({ rows: [] as { id: string }[] }))
 
 vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
-vi.mock("@/infrastructure/db/drizzle/client", () => ({ db: {} }))
+vi.mock("@/infrastructure/db/drizzle/client", () => ({
+  db: { select: () => ({ from: () => ({ where: () => Promise.resolve(existingListItems.rows) }) }) },
+}))
 vi.mock("@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository", () => ({ shoppingListRepository: {} }))
 vi.mock("@/modules/catalog/infrastructure/repositories/DrizzleItemRepository", () => ({ itemRepository: itemRepo }))
 vi.mock("@/modules/catalog/infrastructure/repositories/DrizzleTagRepository", () => ({ tagRepository: {} }))
@@ -67,6 +71,7 @@ const catalogItem = (over = {}) => ({
 
 beforeEach(() => {
   vi.resetAllMocks()
+  existingListItems.rows = []
   sync.canAccessList.mockResolvedValue(true)
   sync.canAccessItem.mockResolvedValue(true)
   sync.canAccessHistory.mockResolvedValue(true)
@@ -161,6 +166,13 @@ describe("shopping.createList", () => {
     expect(itemRepo.findMany).toHaveBeenCalledWith({ tagIds: [TAG], groupId: GID, userId: "user-1", includePurchased: false })
     expect(sync.addItem).toHaveBeenCalledTimes(2)
     expect(sync.addItem).toHaveBeenCalledWith(expect.objectContaining({ groupId: GID }), "user-1")
+  })
+
+  it("クライアントで採番した id があれば、その id でリストを作る（#62 O3b）", async () => {
+    sync.getList.mockResolvedValue({ id: ID2, items: [] })
+    await caller().createList({ name: "x", id: ID2 })
+    expect(sync.createList).toHaveBeenCalledWith(expect.objectContaining({ id: ID2 }), "user-1")
+    expect(sync.getList).toHaveBeenCalledWith(ID2)
   })
 
   it("アイテムの指定がなければ空のリストを作って返す", async () => {
@@ -268,6 +280,21 @@ describe("shopping.addNewItemToList", () => {
     await caller().addNewItemToList({ ...input, tagIds: [TAG] })
     expect(areTagsInScope).toHaveBeenCalledWith([TAG], { userId: "user-1", groupId: GID })
     expect(catalog.createItem).toHaveBeenCalledWith(expect.objectContaining({ groupId: GID }), "user-1")
+  })
+
+  it("使用済みのリストのアイテムの id は CONFLICT で、カタログのアイテムも作らない（#62 O3b）", async () => {
+    sync.getList.mockResolvedValue(list)
+    existingListItems.rows = [{ id: ID2 }]
+    await expect(caller().addNewItemToList({ ...input, id: ID2 })).rejects.toMatchObject({ code: "CONFLICT" })
+    expect(catalog.createItem).not.toHaveBeenCalled()
+    expect(sync.addItem).not.toHaveBeenCalled()
+  })
+
+  it("未使用のリストのアイテムの id なら、その id でリストのアイテムを作る（#62 O3b）", async () => {
+    sync.getList.mockResolvedValue(list)
+    sync.addItem.mockResolvedValue({ id: ID2 })
+    await caller().addNewItemToList({ ...input, id: ID2 })
+    expect(sync.addItem).toHaveBeenCalledWith(expect.objectContaining({ id: ID2 }), "user-1")
   })
 
   it("カタログとリストの両方にアイテムを作る（数量の既定は 1）", async () => {
