@@ -2,7 +2,7 @@
 
 Issue: #179（https://github.com/amasok/shopping-memos/issues/179）
 
-**状態: 保留（ユーザーの確認待ち）**。ユーザーの不在中に、確認が要る部分を `179-shopping-domain-rules` から分けた（リーダーの指示、2026-11-17）。下の「ユーザーに確認すること」の答えが出るまで実装しない。`179-shopping-domain-rules` が archive されてから実装する（この change の specs は、それが作る `openspec/specs/shopping` の Requirement を変える）。
+**状態: 保留（ユーザーの確認待ち）**。ユーザーの不在中に、確認が要る部分を `179-shopping-domain-rules` から分けた（リーダーの指示、2026-11-17）。下の「ユーザーに確認すること」の答えが出るまで実装しない。`179-shopping-domain-rules` が archive されてから実装する（この change の specs は、それが作った `openspec/specs/shopping` の Requirement を置き換える）。
 
 ## Why
 
@@ -24,7 +24,7 @@ Issue: #179（https://github.com/amasok/shopping-memos/issues/179）
 
 ### Modified Capabilities
 
-- `shopping`: 「買い物の完了」を変え（チェック 1 件以上、照合は未購入だけ）、「チェック 0 件の完了」と「リストと同じ名前の未購入の商品も消すリストの削除」を足す
+- `shopping`: 「買い物の完了」を「チェック済みの商品がある買い物の完了」に置き換え（チェック 1 件以上、照合は未購入だけ。OpenSpec の MODIFIED は Scenario を落とせないので REMOVED + ADDED）、「チェック 0 件の完了」と「リストと同じ名前の未購入の商品も消すリストの削除」を足す
 
 ## 影響するモード
 
