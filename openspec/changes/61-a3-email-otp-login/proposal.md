@@ -17,8 +17,9 @@ Issue: #61（https://github.com/amasok/shopping-memos/issues/61）
 - Cloudflare Turnstile（ボット対策）を送信フォームに付け、サーバーで確かめる
 - 送信の上限: IP ごと（3 通/分・20 通/日）、アドレスごとの再送の間隔（60 秒）、「アドレス × IP」ごとの上限と、失敗の累積によるロック。上限に達したアドレスは止めずに、対話型の Turnstile を必須にする段階に入れ、本人に知らせる。本人がログインに成功したら解除する
 - 既存の Google ユーザーは、同じメールアドレスでログインすれば同じユーザー（`users.id`）になり、データがそのまま見える
-- セッションを DB のセッションに変える（30 日、使っている間は延長）。ログアウトはすぐ効く
-- tRPC の mutation で、別のオリジンからのリクエストを断る（#71 の残り）
+- セッションを DB のセッションに変える（30 日、使っている間は延長）。ログアウトはすぐ効く（設計書にあった 5 分の Cookie のキャッシュは使わない）
+- tRPC の mutation と認証の API の POST で、別のオリジンからのリクエストを断る（#71 の残り。ログインの CSRF も防ぐ）
+- 認証の API は、使うもの（コードの送信・コードでのログイン・セッションの取得・ログアウト）だけを開き、ほかは 404 にする
 - E2E のログインを、E2E 用の Credentials（メールアドレスだけでログイン）から、テスト用のルートでコードを受け取る本物のコードのログインに変える
 - Preview 環境では、許可リストにないアドレスにメールを送らない
 
@@ -52,12 +53,12 @@ Issue: #61（https://github.com/amasok/shopping-memos/issues/61）
 ## Impact
 
 - 依存: A1（メール送信の基盤。change `61-a1-email-sender`）と A2（Better Auth のテーブルの expand。change `61-a2-auth-tables-expand`）が先に develop に入っていること
-- 追加: `better-auth`・`@better-auth/passkey`（A5 で使う。版は design の D1）。削除: `next-auth`・`@auth/drizzle-adapter`
+- 追加: `better-auth@1.7.25`・`@better-auth/passkey@1.7.25`（A5 で使う。design の D1）。入れるには先に vite 8 への更新が要る（D1）。削除: `next-auth`・`@auth/drizzle-adapter`
 - 変更: `src/infrastructure/auth/**`（作り直し）、`src/app/api/auth/[...all]/route.ts`（`[...nextauth]` を置き換え）、`src/infrastructure/trpc/server.ts`（`createContext`）、`src/app/api/trpc/[trpc]/route.ts`（オリジンの確認）、`src/contexts/AuthContext.tsx`、`src/app/login/page.tsx`、`src/app/settings/page.tsx`・`src/app/groups/page.tsx`（文言）、`src/lib/security/headers.ts`（Turnstile の CSP）、`e2e/auth/fixtures/**`・`playwright.config.ts`
 - 新規: `src/app/api/test/otp/route.e2e.ts`（E2E 専用）、`otp_events` を読み書きするリポジトリ
 - 削除: `src/infrastructure/auth/e2e-credentials.ts`
 - DB の migration: なし（テーブルは A2 で作る）
-- 環境変数: `BETTER_AUTH_SECRET`・`BETTER_AUTH_URL`・`OTP_EVENT_HMAC_KEY`・`OTP_ALERT_EMAIL`・`TURNSTILE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY`・`NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY`・`EMAIL_RECIPIENT_ALLOWLIST`（Preview のみ）。Google と Auth.js の変数は A6 まで残す（戻すときに要るため）
+- 環境変数: `BETTER_AUTH_SECRET`・`BETTER_AUTH_URL`・`OTP_EVENT_HMAC_KEY`・`OTP_ALERT_EMAIL`・`TURNSTILE_SECRET_KEY`・`TURNSTILE_CHALLENGE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY`・`NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY`・`EMAIL_RECIPIENT_ALLOWLIST`（Preview のみ）。Google と Auth.js の変数は A6 まで残す（戻すときに要るため）
 - 実装は 2 つの PR に分ける（design の D7）。main へは両方が develop に入ってから出す
 
 ## ユーザーに確認すること

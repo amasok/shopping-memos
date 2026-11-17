@@ -20,21 +20,34 @@
 
 ## Decisions
 
-### D1. ライブラリと版（試作の結果）
+### D1. ライブラリと版（試作の結果。2026-11-18）
 
-（試作の結果をここに書く。better-auth と @better-auth/passkey の版、Next 16.4・zod 4・drizzle-orm 0.45 との相性、emailOTP の `storeOTP: "hashed"` などのオプション名、rateLimit・hooks・cookieCache、クライアントの eval の有無）
+試作は使い捨ての worktree で行い、コードは残していない。
+
+- **版**: `better-auth@1.7.25`・`@better-auth/passkey@1.7.25`（どちらも latest）。next ^16・react ^19・drizzle-orm ^0.45.2 と合う。zod は ^4.5.4 に依存し、今の 4.6.7 に 1 つにまとまる（二重に入らない）。版は `^` を付けずに固定する
+- **入れるときのぶつかり（要対応）**: 普通の `npm install` は ERESOLVE で失敗する。(a) better-auth の任意の peer（@sveltejs/kit 3 など）が vite 8 を求め、今の vite 7.3.1（vitest 4.0.18・@vitejs/plugin-react 5.1.2）とぶつかる。(b) next-auth・@auth/core の peer が @simplewebauthn ^9 で、passkey の 13.3.x と合わない。`--legacy-peer-deps` なら入り、tsc と build も通るが、自動で入っていた peer が lock から 79 個消え、CI の `npm ci` も `--legacy-peer-deps` が要るようになる
+  - 方針: `legacy-peer-deps` は使わない。(b) は A3 で next-auth と @auth/drizzle-adapter を同じコミットで消せば消える。(a) は、A3 の前に別の PR で vitest 4.1・@vitejs/plugin-react 5.2・vite 8 に上げる（今の lock のまま上げると npm 10 のエラー `Cannot read properties of null (reading 'edgesOut')` で止まるので、lock の作り直しも含む）。それでも残るときは、package.json の `overrides` で個別に合わせる
+- **emailOTP**: `otpLength` 6・`expiresIn` 300・`allowedAttempts` 3 は既定のまま。`storeOTP` の既定は平文なので必ず指定する。`"hashed"` は塩なしの SHA-256 で、DB が漏れると 6 桁のコードはすぐ割り出せるので、`storeOTP: { hash }` で HMAC-SHA256（鍵は `BETTER_AUTH_SECRET` から作る）にする。照合は定数時間（`constantTimeEqual`）で、原子的な consume の中で行う。再送すると新しい行ができ、照合には最新の行だけを使う（古いコードは 400）。成功すると行は消える。3 回まちがえると 403 `TOO_MANY_ATTEMPTS`。**再送すると回数は 0 に戻る**ので、累積ロックは `otp_events` で自前に持つ（D4）。`disableSignUp` は既定 false で、未登録のアドレスはサインインのときに作られる（name `""`・emailVerified true）
+- **rateLimit**: `storage: "database"`・`customRules`（ワイルドカード・関数も可。プラグインの既定（OTP のパスは 60 秒に 3 回）より優先）・`rateLimit.modelName`・`advanced.ipAddress.ipAddressHeaders`。キーは `IP|パス`。`x-forwarded-for` を変えても `x-real-ip` のキーのままで、4 回目が 429 になることを確かめた。`rate_limits.key` には unique が要る
+- **hooks**: `hooks.before` で `ctx.path` を見て `APIError` を投げると、その応答（429 など）を返せる。`hooks.after` では `ctx.context.newSession` でサインインの成功がわかる
+- **セッション**: `session.cookieCache`・`freshAge`・`/revoke-sessions`（クライアントは `revokeSessions()`）がある。cookieCache を有効にすると、`getSession` が Cookie を先に読むので、失効の後も最大 maxAge の間ログインしたままに見える（D5 で使わないことにした）
+- **CSP**: 認証のクライアントのチャンク（49KB。passkey と simplewebauthn/browser を含む）に `eval`・`new Function` はない。better-auth のクライアントは zod を読み込まない。サーバー側の zod の import は CSP に関係しない
+- **スキーマの生成**: `@better-auth/cli` は deprecated。`npx auth@1.7.25 generate --config <file> --output <file> -y` を使い、出力は schema.ts に手で写す（A2）
+- **build**: `BETTER_AUTH_SECRET` がないと build のログに BetterAuthError（既定の secret）が出る（終了コードは 0）。CI の build にはダミーの値を渡す
+- **A5（パスキー）への申し送り**: `rpID`・`origin`・`authenticatorSelection` は渡せ、SimpleWebAuthn は server 13.3.3・browser 13.3.0。登録の 2 つの API は fresh session を求めるが、**`/passkey/delete-passkey` は求めない**ので、`hooks.before` で `getSessionFromCtx` のセッションの `createdAt` を自前で確かめる。`freshAge` は全体の設定で、600 にするとほかのアカウント系の API も 10 分以内のログインを求めるようになるので、A5 の design で決める
+- 確かめていないこと: `disabledPaths` の名前（D4 の許可リストが主なので、なくても困らない）、IPv6 を /64 にまとめる設定の有無、`waitUntil`（Next.js の `after()` を使う）
 
 ### D2. 置き場所と依存の向き
 
 | 置き場所 | 中身 |
 |---------|------|
 | `src/modules/identity/domain/services/otpAbusePolicy.ts`（新規） | 送信・照合の記録（`otp_events` の行）と今の時刻から、「送ってよい / 黙って送らない / 対話型のチャレンジが要る / ロック中」を決める純粋関数。上限の値もここに定数で置く |
-| `src/modules/identity/domain/services/emailAddress.ts`（新規。A1 で作る） | メールアドレスの正規化（NFKC → trim → 小文字 → 形式の確認、ASCII 以外を拒否） |
+| `src/shared/schemas/email.ts`（新規。A1 で作る） | メールアドレスの正規化（NFKC → trim → 小文字 → 形式の確認、ASCII 以外を拒否、254 文字まで）。ログイン画面とサーバーで共用する |
 | `src/modules/identity/infrastructure/OtpEventRepository.ts`（新規） | `otp_events` の読み書き（Drizzle）。アドレスは HMAC-SHA256（鍵は `OTP_EVENT_HMAC_KEY`）にしてから渡す |
 | `src/infrastructure/auth/index.ts`（作り直し） | `betterAuth({...})`。フレームワークの設定と、hooks から上の 2 つを呼ぶつなぎ |
 | `src/infrastructure/auth/client.ts`（新規） | `createAuthClient` + `emailOTPClient`（A5 で `passkeyClient` を足す） |
 | `src/infrastructure/auth/turnstile.ts`（新規） | siteverify の呼び出し（`fetch` を差し替えてテストする） |
-| `src/infrastructure/auth/email/**`（A1 で作る） | `EmailSender` と各実装、メールの文面、許可リスト |
+| `src/infrastructure/auth/email/**`（A1 で作る） | `EmailSender`（`sendOtp`・`sendNotice`）と各実装、メールの文面、許可リスト、環境変数の確認。Resend は SDK を使わず `fetch` で呼ぶ。送信に失敗すると例外を投げ、A3 の側で受け止めてログに出す（応答は送れたときと同じ） |
 
 domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth` が domain と identity の infrastructure を使う（向きは infrastructure → domain）。
 
@@ -44,27 +57,39 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 - `name`: Better Auth は文字列を前提にする。A2 で NULL の行を `''` にし、新しいユーザーも `''` で作る（表示名の入力は A4）。NOT NULL は A6 で付ける
 - id は `advanced.database.generateId` で `crypto.randomUUID()`（今の Auth.js と同じ形の text）
 - セッション・アカウント・検証は `auth_sessions`・`auth_accounts`・`auth_verifications`。Auth.js の `sessions`・`accounts`・`verification_tokens` と名前がぶつからないようにし、Auth.js のデプロイに戻せるようにする
-- rate limit は `rate_limits`、乱用対策の記録は `otp_events`（列とインデックスは設計書の「DB スキーマ」）
+- rate limit は `rate_limits`（`rateLimit.modelName: "rateLimits"`）、乱用対策の記録は `otp_events`。`otp_events` は設計書の「DB スキーマ」から次を変える: `ip` は NOT NULL（取れないときは `'unknown'`）、`kind` は `sent`・`attempted`（照合に進む前に記録する。D4）・`locked`・`unlocked`・`notified`（本人への通知）・`alerted`（管理者への知らせ）、`email_hash` は `alerted` のときだけ NULL を許す、インデックスに `(kind, created_at)` を足す（全体の送信数と 30 日の掃除）
 
-### D4. 送信の上限と IP（論点 c）
+### D4. 送信と照合の上限（論点 c）
 
-- IP ごとの上限（3 通/分・20 通/24 時間）は Better Auth の `rateLimit`（`storage: "database"`）の `customRules` で、送信のパスにかける。照合のパス（`/sign-in/email-otp`）は 10 回/分
-- 再送の間隔・「アドレス × IP」の上限・累積ロック・チャレンジの段階・通知・監視は、`hooks.before`（送信・照合のパス）で `otpAbusePolicy` を呼んで決める。解除は `hooks.after`（照合の成功）
-- 黙って送らないとき（上限・ロック・許可リスト外）は、送ったときと同じ応答を返す（列挙対策）。応答の時間をそろえるため、送るときもメールの送信は応答を待たずに行う（`waitUntil` を使えるか試作で確かめる。使えなければ、送らないときに同じくらいの時間待つ）
-- IP は `advanced.ipAddress.ipAddressHeaders` で Vercel が付けるヘッダ（`x-real-ip` など）だけから取る。Vercel がクライアントの値を上書きするかは、実装の前に Vercel のドキュメントで確かめ、design に書き足す。IP が取れないとき（ローカル）は固定のキーにまとめる（制限を外さない）
+- **IP ごとの上限**（送信 3 通/分・20 通/24 時間、照合 10 回/分）は、Better Auth の `rateLimit`（`storage: "database"`、`customRules`）でかける。IP は `advanced.ipAddress.ipAddressHeaders` で、Vercel が付けるヘッダ（`x-real-ip` など）だけから取る。IPv6 は /64 にまとめる（Better Auth に設定があれば使い、なければ自前で丸める）。Vercel がクライアントの値を上書きするかは、実装の前に Vercel のドキュメントで確かめ、ここに書き足す。IP が取れないとき（ローカル）は固定のキー `'unknown'` にまとめる（制限を外さない）。Better Auth の rate limit は同時のリクエストで数件はみ出すことがありうるが、IP の上限は枠の目安なので受け入れる
+- **アドレスに結びつく上限**（再送の間隔・「アドレス × IP」の 5 通・累積ロック・1 つのコードの 3 回・チャレンジの段階）は、`hooks.before`（送信・照合のパス）で `otpAbusePolicy` を呼んで決める。解除は `hooks.after`（照合の成功）
+- **同時のリクエストでも数えもれがないようにする（レビュー H1）**: 送信・照合の判定は、1 つのトランザクションの中で `pg_advisory_xact_lock`（キーはアドレスの HMAC）を取ってから「記録を INSERT → 数える → 判定」の順に行う。同じアドレスへのリクエストは直列になり、判定は自分の分を含めた数で行う。照合は、照合に進む前に `attempted` を記録する（成功しても記録は残し、成功の後に `unlocked` を記録して、それより前の分を数えない）。数え方:
+  - 1 つのコードの照合: そのアドレスの最後の `sent` の後の `attempted` が 3 件を超えたら、Better Auth の照合に進まず期限切れと同じ応答にする（Better Auth の `allowedAttempts: 3` も重ねてかける）
+  - 累積ロック: 同じ「アドレス × IP」の、直近 24 時間かつ最後の `unlocked` より後の `attempted` が 10 件に達したら `locked` を記録する。`locked` から 24 時間は、その「アドレス × IP」の照合を断る
+  - チャレンジ: アドレスの直近 24 時間の `sent` が 20 件、または最後の `unlocked` より後の `attempted` が 30 件に達したら、チャレンジの段階にする
+  - 照合の失敗の数として `attempted` を使う（成功の後は `unlocked` で区切るので、失敗の数と同じになる）。A2 の `otp_events.kind` は `sent`・`attempted`・`locked`・`unlocked`・`notified`・`alerted`
+- **黙って送らないとき**（再送の間隔・「アドレス × IP」の上限・ロック・許可リスト外）は、Better Auth の送信の処理に進まずに、送ったときと同じ応答を返す。新しいコードを作らないので、今のコードは無効にならない（レビュー M6）。応答の時間をそろえるため、送るときもメールの送信は応答を待たずに行う（Next.js の `after()` で送る）
+- **使わない API を閉じる（レビュー H2）**: `src/app/api/auth/[...all]/route.ts` で、許可リストにあるパス（`/email-otp/send-verification-otp`・`/sign-in/email-otp`・`/get-session`・`/sign-out`）以外は Better Auth に渡さずに 404 を返す。送信は `type` が `sign-in` 以外なら 400 にする。Better Auth の `disabledPaths` も重ねてかける（試作で名前を確かめる）。A4・A5 は、それぞれの change で許可リストに足す
+- **Turnstile（レビュー H4）**: secret はウィジェットごとに別にする（`TURNSTILE_SECRET_KEY` は非表示、`TURNSTILE_CHALLENGE_SECRET_KEY` は対話型）。チャレンジの段階では対話型の secret でだけ siteverify する。どちらも結果の `hostname` がアプリのホスト（Preview は Preview のホスト）、`action` が `send-otp` であることを確かめる。テスト用のキーは常に成功するので、チャレンジの段階の Scenario はユニットテスト（siteverify の `fetch` を差し替える）で確かめる
+- **通知**（A3b）: 制限の通知は、登録済みのアドレスにだけ、直近 24 時間に `notified` がなければ送る。管理者への知らせは、直近 24 時間の `sent` が 70 件を超え、直近 24 時間に `alerted` がなければ送る。「1 日」はどれも直近 24 時間（暦日ではない）
+- **解除**: ログインに成功したら `unlocked` を記録する。ロック・チャレンジの段階（失敗の数による分）・失敗の数はそれで区切られる。送信の数（5 通・20 通）は区切らない
+- **コードの入力にチャレンジをかけない（設計書からの意図した変更。レビュー L6）**: 設計書は失敗 30 回で「送信とコードの入力」の両方にチャレンジをかけるとしていた。1 つのコードの照合は 3 回までで、新しいコードは送信のチャレンジを通らないと届かないので、送信だけで足りる
 - Redis は入れない（#72 は Vercel WAF で閉じた）。将来入れたら `secondaryStorage` に切り替える
 - 値は承認済みの設計のまま。1 家族の規模には重いが、削らずに 2 つの PR に分ける（D7）
 
 ### D5. セッションと `AuthContext`
 
-- DB のセッション（`expiresIn` 30 日、`updateAge` 1 日）に `cookieCache`（5 分）を足す。ログアウトした端末の Cookie はすぐ消える。ほかの端末の失効（A4 の「すべての端末からログアウト」）は最大 5 分遅れる
+- DB のセッション（`expiresIn` 30 日、`updateAge` 1 日）。**`cookieCache` は使わない**（設計書からの変更。レビュー M4）。cookieCache があると、ログアウトやセッションの削除の後も、控えておいた Cookie が最大 5 分通る。家族の規模なら、リクエストごとのセッションの読み込み（主キーで 1 行）は軽いので、すぐ効くほうを取る。A4 の「すべての端末からログアウト」もすぐ効く
+- Cookie は Better Auth の既定（`HttpOnly`・`SameSite=Lax`、https では `Secure`）。`advanced.useSecureCookies` は本番で true になることを確かめる
 - tRPC の `createContext` は `auth.api.getSession({ headers })` から今と同じ `userId`・`user` を作る。ルーターは変えない
 - `AuthContext` は今の `user`・`isLoading`・`login`・`logout` を保ち、`status: "authenticated" | "unauthenticated" | "loading"` を足す（O9 が `"offline"` を足す）。`login()` はログイン画面（`/login?callbackUrl=<今のパス>`）への移動にする。`logout()` は今と同じくログイン中だけの状態を消してから `signOut`
-- 戻り先（`callbackUrl`）は `/` で始まり `//` で始まらないパスだけを受け付け、ほかはホームにする
+- 戻り先（`callbackUrl`）は、`new URL(value, location.origin)` の `origin` がアプリのオリジンと同じときだけ、その `pathname + search + hash` を使い、ほかはホームにする（`/\evil.example` やタブ・改行を含む値を通さない。レビュー M1）
 
-### D6. 別のオリジンからの mutation（#71 の残り）
+### D6. 別のオリジンからの POST（#71 の残り。レビュー H3）
 
-`src/app/api/trpc/[trpc]/route.ts` で、POST のうち `Origin` が `BETTER_AUTH_URL`（と `BETTER_AUTH_TRUSTED_ORIGINS`）のオリジンと違うもの、または `Sec-Fetch-Site: cross-site` のものを 403 にする。`Origin` がないリクエスト（同じオリジンの一部のブラウザ・サーバーからの呼び出し）は、`Sec-Fetch-Site` が `cross-site` でなければ通す。GET（query）は変更しないので対象外。
+- tRPC の route（`src/app/api/trpc/[trpc]/route.ts`）と認証の route（`src/app/api/auth/[...all]/route.ts`）の POST に、同じ確認（`src/lib/security/origin.ts` に置く）をかける: `Origin` があって、`BETTER_AUTH_URL`（と `BETTER_AUTH_TRUSTED_ORIGINS`）のオリジンと違えば 403（`null` も 403）。`Sec-Fetch-Site: cross-site` なら 403。`Origin` も `Sec-Fetch-Site` もないリクエストは通す（ブラウザ以外。Cookie を持たないので CSRF にならない）
+- 認証の route では Cookie の有無にかかわらずかける。攻撃者が自分のアドレスで被害者のブラウザをログインさせ、`DataMergeContext` で被害者のゲストのデータを取り込む（ログインの CSRF）のを防ぐ。Better Auth の Origin の確認（`trustedOrigins`）も有効のままにする
+- GET（tRPC の query・セッションの取得）は変更しないので対象外
 
 ### D7. 実装を 2 つの PR に分ける（A3a・A3b）
 
@@ -78,7 +103,7 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 
 ### D8. E2E のログイン
 
-- 設計書の「E2E のログイン」のとおり。テスト用のルートは `src/app/api/test/otp/route.e2e.ts` で、条件は今の `isE2ERequestAllowed`（`guard.ts`）をそのまま使う。コードは A1 の `TestMailboxEmailSender` が `globalThis` の Map に持つ
+- 設計書の「E2E のログイン」のとおり。テスト用のルートは `src/app/api/test/otp/route.e2e.ts` で、条件は今の `isE2ERequestAllowed`（`guard.ts`）をそのまま使う。コードは A1 の `TestMailboxEmailSender` が `globalThis` の Map に持つ。`TestMailboxEmailSender` を選ぶ条件は、テスト用のルートと同じく、ビルド時の `E2E_BUILD` が `"true"` かつ `isE2ERuntimeEnabled`（A1 の担当に依頼済み）
 - E2E では制限を外さない。代わりに、ログインのヘルパーはテストごとに別の `x-real-ip` を付け（ローカルは Vercel ではないのでヘッダがそのまま届く）、IP ごとの上限に当たらないようにする。Turnstile は Cloudflare のテスト用のキー
 - Playwright の webServer の `AUTH_TRUST_HOST` は、`BETTER_AUTH_URL=http://localhost:<port>` に置き換える
 - 既存の `e2e/auth/**` は新しいヘルパー（送信 → テスト用のルートからコード → `sign-in/email-otp` → storageState）で全件通す
@@ -103,7 +128,11 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 - [Resend の無料枠（100 通/日）を使い切られる] → IP・「アドレス × IP」の上限と Turnstile、70 通での知らせ。パスキー（AR2）を早めに家族に登録してもらう
 - [切り替えで家族がログインできない] → 30 分以内に直せなければ AR1a のデプロイに Promote で戻す
 - [乱用対策の実装が多い] → A3a・A3b に分ける（D7）
+- [Preview は Turnstile のテスト用のキーで常に通る] → Preview は許可リスト（`EMAIL_RECIPIENT_ALLOWLIST`）にあるアドレスにしか送らず、Deployment Protection もかけるので受け入れる
+- [Cloudflare のプロキシを ON にすると、IP がすべて Cloudflare のものになり、IP の上限が全員で 1 つになる] → `shopping.counoco.net` の CNAME は DNS only（プロキシ OFF）を保つ。docs/INFRASTRUCTURE.md にも書く（A6）
+- [通知のメールで第三者に迷惑をかける] → 通知は登録済みのアドレスにだけ、24 時間に 1 通まで
 
 ## Open Questions
 
-- 試作の結果しだいで、D1 と D4（`waitUntil`）を書き足す
+- Vercel が `x-real-ip` などをクライアントの値で上書きさせないか（実装の前に Vercel のドキュメントで確かめる。D4）
+- vite 8 への更新を A3 の前の別の PR にする件は、リーダーが担当を決める（D1）
