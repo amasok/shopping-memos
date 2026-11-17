@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm"
+import { and, eq, inArray, sql } from "drizzle-orm"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   items,
@@ -9,6 +9,11 @@ import {
   tags,
 } from "@/infrastructure/db/drizzle/schema"
 import { canAccessScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
+import { notDeleted, softDeleteValues } from "@/infrastructure/db/syncColumns"
+import {
+  markScopedItemsPurchasedByName,
+  markScopedItemsUnpurchasedByName,
+} from "@/modules/shopping/application/services/catalogItemScope"
 import { RowNotFoundError } from "@/infrastructure/db/errors"
 import type {
   SyncPushEntity,
@@ -23,6 +28,8 @@ import { shoppingListRepository } from "@/modules/shopping/infrastructure/reposi
 import { ListStatus } from "@/modules/shopping/domain/value-objects/ListStatus"
 import {
   CREATED_FIELDS,
+  LIST_STATE_FIELDS,
+  compoundPatchSchemas,
   createPatchSchemas,
   updatableFields,
   updatePatchSchemas,
@@ -244,7 +251,116 @@ export class SyncPushService {
         if (deleted) return { status: "applied" }
         return this.delete(tx, userId, op.entity, row)
       }
+      case "finishShopping":
+      case "revertHistory": {
+        if (op.entity !== "list") return rejected("invalid_patch")
+        const parsed = compoundPatchSchemas[op.type].safeParse(op.patch ?? {})
+        if (!parsed.success) return rejected("invalid_patch")
+        if (!row || !usable) return rejected("not_found")
+        if (deleted) {
+          return { status: "conflict", reason: "deleted", serverRow: await toServerRow(tx, "list", row.id) }
+        }
+        const opTime = clampTime(op.clientTime, serverMs)
+        return op.type === "finishShopping"
+          ? this.finishShopping(tx, row, parsed.data as { location?: string | null }, opTime)
+          : this.revertHistory(tx, row, opTime)
+      }
     }
+  }
+
+  /**
+   * 複合操作の前提の確認: リストの状態のフィールドが、操作の時刻より新しく書き換えられていれば適用しない
+   * （後から届いた古い完了・取り消しで、新しい状態を上書きしない）
+   */
+  private async staleListState(tx: DbExecutor, row: Row, opTime: string): Promise<Outcome | null> {
+    const newer = LIST_STATE_FIELDS.some((f) => {
+      const current = row.fieldModifiedAt?.[f]
+      return current !== undefined && Date.parse(current) > Date.parse(opTime)
+    })
+    return newer ? { status: "conflict", reason: "stale", serverRow: await toServerRow(tx, "list", row.id) } : null
+  }
+
+  /**
+   * 買い物の完了（#62 O4b）。tRPC の finishShopping（ShoppingService）と同じ結果を、1 トランザクションで操作の時刻で適用する
+   * - チェック済みのアイテムと同名の、リストと同じスコープのカタログのアイテムを購入済みにする（purchasedAt が新しいものは変えない）
+   * - 未チェックのリストのアイテムは論理削除する（カタログのアイテムに戻る）
+   * - リストを完了にする（status / completedAt / purchasedAt / location の時刻は操作の時刻）
+   */
+  private async finishShopping(
+    tx: DbExecutor,
+    row: Row,
+    patch: { location?: string | null },
+    opTime: string
+  ): Promise<Outcome> {
+    if (row.status !== ListStatus.IN_PROGRESS) {
+      return { status: "conflict", reason: "already_completed", serverRow: await toServerRow(tx, "list", row.id) }
+    }
+    const stale = await this.staleListState(tx, row, opTime)
+    if (stale) return stale
+
+    const at = new Date(opTime)
+    const scope = { userId: row.userId, groupId: row.groupId }
+    const entries = await tx
+      .select({ id: listItems.id, name: listItems.name, checked: listItems.checked })
+      .from(listItems)
+      .where(and(eq(listItems.listId, row.id), notDeleted(listItems)))
+    for (const entry of entries.filter((e) => e.checked)) {
+      await markScopedItemsPurchasedByName(tx, scope, entry.name, at, opTime)
+    }
+    const unchecked = entries.filter((e) => !e.checked).map((e) => e.id)
+    if (unchecked.length > 0) {
+      await tx.update(listItems).set(softDeleteValues()).where(inArray(listItems.id, unchecked))
+    }
+    await this.setListState(tx, row, opTime, {
+      status: ListStatus.COMPLETED,
+      completedAt: at,
+      purchasedAt: at,
+      location: patch.location ?? null,
+    })
+    return { status: "applied" }
+  }
+
+  /**
+   * 履歴の取り消し（#62 O4b）。tRPC の revertHistory と同じ結果を、1 トランザクションで操作の時刻で適用する
+   * - リストのアイテムと同名の、購入済みのカタログのアイテムを未購入に戻す（purchasedAt が新しいものは変えない）
+   * - リストを進行中に戻す
+   */
+  private async revertHistory(tx: DbExecutor, row: Row, opTime: string): Promise<Outcome> {
+    if (!row.purchasedAt) {
+      return { status: "conflict", reason: "not_completed", serverRow: await toServerRow(tx, "list", row.id) }
+    }
+    const stale = await this.staleListState(tx, row, opTime)
+    if (stale) return stale
+
+    const scope = { userId: row.userId, groupId: row.groupId }
+    const entries = await tx
+      .select({ name: listItems.name })
+      .from(listItems)
+      .where(and(eq(listItems.listId, row.id), notDeleted(listItems)))
+    for (const entry of entries) {
+      await markScopedItemsUnpurchasedByName(tx, scope, entry.name, opTime)
+    }
+    await this.setListState(tx, row, opTime, {
+      status: ListStatus.IN_PROGRESS,
+      completedAt: null,
+      purchasedAt: null,
+      location: null,
+    })
+    return { status: "applied" }
+  }
+
+  /** リストの状態のフィールドを書き、その時刻を操作の時刻にする */
+  private async setListState(
+    tx: DbExecutor,
+    row: Row,
+    opTime: string,
+    values: { status: string; completedAt: Date | null; purchasedAt: Date | null; location: string | null }
+  ): Promise<void> {
+    const times = Object.fromEntries(LIST_STATE_FIELDS.map((f) => [f, opTime]))
+    await tx
+      .update(shoppingLists)
+      .set({ ...values, fieldModifiedAt: { ...row.fieldModifiedAt, ...times }, updatedAt: sql`now()` })
+      .where(eq(shoppingLists.id, row.id))
   }
 
   private async create(

@@ -29,9 +29,10 @@ export function notDeleted(table: SyncTable): SQL {
   return isNull(table.deletedAt)
 }
 
-/** { field: サーバー時刻, ... } の jsonb */
-function fieldTimesObject(fields: readonly string[]): SQL {
-  const args = fields.flatMap((field) => [sql`${field}::text`, SERVER_NOW_ISO])
+/** { field: 時刻, ... } の jsonb（時刻を省くとサーバー時刻） */
+function fieldTimesObject(fields: readonly string[], at?: string): SQL {
+  const time = at === undefined ? SERVER_NOW_ISO : sql`${at}::text`
+  const args = fields.flatMap((field) => [sql`${field}::text`, time])
   return sql`jsonb_build_object(${sql.join(args, sql`, `)})`
 }
 
@@ -44,14 +45,19 @@ export function createdFieldTimes(fields: readonly string[]): SQL {
 
 /**
  * 通常の mutation で行を更新するときに一緒に入れる値。
- * updated_at を now() にし、field_modified_at の書き込んだフィールドのキーをサーバー時刻にする
+ * updated_at を now() にし、field_modified_at の書き込んだフィールドのキーをサーバー時刻にする。
+ * at（UTC・ミリ秒の ISO）を渡すと、キーはその時刻にする（sync.push の複合操作の、操作の時刻。#62 O4b）
  */
-export function touchFields(table: SyncTable, fields: readonly string[]): { updatedAt: SQL; fieldModifiedAt: SQL } {
+export function touchFields(
+  table: SyncTable,
+  fields: readonly string[],
+  at?: string
+): { updatedAt: SQL; fieldModifiedAt: SQL } {
   return {
     updatedAt: sql`now()`,
     fieldModifiedAt:
       fields.length > 0
-        ? sql`${table.fieldModifiedAt} || ${fieldTimesObject(fields)}`
+        ? sql`${table.fieldModifiedAt} || ${fieldTimesObject(fields, at)}`
         : sql`${table.fieldModifiedAt}`,
   }
 }
@@ -64,4 +70,12 @@ export function softDeleteValues(): { deletedAt: SQL; updatedAt: SQL } {
 /** 値が undefined でないフィールドの名前（部分更新で書き込むフィールド） */
 export function definedFields<T extends object>(input: T, fields: readonly (keyof T & string)[]): string[] {
   return fields.filter((field) => input[field] !== undefined)
+}
+
+/**
+ * フィールド単位の LWW の条件: そのフィールドの時刻が at 以前（キーがなければ常に真）。
+ * 時刻はすべて UTC・ミリ秒の ISO なので、文字列の比較と時刻の比較が一致する（#62 O4b）
+ */
+export function fieldNotNewerThan(table: SyncTable, field: string, at: string): SQL {
+  return sql`coalesce(${table.fieldModifiedAt} ->> ${field}::text, '') <= ${at}::text`
 }

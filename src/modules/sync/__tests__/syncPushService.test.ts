@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   tagsInScope: true,
   deleted: [] as Array<[string, string]>,
   throwRowNotFound: false,
+  scoped: [] as unknown[][],
 }))
 const recordDelete = vi.hoisted(() => (entity: string) => async (id: string) => {
   if (state.throwRowNotFound) {
@@ -39,6 +40,12 @@ vi.mock("@/infrastructure/db/drizzle/client", async () => {
   const select = () => ({
     from: (t: unknown) => ({
       where: (where: SQL) => {
+        // リストのアイテムをリストの ID で引くクエリ（複合操作）
+        if (dialect.sqlToQuery(where).sql.includes('"list_items"."list_id" =')) {
+          const listId = idOf(where)
+          const found = [...table(t).values()].filter((r) => r.listId === listId && !r.deletedAt)
+          return Object.assign(Promise.resolve(found), { for: () => Promise.resolve(found) })
+        }
         const row = table(t).get(idOf(where))
         const rows = row && !(excludesDeleted(where) && row.deletedAt) ? [row] : []
         return Object.assign(Promise.resolve(rows), { for: () => Promise.resolve(rows) })
@@ -68,8 +75,11 @@ vi.mock("@/infrastructure/db/drizzle/client", async () => {
   const update = (t: unknown) => ({
     set: (values: Record<string, unknown>) => ({
       where: async (where: SQL) => {
-        const row = table(t).get(idOf(where))
-        if (row) Object.assign(row, values)
+        // 複数の ID（IN）の更新は、パラメータのすべての ID に当てる
+        for (const id of dialect.sqlToQuery(where).params.map(String)) {
+          const row = table(t).get(id)
+          if (row) Object.assign(row, values)
+        }
       },
     }),
   })
@@ -86,6 +96,16 @@ vi.mock("@/infrastructure/db/drizzle/client", async () => {
 vi.mock("@/infrastructure/db/ownership", () => ({
   canAccessScope: async (_tx: unknown, scope: { userId: string | null; groupId: string | null }, userId: string) =>
     scope.groupId ? state.members.has(`${scope.groupId}:${userId}`) : scope.userId === userId,
+}))
+vi.mock("@/modules/shopping/application/services/catalogItemScope", () => ({
+  markScopedItemsPurchasedByName: async (_tx: unknown, scope: unknown, name: string, at: Date, opTime: string) => {
+    state.scoped.push(["purchased", name, at.toISOString(), opTime, scope])
+    return []
+  },
+  markScopedItemsUnpurchasedByName: async (_tx: unknown, scope: unknown, name: string, opTime: string) => {
+    state.scoped.push(["unpurchased", name, opTime, scope])
+    return []
+  },
 }))
 vi.mock("@/modules/catalog/application/services/ownership", () => ({
   areTagsInScope: async () => state.tagsInScope,
@@ -131,6 +151,7 @@ beforeEach(() => {
   state.tagsInScope = true
   state.deleted = []
   state.throwRowNotFound = false
+  state.scoped = []
 })
 
 describe("SyncPushService: 冪等化と結果の記録", () => {
@@ -388,5 +409,79 @@ describe("SyncPushService: 削除", () => {
     rows("list_items").set(liId, { id: liId, listId, deletedAt: null })
     expect(await push1(op({ entity: "listItem", type: "delete", entityId: liId }))).toMatchObject({ reason: "list_completed" })
     expect(state.deleted).toEqual([])
+  })
+})
+
+describe("SyncPushService: 複合操作（#62 O4b）", () => {
+  const putList = (row: Record<string, unknown>) => {
+    const full: Record<string, unknown> = {
+      userId: ME, groupId: null, status: "in_progress", purchasedAt: null, deletedAt: null, fieldModifiedAt: {}, ...row,
+    }
+    rows("shopping_lists").set(String(row.id), full)
+    return full
+  }
+  const putListItem = (listId: string, name: string, checked: boolean) => {
+    const id = crypto.randomUUID()
+    rows("list_items").set(id, { id, listId, name, checked, deletedAt: null })
+    return rows("list_items").get(id)!
+  }
+
+  it("完了: チェック済みを操作の時刻で購入済みにし、未チェックを論理削除し、リストを完了にする", async () => {
+    const list = putList({ id: crypto.randomUUID() })
+    putListItem(list.id as string, "牛乳", true)
+    const egg = putListItem(list.id as string, "卵", false)
+    const result = await push1(op({ entity: "list", type: "finishShopping", entityId: list.id as string, patch: { location: "店" }, clientTime: T2 }))
+    expect(result).toMatchObject({ status: "applied" })
+    expect(state.scoped).toEqual([["purchased", "牛乳", T2, T2, { userId: ME, groupId: null }]])
+    expect(egg.deletedAt).toBeDefined()
+    expect(egg.deletedAt).not.toBeNull()
+    expect(list).toMatchObject({ status: "completed", location: "店", purchasedAt: new Date(T2), completedAt: new Date(T2) })
+    expect(list.fieldModifiedAt).toEqual({ status: T2, completedAt: T2, purchasedAt: T2, location: T2 })
+  })
+
+  it("取り消し: リストのアイテムと同名のものを操作の時刻で未購入に戻し、リストを進行中に戻す", async () => {
+    const list = putList({ id: crypto.randomUUID(), status: "completed", purchasedAt: new Date(T1), fieldModifiedAt: { status: T1, name: T1 } })
+    putListItem(list.id as string, "牛乳", true)
+    expect(await push1(op({ entity: "list", type: "revertHistory", entityId: list.id as string, clientTime: T2 }))).toMatchObject({
+      status: "applied",
+    })
+    expect(state.scoped).toEqual([["unpurchased", "牛乳", T2, { userId: ME, groupId: null }]])
+    expect(list).toMatchObject({ status: "in_progress", purchasedAt: null, completedAt: null, location: null })
+    expect(list.fieldModifiedAt).toEqual({ name: T1, status: T2, completedAt: T2, purchasedAt: T2, location: T2 })
+  })
+
+  it("完了済みの完了・未完了の取り消し・新しい状態がある古い操作は conflict", async () => {
+    const done = putList({ id: crypto.randomUUID(), status: "completed", purchasedAt: new Date(T1) })
+    expect(await push1(op({ entity: "list", type: "finishShopping", entityId: done.id as string }))).toMatchObject({
+      status: "conflict",
+      reason: "already_completed",
+    })
+    const open = putList({ id: crypto.randomUUID() })
+    expect(await push1(op({ entity: "list", type: "revertHistory", entityId: open.id as string }))).toMatchObject({
+      status: "conflict",
+      reason: "not_completed",
+    })
+    const reverted = putList({ id: crypto.randomUUID(), fieldModifiedAt: { status: T2 } })
+    const late = await push1(op({ entity: "list", type: "finishShopping", entityId: reverted.id as string, clientTime: T1 }))
+    expect(late).toMatchObject({ status: "conflict", reason: "stale", serverRow: { id: reverted.id } })
+    expect(reverted.status).toBe("in_progress")
+    expect(state.scoped).toEqual([])
+  })
+
+  it("リスト以外・不正なパッチ・使えないリスト・削除済みのリストには適用しない", async () => {
+    const item = putItem({ id: crypto.randomUUID() })
+    expect(await push1(op({ entity: "item", type: "finishShopping", entityId: item.id as string }))).toMatchObject({ reason: "invalid_patch" })
+    const list = putList({ id: crypto.randomUUID() })
+    expect(await push1(op({ entity: "list", type: "revertHistory", entityId: list.id as string, patch: { x: 1 } }))).toMatchObject({
+      reason: "invalid_patch",
+    })
+    expect(await push1(op({ entity: "list", type: "finishShopping", entityId: list.id as string }), OTHER)).toMatchObject({
+      reason: "not_found",
+    })
+    const gone = putList({ id: crypto.randomUUID(), deletedAt: new Date() })
+    expect(await push1(op({ entity: "list", type: "finishShopping", entityId: gone.id as string }))).toMatchObject({
+      status: "conflict",
+      reason: "deleted",
+    })
   })
 })

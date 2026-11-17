@@ -85,3 +85,14 @@ export const CREATED_FIELDS: Record<SyncPushEntity, readonly string[]> = {
   list: ["name", "status", "completedAt", "purchasedAt", "location"],
   listItem: ["name", "quantity", "memo", "tagIds", "checked"],
 }
+
+/**
+ * 複合操作（リストに対する操作）のパッチ（#62 O4b）。tRPC の finishShopping / revertHistory と同じ入力
+ */
+export const compoundPatchSchemas = {
+  finishShopping: z.object({ location: z.string().max(TEXT_LIMITS.location).nullish() }).strict(),
+  revertHistory: z.object({}).strict(),
+} as const
+
+/** 複合操作がまとめて変えるリストのフィールド */
+export const LIST_STATE_FIELDS = ["status", "completedAt", "purchasedAt", "location"] as const

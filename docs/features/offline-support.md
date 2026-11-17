@@ -329,7 +329,11 @@ output: {
   - `purchasedAt` の値も、未来なら `serverTime` に丸める。返す `serverTime` は処理の後の時刻（丸めにはリクエストの開始時刻を使う）。`fieldTimes` のキーは 20 個まで
   - 予期しないエラー（DB の障害など）は、リクエスト全体を 500 にする（クライアントがまとめて再送する。適用済みの操作は `duplicate` になる）。1 操作 1 トランザクションで、`statement_timeout` は 30 秒
   - 対応外の `protocolVersion` は `PRECONDITION_FAILED`（メッセージ `CLIENT_TOO_OLD`）。今は 1 だけを受け付ける
-  - 複合操作（`finishShopping` / `revertHistory`）は O4b で足す（リストとカタログのアイテムのフィールドを、操作の時刻でフィールド単位の LWW にする）
+  - **複合操作（O4b）**: `finishShopping` / `revertHistory` は `entity: "list"` で送り、パッチは tRPC と同じ（`finishShopping` は `{ location? }`、`revertHistory` は `{}`）。1 トランザクションで、時刻はすべて操作の時刻（`clientTime` を丸めたもの）にする
+    - `finishShopping`: チェック済みのリストのアイテムと同名の、リストと同じスコープのカタログのアイテムを購入済みにし（`purchasedAt` も操作の時刻）、未チェックの行を論理削除し、リストを完了にする（`status` / `completedAt` / `purchasedAt` / `location` の時刻は操作の時刻）
+    - `revertHistory`: リストのアイテムと同名の、購入済みのカタログのアイテムを未購入に戻し、リストを進行中に戻す
+    - カタログのアイテムは、`purchasedAt` の時刻が操作の時刻より新しいものを変えない（フィールド単位の LWW。オフラインで完了した後に、別の端末で「未購入」に戻したものを、遅れて届いた完了で上書きしない）
+    - リストの状態のフィールドが操作の時刻より新しく書き換えられていれば、何もせず `conflict`（`stale`）。完了済みのリストの完了は `conflict`（`already_completed`）、完了していないリストの取り消しは `conflict`（`not_completed`）。どれも `serverRow` に最新のリストを返す。リスト以外・不正なパッチは `rejected`（`invalid_patch`）、使えないリストは `rejected`（`not_found`）、削除済みのリストは `conflict`（`deleted`）
 
 **`sync.pull`（作り直し）**
 

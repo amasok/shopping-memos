@@ -460,4 +460,117 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
     expect(row).toMatchObject({ userId: owner, entity: "item", entityId: bad.entityId, operation: "update" })
     expect(JSON.parse(row.payload)).toMatchObject({ status: "rejected", reason: "not_found", patch: { name: "x" } })
   })
+
+  describe("複合操作（買い物の完了・履歴の取り消し。#62 O4b）", () => {
+    /** 個人のリストと、チェック済み「牛乳」・未チェック「卵」のリストのアイテム、同名のカタログのアイテムを作る */
+    async function shoppingSetup(userId = owner) {
+      const catalogMilk = await createItem(userId, { name: "牛乳" })
+      const list = op({ entity: "list", type: "create", patch: { name: "買い物" } })
+      await push1(userId, list)
+      const milk = op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name: "牛乳", checked: true } })
+      const egg = op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name: "卵" } })
+      await ctx.service.push(userId, [milk, egg])
+      return { listId: list.entityId, catalogMilk, milkLi: milk.entityId, eggLi: egg.entityId }
+    }
+
+    async function rawList(id: string) {
+      const { db, schema, drizzle } = ctx
+      const [row] = await db.select().from(schema.shoppingLists).where(drizzle.eq(schema.shoppingLists.id, id))
+      return row
+    }
+
+    async function rawListItem(id: string) {
+      const { db, schema, drizzle } = ctx
+      const [row] = await db.select().from(schema.listItems).where(drizzle.eq(schema.listItems.id, id))
+      return row
+    }
+
+    const finish = (listId: string, clientTime: string, patch: Record<string, unknown> = {}) =>
+      op({ entity: "list", type: "finishShopping", entityId: listId, patch, clientTime })
+    const revert = (listId: string, clientTime: string) =>
+      op({ entity: "list", type: "revertHistory", entityId: listId, clientTime })
+
+    it("買い物の完了: リストを完了にし、チェック済みと同名のカタログのアイテムを購入済みに、未チェックの行を論理削除する", async () => {
+      const { listId, catalogMilk, milkLi, eggLi } = await shoppingSetup()
+      const othersMilk = await createItem(stranger, { name: "牛乳" })
+
+      expect(await push1(owner, finish(listId, T2, { location: "スーパー" }))).toMatchObject({ status: "applied" })
+
+      const list = await rawList(listId)
+      expect(list).toMatchObject({ status: "completed", location: "スーパー" })
+      expect(list.purchasedAt?.toISOString()).toBe(T2)
+      expect(list.completedAt?.toISOString()).toBe(T2)
+      expect(list.fieldModifiedAt).toMatchObject({ status: T2, completedAt: T2, purchasedAt: T2, location: T2 })
+      const milk = await rawItem(catalogMilk)
+      expect(milk.purchasedAt?.toISOString()).toBe(T2)
+      expect(milk.fieldModifiedAt.purchasedAt).toBe(T2)
+      expect((await rawItem(othersMilk)).purchasedAt).toBeNull()
+      expect((await rawListItem(milkLi)).deletedAt).toBeNull()
+      expect((await rawListItem(eggLi)).deletedAt).not.toBeNull()
+    })
+
+    it("買い物の完了は、購入日時が操作より新しく書き換えられたカタログのアイテムを変えない（フィールド単位の LWW）", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      // 完了（T2）より後（T3）に、別の端末で「未購入」にしていた（先にサーバーに届いた）
+      await push1(owner, op({ entity: "item", type: "update", entityId: catalogMilk, patch: { purchasedAt: null }, clientTime: T3 }))
+
+      expect(await push1(owner, finish(listId, T2))).toMatchObject({ status: "applied" })
+
+      const milk = await rawItem(catalogMilk)
+      expect(milk.purchasedAt).toBeNull()
+      expect(milk.fieldModifiedAt.purchasedAt).toBe(T3)
+    })
+
+    it("完了済みのリストの完了は conflict（already_completed）で、serverRow を返す", async () => {
+      const { listId } = await shoppingSetup()
+      await push1(owner, finish(listId, T2))
+      const again = await push1(owner, finish(listId, T3))
+      expect(again).toMatchObject({ status: "conflict", reason: "already_completed", serverRow: { id: listId, status: "completed" } })
+    })
+
+    it("履歴の取り消し: リストを進行中に戻し、同名の購入済みのカタログのアイテムを未購入に戻す", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      await push1(owner, finish(listId, T2))
+
+      expect(await push1(owner, revert(listId, T3))).toMatchObject({ status: "applied" })
+
+      const list = await rawList(listId)
+      expect(list).toMatchObject({ status: "in_progress", purchasedAt: null, completedAt: null, location: null })
+      expect(list.fieldModifiedAt).toMatchObject({ status: T3, purchasedAt: T3 })
+      const milk = await rawItem(catalogMilk)
+      expect(milk.purchasedAt).toBeNull()
+      expect(milk.fieldModifiedAt.purchasedAt).toBe(T3)
+    })
+
+    it("新しい取り消しの後に届いた、古い完了は適用しない（conflict: stale）", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      await push1(owner, finish(listId, T1))
+      await push1(owner, revert(listId, T3))
+
+      const late = await push1(owner, finish(listId, T2))
+      expect(late).toMatchObject({ status: "conflict", reason: "stale" })
+      expect((await rawList(listId)).status).toBe("in_progress")
+      expect((await rawItem(catalogMilk)).purchasedAt).toBeNull()
+    })
+
+    it("完了していないリストの取り消しは conflict（not_completed）", async () => {
+      const { listId } = await shoppingSetup()
+      expect(await push1(owner, revert(listId, T2))).toMatchObject({ status: "conflict", reason: "not_completed" })
+    })
+
+    it("リスト以外・未知のフィールド・他人のリスト・削除済みのリストは適用しない", async () => {
+      const { listId } = await shoppingSetup()
+      const item = await createItem()
+      expect(await push1(owner, op({ entity: "item", type: "finishShopping", entityId: item, clientTime: T2 }))).toMatchObject({
+        status: "rejected",
+        reason: "invalid_patch",
+      })
+      expect(await push1(owner, finish(listId, T2, { status: "completed" }))).toMatchObject({ reason: "invalid_patch" })
+      expect(await push1(stranger, finish(listId, T2))).toMatchObject({ status: "rejected", reason: "not_found" })
+      expect((await rawList(listId)).status).toBe("in_progress")
+
+      await push1(owner, op({ entity: "list", type: "delete", entityId: listId }))
+      expect(await push1(owner, finish(listId, T2))).toMatchObject({ status: "conflict", reason: "deleted" })
+    })
+  })
 })
