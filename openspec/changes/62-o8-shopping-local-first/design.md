@@ -26,19 +26,20 @@
 |------|----------|-------|
 | `createList({ name, groupId, itemIds, tagIds })` | リストと、選んだ商品・タグ（同じ groupId・未購入・タグの OR）の商品のスナップショット | リストの `create`、リストの商品の `create` |
 | `updateList({ id, name })` | 名前 | `update {name}` |
-| `deleteList(id)` | リストの商品とリスト | リストの商品ごとの `delete`、リストの `delete`（この順） |
+| `deleteList(id)` | リストの商品とリスト | 進行中のリストなら、リストの商品ごとの `delete`、リストの `delete`（この順）。完了したリストなら、リストの `delete` だけ |
 | `addItemToList({ listId, itemId })` | スナップショット | リストの商品の `create` |
 | `addNewItemToList({ listId, name, quantity, memo, tagIds })` | カタログの商品（リストの groupId）とスナップショット | 商品の `create`（catalogRepository）、リストの商品の `create` |
 | `removeItemFromList(id)` | リストの商品 | `delete` |
 | `checkItem(id, checked)` | checked | `update {checked}` |
 | `finishShopping(listId, location, rules)` | D3 | `finishShopping {location}` だけ |
 | `revertHistory(listId)` | D3 | `revertHistory` だけ |
-| `deleteHistory(listId)` | リストの商品・リスト・同じ名前と groupId のカタログの商品 | それぞれの `delete` |
+| `deleteHistory(listId)` | リストの商品・リスト・同じ名前と groupId のカタログの商品（購入日時が入っていなければ「履歴が見つかりません」のエラー。サーバーの `getHistoryById` の NOT_FOUND と同じ） | カタログの商品ごとの `delete`、リストの `delete`（リストの商品の `delete` は積まない） |
 
 - すべて 1 つのトランザクション（`lists`・`listItems`・`items`・`syncQueue`）。Dexie は、内側のトランザクション（`createRecord` など）が外側のテーブルの一部なら外側を使う
-- リストを消すとき、リストの商品の `delete` も積む: 送る前のリストの商品の `create` が圧縮で一緒に消える（積まないと、送る前のリストの create + delete が消えた後に、リストの商品の create だけが残り、サーバーで `not_found` になる）。送信済みなら、サーバーはリストの削除で商品も論理削除するので、後から届く商品の `delete` は削除済みとして applied になる
+- 進行中のリストを消すとき、リストの商品の `delete` も積む: 送る前のリストの商品の `create` が圧縮で一緒に消える（積まないと、送る前のリストの create + delete が消えた後に、リストの商品の create だけが残り、サーバーで `not_found` になる）。送信済みなら、リストの商品の `delete` はリストの `delete` より先に届き、リストが進行中なので `removeItem` で applied になる
+- 完了したリスト（履歴の削除と、完了したリストの削除）では、リストの商品の `delete` を積まない。サーバーは完了したリストの商品の削除を `list_completed` で断る（`SyncPushService.delete`）ので、failed が残り続けるため。リストの `delete` がリストの商品もまとめて論理削除する。完了したリストの商品の `create` は完了より前に積まれていて先に送られるので、取り残しはない
 - 完了したリストへの追加・外す・チェックは、リポジトリが断る（sync.push の `list_completed` と同じ。画面からはできない）
-- 商品・タグの参照: `createList` の `itemIds` と `addItemToList` の商品は、端末の DB にあり、リストと同じ groupId のものに限る（サーバーの `isSameScope` と同じ。違えばエラー）
+- 商品・タグの参照: `createList` の `itemIds` は、端末の DB にない商品を飛ばし、リストと違う groupId の商品があればエラーにする（サーバーの `createList` の `continue` と FORBIDDEN と同じ）。`addItemToList` の商品は、なければ「アイテムが見つかりません」、groupId が違えばエラー。未購入の絞り込みはタグで選ぶときだけで、`itemIds` には掛けない（サーバーと同じ）
 
 ### D3. 完了と取り消し（domain の関数を端末の DB に当てる）
 
@@ -77,9 +78,10 @@ hooks → `infrastructure/local/shoppingRepository` → `repository.ts`・`catal
 
 ## Risks / Trade-offs
 
-- [`finishShopping` がサーバーで conflict（ほかの端末で先に完了・取り消し）になると、端末で購入済みにしたカタログの商品が戻らない] → SyncEngine は conflict のリストの行だけを戻す。商品はサーバーで変わっていなければ次の差分に来ないので、全件の取り直しまでずれが残る。まれ（同じリストを 2 台で同時に完了する）なので受け入れ、O9 の失敗した操作の表示で見直す
+- [`finishShopping` / `revertHistory` がサーバーで conflict（ほかの端末で先に完了・取り消し）か rejected（`invalid_patch` など）になると、端末で変えたカタログの商品が戻らない] → SyncEngine は conflict のリストの行だけを戻す。商品はサーバーで変わっていなければ次の差分に来ないので、全件の取り直しまでずれが残る。まれ（同じリストを 2 台で同時に完了する）なので受け入れ、O9 の失敗した操作の表示で見直す
 - [ローカルファーストの完了で、送る前にチェックを外した操作と完了の順番] → キューは積んだ順に送るので、サーバーでもチェックの変更の後に完了が当たる
 - [ゲストだけ規則が違う部分が残る] → D4 の表。179b と 62-o8b の決定で消す
+- [端末の DB の履歴の削除は、端末にあるカタログの商品だけを消す] → 前回の pull の後にほかの端末で作られた同じ名前の商品は、tRPC の `deleteHistory`（サーバーで名前で消す）と違って消えない。次の pull で一覧に出るので、利用者が消せる
 
 ## Migration Plan
 
