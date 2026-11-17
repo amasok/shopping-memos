@@ -2,7 +2,7 @@
 
 Issue: #62（https://github.com/amasok/shopping-memos/issues/62）の O8 から分けたもの
 
-**状態: 承認済み（2026-11-18、ユーザーが提案どおりで承認）**。ユーザーの不在中に、判断が要る部分を `62-o8-shopping-local-first` から分けた（リーダーの指示、2026-11-17）。`62-o8-shopping-local-first` が archive されてから実装する（この change の specs は、それが作る `openspec/specs/shopping` の Requirement を変える）。`62-o7b-catalog-guest-alignment`（商品・タグの並び）と同じ判断なので、まとめて答えてもらうとよい。
+**状態: 承認済み（2026-11-18、ユーザーが提案どおりで承認）**。ユーザーの不在中に、判断が要る部分を `62-o8-shopping-local-first` から分けた（リーダーの指示、2026-11-17）。この change の specs は、`62-o8-shopping-local-first`（archive 済み）が作った `openspec/specs/shopping` の Requirement を変える。`62-o7b-catalog-guest-alignment`（商品・タグの並び）と同じ判断なので、まとめて答えてもらうとよい。
 
 ## Why
 

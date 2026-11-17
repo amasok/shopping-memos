@@ -2,7 +2,7 @@
 
 Issue: #62（https://github.com/amasok/shopping-memos/issues/62）の O7 から分けたもの
 
-**状態: 承認済み（2026-11-18、ユーザーが提案どおりで承認）**。ユーザーの不在中に、判断が要る部分を `62-o7-catalog-local-first` から分けた（リーダーの指示、2026-11-17）。下の「ユーザーに確認すること」は、すべて提案どおり（並びはログイン中に合わせる・`/items/new` は案 a で消す）。`62-o7-catalog-local-first` が archive されてから実装する（この change の specs は、それが作る `openspec/specs/catalog` の Requirement を変える）。
+**状態: 承認済み（2026-11-18、ユーザーが提案どおりで承認）**。ユーザーの不在中に、判断が要る部分を `62-o7-catalog-local-first` から分けた（リーダーの指示、2026-11-17）。下の「ユーザーに確認すること」は、すべて提案どおり（並びはログイン中に合わせる・`/items/new` は案 a で消す）。この change の specs は、`62-o7-catalog-local-first`（archive 済み）が作った `openspec/specs/catalog` の Requirement を変える。
 
 ## Why
 

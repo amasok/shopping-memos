@@ -68,6 +68,21 @@ describe("queryLists / queryListItems / queryHistory", () => {
     expect((await queryListItems(db, ["b"])).map((e) => e.id)).toEqual(["z", "y", "x"])
   })
 
+  it("日時が ISO 文字列で入っている行（古い端末のデータや E2E の seed）でも作成日時の古い順に並べる", async () => {
+    // Dexie の型は Date だが、文字列のまま入っている行もある。Date と文字列が混ざっていても落ちない
+    await db.lists.add({ id: "b", name: "b", status: "in_progress", createdAt: at(1).toISOString() as never })
+    await db.lists.add({ id: "a", name: "a", status: "in_progress", createdAt: at(2) })
+    await db.listItems.add({ id: "z", listId: "b", name: "z", quantity: 1, tagIds: [], checked: false, createdAt: at(1).toISOString() as never })
+    await db.listItems.add({ id: "y", listId: "b", name: "y", quantity: 1, tagIds: [], checked: false, createdAt: at(2) })
+    await db.listItems.add({ id: "x", listId: "b", name: "x", quantity: 1, tagIds: [], checked: false, createdAt: at(3).toISOString() as never })
+    await list("old", { status: "completed", purchasedAt: at(10).toISOString() as never })
+    await list("new", { status: "completed", purchasedAt: at(20) })
+
+    expect((await queryLists(db, { groupId: undefined })).map((l) => l.id)).toEqual(["b", "a"])
+    expect((await queryListItems(db, ["b"])).map((e) => e.id)).toEqual(["z", "y", "x"])
+    expect((await queryHistory(db, { groupId: undefined })).map((h) => h.id)).toEqual(["new", "old"])
+  })
+
   it("履歴は購入日時の新しい順にリストの商品つきで出す", async () => {
     await list("old", { status: "completed", purchasedAt: at(10) })
     await list("new", { status: "completed", purchasedAt: at(20) })

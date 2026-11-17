@@ -21,7 +21,13 @@ export interface ListQueryOptions {
   includeAllGroups?: boolean
 }
 
-const byCreatedAt = <T extends { createdAt: Date }>(a: T, b: T) => a.createdAt.getTime() - b.createdAt.getTime()
+/**
+ * 日時をミリ秒にする。型は Date だが、古い端末のデータや E2E の seed では ISO 文字列のまま入っていることがあるので、
+ * new Date で包んで両方を扱う（入っていなければ 0）
+ */
+const toMillis = (value: Date | string | undefined) => (value === undefined ? 0 : new Date(value).getTime())
+
+const byCreatedAt = <T extends { createdAt: Date }>(a: T, b: T) => toMillis(a.createdAt) - toMillis(b.createdAt)
 
 export async function queryLists(db: ShoppingMemosDB, options: ListQueryOptions): Promise<ShoppingList[]> {
   const { groupId, status, includeCompleted = false, includeAllGroups = false } = options
@@ -47,7 +53,7 @@ export async function queryHistory(
   options: { groupId: string | undefined; limit?: number; offset?: number }
 ): Promise<PurchaseHistoryWithItems[]> {
   const lists = await db.lists.filter((list) => list.groupId === options.groupId && !!list.purchasedAt).toArray()
-  lists.sort((a, b) => (b.purchasedAt?.getTime() ?? 0) - (a.purchasedAt?.getTime() ?? 0))
+  lists.sort((a, b) => toMillis(b.purchasedAt) - toMillis(a.purchasedAt))
   let page = lists
   if (options.offset) page = page.slice(options.offset)
   if (options.limit) page = page.slice(0, options.limit)
