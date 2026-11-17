@@ -63,8 +63,12 @@ describe("CI ワークフローの E2E ジョブ", () => {
     expect(url).not.toContain("dummy")
   })
 
-  it("Auth.js に必要な AUTH_SECRET が設定されている", () => {
-    expect(e2e.env?.AUTH_SECRET?.length ?? 0).toBeGreaterThan(0)
+  it("Better Auth に必要な値（secret・OTP の記録の鍵・Turnstile のテスト用のキー）が設定されている（#61 A3a）", () => {
+    expect(e2e.env?.BETTER_AUTH_SECRET?.length ?? 0).toBeGreaterThanOrEqual(32)
+    expect(e2e.env?.OTP_EVENT_HMAC_KEY?.length ?? 0).toBeGreaterThanOrEqual(32)
+    expect(e2e.env?.OTP_EVENT_HMAC_KEY).not.toBe(e2e.env?.BETTER_AUTH_SECRET)
+    expect(e2e.env?.TURNSTILE_SECRET_KEY).toMatch(/^1x0000/)
+    expect(e2e.env?.NEXT_PUBLIC_TURNSTILE_SITE_KEY).toMatch(/^1x0000/)
   })
 
   it("E2E 実行前にマイグレーションを適用する", () => {
@@ -81,8 +85,9 @@ describe("CI ワークフローの E2E ジョブ", () => {
     expect(runE2E).toBeGreaterThan(build)
   })
 
-  it("next start で Auth.js が localhost を信頼する（AUTH_TRUST_HOST）", () => {
-    expect(e2e.env?.AUTH_TRUST_HOST).toBe("true")
+  it("Auth.js の値（AUTH_SECRET・AUTH_TRUST_HOST）は使わない（#61 A3a で Better Auth に切り替えた）", () => {
+    expect(e2e.env?.AUTH_SECRET).toBeUndefined()
+    expect(e2e.env?.AUTH_TRUST_HOST).toBeUndefined()
   })
 
   it("playwright.config.ts が CI では本番ビルド（npm run start）で起動する", () => {

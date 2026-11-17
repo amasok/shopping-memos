@@ -226,10 +226,6 @@ jobs:
 
     env:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/shopping_memos_e2e"
-      # E2E専用のダミー値（本番では使用しない）
-      AUTH_SECRET: "e2e-ci-only-secret-not-for-production"
-      # next start（NODE_ENV=production）では Auth.js が localhost を信頼しないため明示する
-      AUTH_TRUST_HOST: "true"
       # Better Auth（#61 A3a）。E2E専用のダミー値。BETTER_AUTH_URL は playwright.config.ts が webServer ごとに渡す
       BETTER_AUTH_SECRET: "e2e-ci-only-better-auth-secret-not-for-production"
       OTP_EVENT_HMAC_KEY: "e2e-ci-only-otp-event-hmac-key-not-for-production"

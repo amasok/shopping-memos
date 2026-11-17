@@ -38,8 +38,6 @@ jobs:
     env:
       # ビルド時にDB接続は不要（スキーマのみ使用）
       DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
-      AUTH_SECRET: "e2e-ci-only-secret-not-for-production"
-      AUTH_TRUST_HOST: "true"
       # Better Auth（#61 A3a）。next start（NODE_ENV=production）は起動時に認証とメールの環境変数を確かめるので、E2E専用のダミー値を渡す。
       # BETTER_AUTH_URL は playwright.config.ts が webServer ごとに渡す。この E2E はログインせず、メールも送らない
       BETTER_AUTH_SECRET: "e2e-ci-only-better-auth-secret-not-for-production"

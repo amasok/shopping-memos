@@ -74,7 +74,7 @@ export default defineConfig({
     ...(process.env.E2E_OFFLINE
       ? [
           {
-            command: `AUTH_TRUST_HOST=true BETTER_AUTH_URL=${E2E_OFFLINE_ORIGIN} E2E_TEST=true npx next start -p ${E2E_OFFLINE_PORT}`,
+            command: `BETTER_AUTH_URL=${E2E_OFFLINE_ORIGIN} E2E_TEST=true npx next start -p ${E2E_OFFLINE_PORT}`,
             url: E2E_OFFLINE_ORIGIN,
             reuseExistingServer,
             timeout: 120 * 1000,

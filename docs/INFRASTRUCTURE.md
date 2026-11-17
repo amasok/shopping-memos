@@ -227,6 +227,54 @@ npx drizzle-kit push
 
 ---
 
+## 6.5 メールのコードでのログイン（Better Auth・Resend・Turnstile。#61 A3a）
+
+AR1b（A3a・A3b・A4）のリリースの前に、次をそろえる。Google OAuth の値（`NEXTAUTH_SECRET`・`GOOGLE_CLIENT_ID`・`GOOGLE_CLIENT_SECRET`）は、Auth.js のデプロイに Promote で戻せるよう、A6（contract）まで消さない。
+
+### Vercel の環境変数
+
+| 変数 | 値 | Production | Preview |
+|------|----|-----------|---------|
+| `BETTER_AUTH_SECRET` | `openssl rand -base64 32`（32 文字以上） | ○ | ○（本番と別の値） |
+| `BETTER_AUTH_URL` | `https://shopping.counoco.net` / Preview は develop の固定 URL | ○ | ○ |
+| `BETTER_AUTH_TRUSTED_ORIGINS` | Preview のほかのホスト（カンマ区切りのオリジン） | — | 必要なら |
+| `OTP_EVENT_HMAC_KEY` | `openssl rand -base64 32`（`BETTER_AUTH_SECRET` と別の値） | ○ | ○ |
+| `TURNSTILE_SECRET_KEY` | Turnstile の非表示のウィジェットの secret | ○（テスト用のキーは起動時に拒否） | テスト用のキー `1x0000000000000000000000000000000AA` |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | 同じウィジェットのサイトキー（ビルド時に埋め込まれる） | ○ | テスト用のキー `1x00000000000000000000AA` |
+| `RESEND_API_KEY` | Resend の API キー（送信だけの権限） | ○ | ○ |
+| `EMAIL_FROM` | `買い物メモ <noreply@mail.counoco.net>` | ○ | ○ |
+| `EMAIL_RECIPIENT_ALLOWLIST` | 家族と開発者のアドレス（カンマ区切り） | 設定しない | ○（必須） |
+| `OTP_ALERT_EMAIL` | 送信数のアラートの宛先（A3b） | ○ | 任意 |
+
+- 欠けていると、サーバーの起動時（`src/instrumentation.ts`）に AuthConfigError / EmailConfigError で止まり、**ゲストの画面も含めてサイト全体が 500 になる**。Vercel の環境変数を入れてからデプロイする。落ちたら、前のデプロイに Promote で戻してから値を直す
+- Vercel（Production・Preview）では、`BETTER_AUTH_URL`・`BETTER_AUTH_TRUSTED_ORIGINS` は https だけ、`BETTER_AUTH_SECRET`・`OTP_EVENT_HMAC_KEY` に CI・開発用のダミー（`not-for-production`・`dev-only` などを含む値）は使えない
+- `E2E_BUILD`・`E2E_TEST`・`E2E_SEED_TOKEN` は Vercel に設定しない
+
+### ユーザーの作業
+
+- [ ] Cloudflare で Turnstile のウィジェット（非表示）を作り、ホストに `shopping.counoco.net` を入れる。Preview はテスト用のキーを使う
+- [ ] Resend に `mail.counoco.net` を追加し、表示される SPF・DKIM と DMARC（`p=none` から）を Cloudflare の DNS に登録して、検証を通す
+- [ ] Preview に Deployment Protection（Vercel Authentication）をかける（Preview は Turnstile がテスト用のキーで常に通るため）
+- [ ] `shopping.counoco.net` の CNAME は DNS only（プロキシ OFF）のままにする。プロキシを ON にすると、IP がすべて Cloudflare のものになり、IP ごとの上限が全員で 1 つになる
+
+### AR1b の Preview の確認項目（PR の本文に写す）
+
+```markdown
+- [ ] ログイン画面に Google のボタンがなく、移行の案内が出る
+- [ ] 既存ユーザーの Gmail アドレス（許可リストに入れたもの）にコードが届き、ログインできる
+- [ ] ログイン後、既存のグループ・アイテム・リスト・履歴がそのまま見える（同じユーザーとして紐付いている）
+- [ ] 誤ったコードを 3 回入れると無効になり、再送できる。再送ボタンは 60 秒間押せない
+- [ ] ログアウトするとゲストモードに戻る
+- [ ] iPhone のホーム画面に追加した状態でも、コード入力でログインが完結する
+- [ ] 許可リスト外のアドレスでは、メールが届かない（画面の表示は同じ）
+- [ ] 偽の `x-real-ip`・`x-forwarded-for` を付けたコードの送信で、記録される IP（`otp_events.ip`・`rate_limits.key`）がクライアントの値にならない（例: `curl -X POST <Preview>/api/auth/email-otp/send-verification-otp -H 'origin: <Preview>' -H 'x-real-ip: 192.0.2.123' -H 'x-forwarded-for: 192.0.2.124' -H 'x-turnstile-token: x' -H 'content-type: application/json' -d '{"email":"<許可リストのアドレス>","type":"sign-in"}'` の後、Preview の DB で `select ip from otp_events order by created_at desc limit 1` と `select key from rate_limits order by last_request desc limit 1` が 192.0.2.123・192.0.2.124 でないこと）
+- [ ] ブラウザの開発者ツールで、ログイン画面と Turnstile の CSP（Report-Only）の違反が出ない
+```
+
+（表示名の設定・すべての端末からログアウトは A4 の項目で足す）
+
+---
+
 ## 7. 参考リンク
 
 - [Vercel Documentation](https://vercel.com/docs)
@@ -242,3 +290,4 @@ npx drizzle-kit push
 |------|-----------|---------|
 | 2025-01-30 | 1.0 | 初版作成 |
 | 2025-01-30 | 2.0 | Terraform削除、UI管理に変更 |
+| 2026-11-18 | 2.1 | メールのコードでのログイン（#61 A3a）の環境変数・ユーザーの作業・AR1b の確認項目を追加 |

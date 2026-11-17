@@ -12,7 +12,7 @@ const nextConfig: NextConfig = {
   // E2E 専用ルート（route.e2e.ts）は E2E_BUILD=true のビルドにだけ含める（#70）
   pageExtensions: getPageExtensions(),
   env: {
-    // E2E 用ログインの有無をビルド時に固定する。E2E_BUILD=true 以外のビルドでは常に無効（#70）
+    // E2E 専用の機能（OTP を手元に持つ TestMailbox など）の有無をビルド時に固定する。E2E_BUILD=true 以外のビルドでは常に無効（#70・#61）
     E2E_BUILD: process.env.E2E_BUILD === "true" ? "true" : "false",
     // 強制更新（MIN_CLIENT_RELEASE）のリリース番号。新しいデプロイほど必ず大きい
     NEXT_PUBLIC_BUILD_TIME: String(Date.now()),

@@ -43,11 +43,11 @@
 
 ## 5. E2E
 
-- [ ] 5.1 `src/app/api/test/otp/route.e2e.ts` のテストを先に書き、実装する（「条件がそろうとテスト用のルートが直近のコードを返す」「条件が 1 つでも欠けるとテスト用のルートは 404 になる」「本番のビルドの NODE_ENV でも条件がそろえばテスト用のルートが動く」「E2E_BUILD なしのビルドではコードを手元に持たない」）
-- [ ] 5.2 `e2e-credentials.ts` を消し、`e2e/auth/fixtures` のログインのヘルパーを「送信 → テスト用のルート → `sign-in/email-otp` → storageState」に作り直す（テストごとに別の `x-real-ip`）。`playwright.config.ts` の `AUTH_TRUST_HOST` を `BETTER_AUTH_URL` に置き換える（「メールアドレスだけではログインできない」）
-- [ ] 5.3 ログインの E2E（`e2e/auth/login.spec.ts`）を書く: 新しいアドレスでログイン、既存のユーザーでログイン、3 回まちがえて再送、ログアウト、ゲストのデータの取り込み（「ログインするとゲストのデータが取り込まれる」と、1・4 の Scenario の画面の側）
-- [ ] 5.4 既存の `e2e/auth/**` が新しいヘルパーで全件通ることを確かめる
-- [ ] 5.5 `next-auth`・`@auth/drizzle-adapter`・`src/types/next-auth.d.ts`（あれば）と、Auth.js の import の残りを消す。`npm ls` で @simplewebauthn ^9 の peer が残っていないことを確かめる
+- [x] 5.1 `src/app/api/test/otp/route.e2e.ts` のテストを先に書き、実装する（「条件がそろうとテスト用のルートが直近のコードを返す」「条件が 1 つでも欠けるとテスト用のルートは 404 になる」「本番のビルドの NODE_ENV でも条件がそろえばテスト用のルートが動く」「E2E_BUILD なしのビルドではコードを手元に持たない」）
+- [x] 5.2 `e2e-credentials.ts` を消し、`e2e/auth/fixtures` のログインのヘルパーを「送信 → テスト用のルート → `sign-in/email-otp` → storageState」に作り直す（テストごとに別の `x-real-ip`）。`playwright.config.ts` の `AUTH_TRUST_HOST` を `BETTER_AUTH_URL` に置き換える（「メールアドレスだけではログインできない」）
+- [x] 5.3 ログインの E2E（`e2e/auth/login.spec.ts`）を書く: 新しいアドレスでログイン、既存のユーザーでログイン、3 回まちがえて再送、ログアウト、ゲストのデータの取り込み（「ログインするとゲストのデータが取り込まれる」と、1・4 の Scenario の画面の側）
+- [x] 5.4 既存の `e2e/auth/**` が新しいヘルパーで全件通ることを確かめる
+- [x] 5.5 `next-auth`・`@auth/drizzle-adapter`・`src/types/next-auth.d.ts`（あれば）と、Auth.js の import の残りを消す。`npm ls` で @simplewebauthn ^9 の peer が残っていないことを確かめる
 
 ## 6. 確認
 

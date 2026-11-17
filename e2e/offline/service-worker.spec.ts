@@ -19,7 +19,7 @@ test.describe("Service Worker (O1)", () => {
   })
 
   test("/api/trpc と /api/auth のレスポンスは private, no-store", async ({ request }) => {
-    const auth = await request.get("/api/auth/session")
+    const auth = await request.get("/api/auth/get-session")
     expect(auth.headers()["cache-control"]).toContain("no-store")
     const trpc = await request.get("/api/trpc/nonexistent")
     expect(trpc.headers()["cache-control"]).toContain("no-store")
@@ -53,7 +53,7 @@ test.describe("Service Worker (O1)", () => {
 
   test("API のレスポンスは Cache Storage に残らない", async ({ page }) => {
     await waitForControl(page)
-    await page.evaluate(() => fetch("/api/auth/session"))
+    await page.evaluate(() => fetch("/api/auth/get-session"))
     const hasApi = await page.evaluate(async () => {
       for (const name of await caches.keys()) {
         const keys = await (await caches.open(name)).keys()

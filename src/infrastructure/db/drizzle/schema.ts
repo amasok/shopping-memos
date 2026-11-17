@@ -54,7 +54,7 @@ export const users = pgTable("users", {
 
 /**
  * アカウント（OAuth連携）
- * NextAuth用 - @auth/drizzle-adapterが期待するカラム名を使用
+ * Auth.js 用（#61 A3a で使わなくなった。Auth.js のデプロイに戻せるよう A6 の contract まで残す）
  */
 export const accounts = pgTable(
   "accounts",

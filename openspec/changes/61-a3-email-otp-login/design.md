@@ -78,6 +78,10 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
   - チャレンジ: アドレスの直近 24 時間の `sent` が 20 件、または最後の `unlocked` より後の `attempted` が 30 件に達したら、チャレンジの段階にする
   - 照合の失敗の数として `attempted` を使う（成功の後は `unlocked` で区切るので、失敗の数と同じになる）。A2 の `otp_events.kind` は `sent`・`attempted`・`locked`・`unlocked`・`notified`・`alerted`
 - **判定と記録の順（1.1・1.3 で決めた）**: advisory lock の中で「読む → `otpAbusePolicy` で判定 → 進むときだけ記録する」。照合として扱わなかったもの（断ったもの）は `attempted` に数えない（数えると、同時の 10 件で累積ロックまで進んでしまう）。10 回目の照合は照合に進み、その記録と同時に `locked` を記録する（「10 回目から 24 時間止める」、同時の 3 件では 1 件だけ照合される）。`unlocked` は、A3a でもログインの成功のたびに記録し、累積ロックの数え直しに使う（記録しないと、同じ IP から 1 日に 10 回ログインした本人がロックされる）。`locked` を `unlocked` で解く（A3b）のは A3a ではしない。記録の時刻はアプリの時刻（ロックの中の判定と同じ値）
+  - 読むのは判定に要る行だけ（レビューの M）: この「アドレス × IP」の直近 24 時間の行、アドレスの最新の `sent` と `unlocked`、最新の `sent` の後の `attempted`。アドレス全体の行を件数の上限つきで読むと、別の IP から行を積まれたときに、この IP の `locked` が落ちてロックが解けるため
+  - 30 日の掃除は、送信のついでに**プロセス（Vercel ではインスタンス）ごとに** 1 日 1 回。インスタンスが増えると DELETE も増えるが、件数は少ないので受け入れる
+  - ローカル（開発・テスト）で IP のヘッダがないとき、`otp_events.ip` は `'unknown'`、Better Auth の rate limit のキーは 127.0.0.1（Better Auth の開発時の既定）で、値がそろわない。本番は `x-real-ip` が必ずあるので害はない
+  - **コードがないときは照合に進まない（テストの不安定から見つけた）**: Better Auth は、期限切れの検証の行を、ほかのリクエストのついでに全体から消す（インスタンスごとに一定の間隔）。そのままだと、期限切れのコードを入れた人に、行が先に消されていれば「不一致」が出る。照合の hooks で、そのアドレスに期限内のコードの行がなければ、`attempted` を記録せずに `OTP_EXPIRED`（「コードの有効期限が切れました。再送信してください」）を返す。使ったコード・送っていないアドレスでも同じ応答になる
 - **IP のキー（1.2）**: `src/infrastructure/auth/ip.ts` の `clientIpKey`。`@better-auth/core/utils/ip` の `getIPFromHeader`（better-auth と同じ 1.7.25 に固定して直接の依存にした）で、Better Auth の rate limit と同じく /64 に丸める。取れないときは `'unknown'`（Better Auth の rate limit は `no-trusted-ip` の 1 つのキーにまとめる。どちらも制限は外さない）
 - **黙って送らないとき**（再送の間隔・「アドレス × IP」の上限・ロック・許可リスト外）は、Better Auth の送信の処理に進まずに、送ったときと同じ応答を返す。新しいコードを作らないので、今のコードは無効にならない（レビュー M6）。応答の時間をそろえるため、送るときもメールの送信は応答を待たずに行う（Next.js の `after()` で送る）
 - **使わない API を閉じる（レビュー H2）**: `src/app/api/auth/[...all]/route.ts` で、許可リストにあるパス（`/email-otp/send-verification-otp`・`/sign-in/email-otp`・`/get-session`・`/sign-out`）以外は Better Auth に渡さずに 404 を返す。送信は `type` が `sign-in` 以外なら 400 にする。Better Auth の `disabledPaths` も重ねてかける（試作で名前を確かめる）。A4・A5 は、それぞれの change で許可リストに足す
@@ -133,6 +137,8 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 - E2E では制限を外さない。代わりに、ログインのヘルパーはテストごとに別の `x-real-ip` を付け（ローカルは Vercel ではないのでヘッダがそのまま届く）、IP ごとの上限に当たらないようにする。Turnstile は Cloudflare のテスト用のキー
 - Playwright の webServer の `AUTH_TRUST_HOST` は、`BETTER_AUTH_URL=http://localhost:<port>` に置き換える
 - 既存の `e2e/auth/**` は新しいヘルパー（送信 → テスト用のルートからコード → `sign-in/email-otp` → storageState）で全件通す
+
+- **実装（5.x で決めた）**: テスト用のルートは `{ otp, sentAt, now }` を返す。ログインのヘルパー（`loginWithOtp`）は、同じアドレスに 60 秒以内に送るとサーバーが黙って見送る（再送の間隔）ので、前の送信からの残りの時間だけ待ってから送り、前より新しいコードが届くのを待つ。同じアドレスに 2 回ログインする spec（guest-merge-lifecycle・guest-merge-pending）は、制限時間を延ばした。画面からのログインの E2E（`login.spec.ts`）は、`page.setExtraHTTPHeaders` でテストごとに別の `x-real-ip` を付ける。Auth.js の環境変数（`AUTH_SECRET`・`AUTH_TRUST_HOST`）は CI・E2E から消した（`.env.example` の Auth.js・Google の値は A6 で消す）
 
 ### D9. CSP
 
