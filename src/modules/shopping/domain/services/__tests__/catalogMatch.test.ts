@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest"
-import { selectItemsToPurchase, selectItemsToUnpurchase, type CatalogCandidate } from "../catalogMatch"
+import {
+  selectItemsToDeleteWithList,
+  selectItemsToPurchase,
+  selectItemsToUnpurchase,
+  type CatalogCandidate,
+} from "../catalogMatch"
 
 const PURCHASED = new Date("2026-01-01T00:00:00.000Z")
 
@@ -46,12 +51,9 @@ describe("selectItemsToPurchase（買い物の完了の照合）", () => {
     expect(selectItemsToPurchase(["牛乳", "卵"], candidates, { userId: "u1", groupId: null })).toEqual(["milk", "egg"])
   })
 
-  it("購入状態は見ない（同じ名前の購入済みの商品も選ぶ。今のサーバーの振る舞い）", () => {
+  it("未購入の商品だけを選び、同じ名前の購入済みの商品は選ばない（179b）", () => {
     const candidates = [item({ id: "unpurchased" }), item({ id: "purchased", purchasedAt: PURCHASED })]
-    expect(selectItemsToPurchase(["牛乳"], candidates, { userId: "u1", groupId: null })).toEqual([
-      "unpurchased",
-      "purchased",
-    ])
+    expect(selectItemsToPurchase(["牛乳"], candidates, { userId: "u1", groupId: null })).toEqual(["unpurchased"])
   })
 
   it("名前が空なら何も選ばない", () => {
@@ -74,5 +76,30 @@ describe("selectItemsToUnpurchase（履歴の取り消しの照合）", () => {
   it("購入日時は ISO 文字列でも扱える（Dexie の保存形式）", () => {
     const candidates = [item({ id: "purchased", purchasedAt: "2026-01-01T00:00:00.000Z" })]
     expect(selectItemsToUnpurchase(["牛乳"], candidates, { userId: "u1", groupId: null })).toEqual(["purchased"])
+  })
+})
+
+describe("selectItemsToDeleteWithList（リストと同じ名前の未購入の商品も消す削除の照合。179b）", () => {
+  it("同じ名前・同じスコープの未購入の商品を選ぶ", () => {
+    const candidates = [item({ id: "milk" }), item({ id: "egg", name: "卵" }), item({ id: "bread", name: "パン" })]
+    expect(selectItemsToDeleteWithList(["牛乳", "卵"], candidates, { userId: "u1", groupId: null })).toEqual([
+      "milk",
+      "egg",
+    ])
+  })
+
+  it("ほかのスコープ・購入済み・削除済みの同じ名前の商品は選ばない", () => {
+    const candidates = [
+      item({ id: "target", groupId: "A" }),
+      item({ id: "otherGroup", groupId: "B" }),
+      item({ id: "personal", groupId: null }),
+      item({ id: "purchased", groupId: "A", purchasedAt: PURCHASED }),
+      item({ id: "deleted", groupId: "A", deletedAt: PURCHASED }),
+    ]
+    expect(selectItemsToDeleteWithList(["牛乳"], candidates, { userId: "u1", groupId: "A" })).toEqual(["target"])
+  })
+
+  it("所有者がわからない個人のリストはどの商品も選ばない", () => {
+    expect(selectItemsToDeleteWithList(["牛乳"], [item({ id: "milk" })], { userId: null, groupId: null })).toEqual([])
   })
 })

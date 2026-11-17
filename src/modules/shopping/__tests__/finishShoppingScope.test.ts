@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { createFakeDb, type FakeDbOptions } from "./helpers/fakeDb"
 
 /**
- * ShoppingService.finishShopping（tRPC の買い物の完了。#64・#62 O3b・#179）
+ * ShoppingService.finishShopping（tRPC の買い物の完了。#64・#62 O3b・#179・179b）
  *
  * 記録用の DB で、ロック・候補の読み込み・書き込みの条件と、記録する ID を確かめる。
  * 実際の SQL の結果は shopping-completion.db.test.ts（実 DB）で確かめる
@@ -80,7 +80,7 @@ describe("ShoppingService.finishShopping（tRPC の買い物の完了）", () =>
     expect(result.purchasedItemIds).toEqual(["li-milk"])
   })
 
-  it("同じ名前の購入済みの商品も購入日時を完了の時刻にする", async () => {
+  it("同じ名前の購入済みの商品の購入日時は変えない", async () => {
     setup({
       entries: [{ id: "li-milk", name: "牛乳", checked: true }],
       catalogItems: [catalog("unpurchased"), catalog("purchased", { purchasedAt: PURCHASED })],
@@ -89,8 +89,11 @@ describe("ShoppingService.finishShopping（tRPC の買い物の完了）", () =>
     await service().finishShopping("list-1", "user-A")
 
     const [update] = queriesOf("items", "update")
-    expect(update.params).toEqual(expect.arrayContaining(["unpurchased", "purchased"]))
-    expect(itemOpIds()).toEqual(["unpurchased", "purchased"])
+    expect(update.params).toContain("unpurchased")
+    expect(update.params).not.toContain("purchased")
+    // 書き込みの WHERE でも未購入に限る（読んだ後にほかの操作で購入済みになったものを上書きしない）
+    expect(update.sql).toContain('"items"."purchased_at" is null')
+    expect(itemOpIds()).toEqual(["unpurchased"])
   })
 
   it("記録する商品の ID は、購入済み・別スコープ・削除済みを混ぜても、実際に更新したものだけ", async () => {
@@ -111,7 +114,8 @@ describe("ShoppingService.finishShopping（tRPC の買い物の完了）", () =>
     expect(update.params).not.toContain("others")
     expect(update.params).not.toContain("group")
     expect(update.params).not.toContain("deleted")
-    expect(itemOpIds()).toEqual(["mine", "mine-purchased"])
+    expect(update.params).not.toContain("mine-purchased")
+    expect(itemOpIds()).toEqual(["mine"])
   })
 
   it("候補の読み込みと書き込みは、個人のリストなら作成者の groupId なしの商品に限る", async () => {
@@ -144,7 +148,7 @@ describe("ShoppingService.finishShopping（tRPC の買い物の完了）", () =>
     expect(itemOpIds()).toEqual(["g-milk"])
   })
 
-  it("チェック 0 件のリストも完了でき空の購入履歴になる", async () => {
+  it("tRPC にチェック 0 件の完了が届くと断る（何も書かない）", async () => {
     setup({
       entries: [
         { id: "li-milk", name: "牛乳", checked: false },
@@ -153,14 +157,11 @@ describe("ShoppingService.finishShopping（tRPC の買い物の完了）", () =>
       catalogItems: [catalog("milk")],
     })
 
-    const result = await service().finishShopping("list-1", "user-A")
-
-    expect(queriesOf("items", "update")).toHaveLength(0)
-    const [removal] = queriesOf("list_items", "update")
-    expect(removal.params).toEqual(expect.arrayContaining(["li-milk", "li-egg"]))
-    const [listUpdate] = queriesOf("shopping_lists", "update")
-    expect(listUpdate.set).toMatchObject({ status: "completed" })
-    expect(result.purchasedItemIds).toEqual([])
+    await expect(service().finishShopping("list-1", "user-A")).rejects.toThrow(
+      new ShoppingDomainError("カゴに入れた商品がありません")
+    )
+    expect(state.fake.queries.filter((q) => q.kind !== "select")).toHaveLength(0)
+    expect(state.syncOps).toHaveLength(0)
   })
 
   it("未チェックの商品をリストから外す（物理削除せず論理削除する）", async () => {
@@ -217,7 +218,7 @@ describe("ShoppingService.finishShopping（tRPC の買い物の完了）", () =>
   })
 
   it("リストは、操作したユーザーが使える、削除されていない行をロックして読む", async () => {
-    setup({ entries: [] })
+    setup({ entries: [{ id: "li", name: "牛乳", checked: true }] })
 
     await service().finishShopping("list-1", "user-A")
 

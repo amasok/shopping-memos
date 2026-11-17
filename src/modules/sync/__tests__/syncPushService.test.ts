@@ -453,13 +453,16 @@ describe("SyncPushService: 複合操作（#62 O4b）", () => {
     ])
   })
 
-  it("完了: チェック 0 件でも完了の計画を適用に渡す（今のサーバーの振る舞い）", async () => {
+  it("同期で届いたチェック 0 件の完了は conflict にする（179b）", async () => {
     const list = putList({ id: crypto.randomUUID() })
-    const milk = putListItem(list.id as string, "牛乳", false)
+    putListItem(list.id as string, "牛乳", false)
     expect(await push1(op({ entity: "list", type: "finishShopping", entityId: list.id as string, clientTime: T2 }))).toMatchObject({
-      status: "applied",
+      status: "conflict",
+      reason: "no_checked_items",
+      serverRow: { id: list.id },
     })
-    expect(state.scoped[0][2]).toMatchObject({ ok: true, purchaseNames: [], removeEntryIds: [milk.id] })
+    expect(list.status).toBe("in_progress")
+    expect(state.scoped).toEqual([])
   })
 
   it("取り消し: リストのアイテムの名前と進行中の状態の計画を、操作の時刻で適用に渡す", async () => {
@@ -503,6 +506,7 @@ describe("SyncPushService: 複合操作（#62 O4b）", () => {
       reason: "not_completed",
     })
     const reverted = putList({ id: crypto.randomUUID(), fieldModifiedAt: { status: T2 } })
+    putListItem(reverted.id as string, "牛乳", true)
     const late = await push1(op({ entity: "list", type: "finishShopping", entityId: reverted.id as string, clientTime: T1 }))
     expect(late).toMatchObject({ status: "conflict", reason: "stale", serverRow: { id: reverted.id } })
     expect(reverted.status).toBe("in_progress")

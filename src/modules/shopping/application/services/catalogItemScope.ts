@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, type SQL } from "drizzle-orm"
+import { and, eq, inArray, isNotNull, isNull, type SQL } from "drizzle-orm"
 import { items, itemTags, shoppingLists } from "@/infrastructure/db/drizzle/schema"
 import { scopeCondition, type DbExecutor } from "@/infrastructure/db/ownership"
 import type { OwnerScope } from "@/shared/domain/ownerScope"
@@ -71,7 +71,7 @@ export async function findScopedCandidatesByNames(
 }
 
 /**
- * 選んだカタログアイテムを購入済みにする（#179）。スコープの外・論理削除済みのアイテムは、ID を渡しても変えない
+ * 選んだ未購入のカタログアイテムを購入済みにする（#179・179b）。スコープの外・論理削除済み・購入済みのアイテムは、ID を渡しても変えない
  * @param opTime sync.push の複合操作の時刻（UTC・ミリ秒の ISO。#62 O4b）。渡すと、purchasedAt の時刻がそれより新しい
  *   アイテムは変えず（フィールド単位の LWW）、purchasedAt のキーをその時刻にする
  * @returns 実際に更新したカタログアイテムID
@@ -90,6 +90,7 @@ export async function markItemsPurchased(
     .where(
       and(
         inArray(items.id, [...ids]),
+        isNull(items.purchasedAt),
         catalogItemScopeCondition(scope),
         opTime ? fieldNotNewerThan(items, "purchasedAt", opTime) : undefined
       )
@@ -123,6 +124,29 @@ export async function markItemsUnpurchased(
     )
     .returning({ id: items.id })
   return rows.map((r) => r.id)
+}
+
+/**
+ * 選んだ未購入のカタログアイテムを論理削除する（タグの関連は消す。179b）。
+ * スコープの外・論理削除済み・購入済みのアイテムは、ID を渡しても変えない
+ * @returns 削除したカタログアイテムID
+ */
+export async function deleteUnpurchasedItems(
+  executor: DbExecutor,
+  scope: ListScope,
+  ids: readonly string[]
+): Promise<string[]> {
+  if (ids.length === 0) return []
+  const rows = await executor
+    .update(items)
+    .set(softDeleteValues())
+    .where(and(inArray(items.id, [...ids]), isNull(items.purchasedAt), catalogItemScopeCondition(scope)))
+    .returning({ id: items.id })
+  const deleted = rows.map((r) => r.id)
+  if (deleted.length > 0) {
+    await executor.delete(itemTags).where(inArray(itemTags.itemId, deleted))
+  }
+  return deleted
 }
 
 /**

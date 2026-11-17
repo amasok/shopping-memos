@@ -18,14 +18,14 @@ export type FinishShoppingPlan =
       /** リストから外す商品（未チェック）の ID */
       removeEntryIds: string[]
     }
-  | { ok: false; reason: "not_in_progress" }
+  | { ok: false; reason: "not_in_progress" | "no_checked_items" }
 
 /**
- * 買い物の完了の計画（#179。specs/shopping「買い物の完了」）
+ * 買い物の完了の計画（#179・179b。specs/shopping「チェック済みの商品がある買い物の完了」「チェック 0 件の完了」）
  *
  * - 進行中のリストだけ完了できる（in_progress → completed の一方通行。canTransition）
+ * - チェック済みの商品が 0 件なら完了しない（no_checked_items。画面は確認ダイアログでリストの削除を選ばせる）
  * - チェック済みの商品の名前のカタログの商品を購入済みにし、未チェックの商品をリストから外す
- * - チェック 0 件でも完了できる（空の購入履歴になる。今のサーバーの振る舞い。変えるのは 179b）
  */
 export function planFinishShopping(input: {
   status: string
@@ -36,6 +36,10 @@ export function planFinishShopping(input: {
   if (!canTransition(input.status as ListStatus, ListStatus.COMPLETED)) {
     return { ok: false, reason: "not_in_progress" }
   }
+  const purchaseNames = uniqueNames(input.entries.filter((e) => e.checked))
+  if (purchaseNames.length === 0) {
+    return { ok: false, reason: "no_checked_items" }
+  }
   return {
     ok: true,
     listState: {
@@ -44,7 +48,7 @@ export function planFinishShopping(input: {
       purchasedAt: input.at,
       location: input.location ?? null,
     },
-    purchaseNames: uniqueNames(input.entries.filter((e) => e.checked)),
+    purchaseNames,
     removeEntryIds: input.entries.filter((e) => !e.checked).map((e) => e.id),
   }
 }

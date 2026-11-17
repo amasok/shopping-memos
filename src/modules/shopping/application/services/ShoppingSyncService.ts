@@ -1,6 +1,7 @@
 import { db } from "@/infrastructure/db/drizzle/client"
 import type { DbExecutor } from "@/infrastructure/db/ownership"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
+import { deleteCatalogItemsWithList } from "./shoppingCompletion"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
 import type {
   ShoppingList,
@@ -59,10 +60,34 @@ export class ShoppingSyncService {
     return list
   }
 
-  async deleteList(id: string, userId: string): Promise<void> {
-    await this.shoppingListRepository.delete(id, userId)
+  /**
+   * リストを削除する（リストの商品もまとめて論理削除される）
+   * @param options.deleteCatalogItems true なら、同じトランザクションで、リストの商品と同じ名前・同じスコープの
+   *   未購入のカタログの商品も論理削除する（179b）。同期の記録はコミットの後に書く
+   */
+  async deleteList(id: string, userId: string, options: { deleteCatalogItems?: boolean } = {}): Promise<void> {
+    let deletedCatalogItemIds: string[] = []
+    if (options.deleteCatalogItems) {
+      deletedCatalogItemIds = await db.transaction(async (tx) => {
+        const ids = await deleteCatalogItemsWithList(tx, id, userId)
+        await this.shoppingListRepository.delete(id, userId, tx)
+        return ids
+      })
+    } else {
+      await this.shoppingListRepository.delete(id, userId)
+    }
 
-    // 同期ログを記録
+    // 同期ログを記録（コミットの後）
+    for (const itemId of deletedCatalogItemIds) {
+      await syncRepository.createOperation({
+        id: crypto.randomUUID(),
+        userId,
+        entity: "item",
+        entityId: itemId,
+        operation: "delete",
+        payload: { id: itemId },
+      })
+    }
     await syncRepository.createOperation({
       id: crypto.randomUUID(),
       userId,

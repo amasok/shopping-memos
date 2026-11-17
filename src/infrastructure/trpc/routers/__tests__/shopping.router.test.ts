@@ -200,9 +200,20 @@ describe("shopping.updateList / deleteList", () => {
     expect(sync.deleteList).not.toHaveBeenCalled()
   })
 
-  it("deleteList: 削除して success", async () => {
+  it("deleteList: 指定しないとリストだけを消す（商品も消す指定は false で渡す）", async () => {
     expect(await caller().deleteList({ id: ID })).toEqual({ success: true })
-    expect(sync.deleteList).toHaveBeenCalledWith(ID, "user-1")
+    expect(sync.deleteList).toHaveBeenCalledWith(ID, "user-1", { deleteCatalogItems: false })
+  })
+
+  it("deleteList: 商品も消す指定をサービスに渡す（179b）", async () => {
+    expect(await caller().deleteList({ id: ID, deleteCatalogItems: true })).toEqual({ success: true })
+    expect(sync.deleteList).toHaveBeenCalledWith(ID, "user-1", { deleteCatalogItems: true })
+  })
+
+  it("deleteList: 使えないリストは商品ごと消せない（FORBIDDEN）", async () => {
+    sync.canAccessList.mockResolvedValue(false)
+    await expect(caller().deleteList({ id: ID, deleteCatalogItems: true })).rejects.toMatchObject({ code: "FORBIDDEN" })
+    expect(sync.deleteList).not.toHaveBeenCalled()
   })
 })
 

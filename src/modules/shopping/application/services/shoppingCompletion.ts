@@ -5,8 +5,14 @@ import { notDeleted, softDeleteValues, touchFields } from "@/infrastructure/db/s
 import type { FinishEntry, FinishShoppingPlan } from "../../domain/services/finishShopping"
 import type { RevertHistoryPlan } from "../../domain/services/revertHistory"
 import { LIST_STATE_FIELDS, type ListStateValues } from "../../domain/services/listState"
-import { selectItemsToPurchase, selectItemsToUnpurchase } from "../../domain/services/catalogMatch"
 import {
+  selectItemsToDeleteWithList,
+  selectItemsToPurchase,
+  selectItemsToUnpurchase,
+} from "../../domain/services/catalogMatch"
+import { uniqueNames } from "../../domain/services/listState"
+import {
+  deleteUnpurchasedItems,
   findScopedCandidatesByNames,
   markItemsPurchased,
   markItemsUnpurchased,
@@ -144,4 +150,23 @@ export async function applyRevertPlan(
   const revertedItemIds = await markItemsUnpurchased(tx, scope, ids, options.opTime)
   const listRow = await writeListState(tx, list.id, plan.listState, options)
   return { revertedItemIds, listRow }
+}
+
+/**
+ * リストと一緒に消すカタログの商品を消す（179b「リストと同じ名前の未購入の商品も消すリストの削除」）
+ * リストの行をロックしてからリストの商品を読み、同じ名前・同じスコープの未購入の商品を論理削除する。
+ * リストの削除と同じトランザクションの中で呼ぶ
+ * @returns 削除したカタログの商品の ID（使えないリスト・削除済みのリストなら何もせず空）
+ */
+export async function deleteCatalogItemsWithList(
+  tx: DbExecutor,
+  listId: string,
+  actorUserId: string
+): Promise<string[]> {
+  const list = await lockAccessibleList(tx, listId, actorUserId)
+  if (!list) return []
+  const names = uniqueNames(await readListEntries(tx, listId))
+  const scope = scopeOf(list)
+  const candidates = await findScopedCandidatesByNames(tx, scope, names)
+  return deleteUnpurchasedItems(tx, scope, selectItemsToDeleteWithList(names, candidates, scope))
 }

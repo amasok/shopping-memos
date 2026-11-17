@@ -25,16 +25,33 @@ function matchByNameInScope(
   )
 }
 
+const isPurchased = (c: CatalogCandidate) => c.purchasedAt !== null && c.purchasedAt !== undefined
+
 /**
- * 買い物の完了で購入済みにするカタログの商品の ID
- * 購入状態は見ない（同じ名前の購入済みの商品も購入日時を更新する。今のサーバーの振る舞い。変えるのは 179b）
+ * 買い物の完了で購入済みにするカタログの商品の ID（未購入のものだけ。前の購入の記録を書き換えない。179b）
  */
 export function selectItemsToPurchase(
   names: readonly string[],
   candidates: readonly CatalogCandidate[],
   listScope: OwnerScope
 ): string[] {
-  return matchByNameInScope(names, candidates, listScope).map((c) => c.id)
+  return matchByNameInScope(names, candidates, listScope)
+    .filter((c) => !isPurchased(c))
+    .map((c) => c.id)
+}
+
+/**
+ * リストの削除で、リストと一緒に消すカタログの商品の ID（未購入のものだけ。179b
+ * 「リストと同じ名前の未購入の商品も消すリストの削除」）。同じ名前の購入済みの商品（ほかの履歴で買ったもの）は残す
+ */
+export function selectItemsToDeleteWithList(
+  names: readonly string[],
+  candidates: readonly CatalogCandidate[],
+  listScope: OwnerScope
+): string[] {
+  return matchByNameInScope(names, candidates, listScope)
+    .filter((c) => !isPurchased(c))
+    .map((c) => c.id)
 }
 
 /** 履歴の取り消しで未購入に戻すカタログの商品の ID（購入済みのものだけ） */
@@ -44,6 +61,6 @@ export function selectItemsToUnpurchase(
   listScope: OwnerScope
 ): string[] {
   return matchByNameInScope(names, candidates, listScope)
-    .filter((c) => c.purchasedAt !== null && c.purchasedAt !== undefined)
+    .filter(isPurchased)
     .map((c) => c.id)
 }

@@ -335,7 +335,7 @@ output: {
     - `finishShopping`: チェック済みのリストのアイテムと同名の、リストと同じスコープのカタログのアイテムを購入済みにし（`purchasedAt` も操作の時刻）、未チェックの行を論理削除し、リストを完了にする（`status` / `completedAt` / `purchasedAt` / `location` の時刻は操作の時刻）
     - `revertHistory`: リストのアイテムと同名の、購入済みのカタログのアイテムを未購入に戻し、リストを進行中に戻す
     - カタログのアイテムは、`purchasedAt` の時刻が操作の時刻より新しいものを変えない（フィールド単位の LWW。オフラインで完了した後に、別の端末で「未購入」に戻したものを、遅れて届いた完了で上書きしない）
-    - リストの状態のフィールドが操作の時刻より新しく書き換えられていれば、何もせず `conflict`（`stale`）。完了済みのリストの完了は `conflict`（`already_completed`）、完了していないリストの取り消しは `conflict`（`not_completed`）。どれも `serverRow` に最新のリストを返す。リスト以外・不正なパッチは `rejected`（`invalid_patch`）、使えないリストは `rejected`（`not_found`）、削除済みのリストは `conflict`（`deleted`）
+    - リストの状態のフィールドが操作の時刻より新しく書き換えられていれば、何もせず `conflict`（`stale`）。完了済みのリストの完了は `conflict`（`already_completed`）、チェック済みのアイテムがないリストの完了は `conflict`（`no_checked_items`。#179 の 179b）、完了していないリストの取り消しは `conflict`（`not_completed`）。どれも `serverRow` に最新のリストを返す。リスト以外・不正なパッチは `rejected`（`invalid_patch`）、使えないリストは `rejected`（`not_found`）、削除済みのリストは `conflict`（`deleted`）
 
 **`sync.pull`（作り直し）**
 

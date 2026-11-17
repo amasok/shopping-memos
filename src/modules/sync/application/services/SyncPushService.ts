@@ -296,8 +296,9 @@ export class SyncPushService {
   /**
    * 買い物の完了（#62 O4b・#179）。tRPC の finishShopping（ShoppingService）と同じ規則（domain の planFinishShopping）と
    * 手順（shoppingCompletion の applyFinishPlan）を、1 トランザクションで操作の時刻で適用する
-   * - 進行中でなければ conflict（already_completed）。リストの状態が操作の時刻より新しければ conflict（stale）
-   * - チェック済みのアイテムと同名の、リストと同じスコープのカタログのアイテムを購入済みにする（purchasedAt が新しいものは変えない）
+   * - 進行中でなければ conflict（already_completed）。チェック済みのアイテムがなければ conflict（no_checked_items。179b）。
+   *   リストの状態が操作の時刻より新しければ conflict（stale）
+   * - チェック済みのアイテムと同名の、リストと同じスコープの未購入のカタログのアイテムを購入済みにする（purchasedAt が新しいものは変えない）
    * - 未チェックのリストのアイテムは論理削除する（カタログのアイテムに戻る）
    * - リストを完了にする（status / completedAt / purchasedAt / location の時刻は操作の時刻）
    */
@@ -310,7 +311,8 @@ export class SyncPushService {
     const entries = await readListEntries(tx, row.id)
     const plan = planFinishShopping({ status: String(row.status), entries, at: new Date(opTime), location: patch.location })
     if (!plan.ok) {
-      return { status: "conflict", reason: "already_completed", serverRow: await toServerRow(tx, "list", row.id) }
+      const reason = plan.reason === "no_checked_items" ? "no_checked_items" : "already_completed"
+      return { status: "conflict", reason, serverRow: await toServerRow(tx, "list", row.id) }
     }
     const stale = await this.staleListState(tx, row, opTime)
     if (stale) return stale

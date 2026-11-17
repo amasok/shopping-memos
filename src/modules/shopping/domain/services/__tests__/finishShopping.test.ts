@@ -40,17 +40,36 @@ describe("planFinishShopping", () => {
     expect(plan).toMatchObject({ ok: true, removeEntryIds: [] })
   })
 
-  it("チェック 0 件でも完了の計画になり、商品はすべて外す（今のサーバーの振る舞い）", () => {
+  it("チェック 0 件なら no_checked_items（179b「チェック 0 件の完了」）", () => {
     const plan = planFinishShopping({
       status: ListStatus.IN_PROGRESS,
       entries: [entry("a", "牛乳", false), entry("b", "卵", false)],
       at: AT,
     })
-    expect(plan).toMatchObject({ ok: true, purchaseNames: [], removeEntryIds: ["a", "b"] })
+    expect(plan).toEqual({ ok: false, reason: "no_checked_items" })
+  })
+
+  it("商品が 0 件のリストも no_checked_items", () => {
+    expect(planFinishShopping({ status: ListStatus.IN_PROGRESS, entries: [], at: AT })).toEqual({
+      ok: false,
+      reason: "no_checked_items",
+    })
+  })
+
+  it("完了済みでチェック 0 件なら not_in_progress を先に返す", () => {
+    expect(planFinishShopping({ status: ListStatus.COMPLETED, entries: [], at: AT })).toEqual({
+      ok: false,
+      reason: "not_in_progress",
+    })
   })
 
   it("リストの状態は完了になり、完了日時と購入日時に時刻、場所に指定した値が入る", () => {
-    const plan = planFinishShopping({ status: ListStatus.IN_PROGRESS, entries: [], at: AT, location: "スーパー" })
+    const plan = planFinishShopping({
+      status: ListStatus.IN_PROGRESS,
+      entries: [entry("a", "牛乳", true)],
+      at: AT,
+      location: "スーパー",
+    })
     expect(plan).toMatchObject({
       ok: true,
       listState: { status: ListStatus.COMPLETED, completedAt: AT, purchasedAt: AT, location: "スーパー" },
@@ -58,7 +77,7 @@ describe("planFinishShopping", () => {
   })
 
   it("場所を指定しなければ null", () => {
-    const plan = planFinishShopping({ status: ListStatus.IN_PROGRESS, entries: [], at: AT })
+    const plan = planFinishShopping({ status: ListStatus.IN_PROGRESS, entries: [entry("a", "牛乳", true)], at: AT })
     expect(plan).toMatchObject({ ok: true, listState: { location: null } })
   })
 })
