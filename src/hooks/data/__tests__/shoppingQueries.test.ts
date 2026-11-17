@@ -33,12 +33,12 @@ describe("queryLists / queryListItems / queryHistory", () => {
     await list("personal-done", { status: "completed", purchasedAt: at(50) })
     await list("group-open", { groupId: GROUP })
 
-    expect((await queryLists(db, { groupId: undefined, order: "server" })).map((l) => l.id)).toEqual(["personal-open"])
-    expect((await queryLists(db, { groupId: undefined, includeCompleted: true, order: "server" })).map((l) => l.id)).toEqual([
+    expect((await queryLists(db, { groupId: undefined })).map((l) => l.id)).toEqual(["personal-open"])
+    expect((await queryLists(db, { groupId: undefined, includeCompleted: true })).map((l) => l.id)).toEqual([
       "personal-open",
       "personal-done",
     ])
-    expect((await queryLists(db, { groupId: undefined, includeAllGroups: true, order: "server" })).map((l) => l.id)).toEqual([
+    expect((await queryLists(db, { groupId: undefined, includeAllGroups: true })).map((l) => l.id)).toEqual([
       "personal-open",
       "group-open",
     ])
@@ -52,10 +52,35 @@ describe("queryLists / queryListItems / queryHistory", () => {
     await entry("y", "b", 2)
     await entry("x", "b", 3)
 
-    expect((await queryLists(db, { groupId: undefined, order: "server" })).map((l) => l.id)).toEqual(["b", "a"])
-    expect((await queryListItems(db, ["b"], "server")).map((e) => e.id)).toEqual(["z", "y", "x"])
-    // ゲストは今のまま並べ替えない（ID の順）
-    expect((await queryListItems(db, ["b"], "guest")).map((e) => e.id)).toEqual(["x", "y", "z"])
+    expect((await queryLists(db, { groupId: undefined })).map((l) => l.id)).toEqual(["b", "a"])
+    expect((await queryListItems(db, ["b"])).map((e) => e.id)).toEqual(["z", "y", "x"])
+  })
+
+  it("ゲストのリストとリストの商品もサーバーと同じ作成日時の古い順", async () => {
+    // ゲストもローカルファーストも同じ関数で読む（モードで並びを分けない）。ID の順と作成日時の順を逆にする
+    await db.lists.add({ id: "b", name: "b", status: "in_progress", createdAt: at(1) })
+    await db.lists.add({ id: "a", name: "a", status: "in_progress", createdAt: at(2) })
+    await entry("z", "b", 1)
+    await entry("y", "b", 2)
+    await entry("x", "b", 3)
+
+    expect((await queryLists(db, { groupId: undefined })).map((l) => l.id)).toEqual(["b", "a"])
+    expect((await queryListItems(db, ["b"])).map((e) => e.id)).toEqual(["z", "y", "x"])
+  })
+
+  it("日時が ISO 文字列で入っている行（古い端末のデータや E2E の seed）でも作成日時の古い順に並べる", async () => {
+    // Dexie の型は Date だが、文字列のまま入っている行もある。Date と文字列が混ざっていても落ちない
+    await db.lists.add({ id: "b", name: "b", status: "in_progress", createdAt: at(1).toISOString() as never })
+    await db.lists.add({ id: "a", name: "a", status: "in_progress", createdAt: at(2) })
+    await db.listItems.add({ id: "z", listId: "b", name: "z", quantity: 1, tagIds: [], checked: false, createdAt: at(1).toISOString() as never })
+    await db.listItems.add({ id: "y", listId: "b", name: "y", quantity: 1, tagIds: [], checked: false, createdAt: at(2) })
+    await db.listItems.add({ id: "x", listId: "b", name: "x", quantity: 1, tagIds: [], checked: false, createdAt: at(3).toISOString() as never })
+    await list("old", { status: "completed", purchasedAt: at(10).toISOString() as never })
+    await list("new", { status: "completed", purchasedAt: at(20) })
+
+    expect((await queryLists(db, { groupId: undefined })).map((l) => l.id)).toEqual(["b", "a"])
+    expect((await queryListItems(db, ["b"])).map((e) => e.id)).toEqual(["z", "y", "x"])
+    expect((await queryHistory(db, { groupId: undefined })).map((h) => h.id)).toEqual(["new", "old"])
   })
 
   it("履歴は購入日時の新しい順にリストの商品つきで出す", async () => {
@@ -65,12 +90,12 @@ describe("queryLists / queryListItems / queryHistory", () => {
     await entry("e1", "old", 1)
     await entry("e2", "new", 2)
 
-    const history = await queryHistory(db, { groupId: undefined, order: "server" })
+    const history = await queryHistory(db, { groupId: undefined })
 
     expect(history.map((h) => [h.id, h.listItems.map((e) => e.id)])).toEqual([
       ["new", ["e2"]],
       ["old", ["e1"]],
     ])
-    expect((await queryHistory(db, { groupId: undefined, limit: 1, offset: 1, order: "server" })).map((h) => h.id)).toEqual(["old"])
+    expect((await queryHistory(db, { groupId: undefined, limit: 1, offset: 1 })).map((h) => h.id)).toEqual(["old"])
   })
 })

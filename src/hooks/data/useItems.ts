@@ -42,11 +42,10 @@ export function useItems(options: UseItemsOptions = {}) {
         tagIds,
         includePurchased,
         purchasedOnly,
-        order: mode === "local" ? "server" : "guest",
       })
     },
     // tagIds は内容（tagKey）で比べる（配列は描画ごとに別のものになるため）
-    [store, mode, effectiveGroupId, tagKey, includePurchased, purchasedOnly]
+    [store, effectiveGroupId, tagKey, includePurchased, purchasedOnly]
   )
 
   // サーバー（tRPC）クエリ

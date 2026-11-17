@@ -2,7 +2,7 @@
 
 Issue: #62（https://github.com/amasok/shopping-memos/issues/62）の O8 から分けたもの
 
-**状態: 保留（ユーザーの確認待ち）**。ユーザーの不在中に、判断が要る部分を `62-o8-shopping-local-first` から分けた（リーダーの指示、2026-11-17）。答えが出るまで実装しない。`62-o8-shopping-local-first` が archive されてから実装する（この change の specs は、それが作る `openspec/specs/shopping` の Requirement を変える）。`62-o7b-catalog-guest-alignment`（商品・タグの並び）と同じ判断なので、まとめて答えてもらうとよい。
+**状態: 承認済み（2026-11-18、ユーザーが提案どおりで承認）**。ユーザーの不在中に、判断が要る部分を `62-o8-shopping-local-first` から分けた（リーダーの指示、2026-11-17）。この change の specs は、`62-o8-shopping-local-first`（archive 済み）が作った `openspec/specs/shopping` の Requirement を変える。`62-o7b-catalog-guest-alignment`（商品・タグの並び）と同じ判断なので、まとめて答えてもらうとよい。
 
 ## Why
 
@@ -39,6 +39,8 @@ O8 で、ゲストとローカルファーストの買い物の読み取りを�
 - 変更: `src/hooks/data/shoppingQueries.ts`（`order` の分岐をなくす）。並びに頼る E2E があれば直す
 
 ## ユーザーに確認すること
+
+承認済み（2026-11-18、ユーザーが提案どおりで承認）。
 
 1. **ゲストのリストとリストの商品の並び**: 今は、ログイン中は作成日時の古い順、ゲストは並べ替えなし（作った順と関係のない ID の順）。ログイン中に合わせてよいか
    - 提案: 合わせる（ゲストは作った順に並ぶようになる。今のゲストの並びは作った順になっていないので、使い勝手は良くなるはず）

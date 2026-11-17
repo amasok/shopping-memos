@@ -32,9 +32,9 @@ export function useTags(options: UseTagsOptions = {}) {
   const localTags = useLiveQuery(
     async () => {
       if (!store) return undefined
-      return queryTags(store.db, { groupId: effectiveGroupId, order: mode === "local" ? "server" : "guest" })
+      return queryTags(store.db, { groupId: effectiveGroupId })
     },
-    [store, mode, effectiveGroupId]
+    [store, effectiveGroupId]
   )
 
   // サーバー（tRPC）クエリ

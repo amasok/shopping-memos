@@ -4,12 +4,10 @@ import { excludeItemsInActiveLists } from "@/modules/shopping/domain/services/ac
 /**
  * 端末の DB（ゲスト DB・ユーザー DB）からカタログの一覧を読む（#62 O7。openspec の catalog「商品の一覧の絞り込み」「タグの一覧」）
  *
- * 並びは order で分ける（design.md D3）
- * - server: ローカルファースト。サーバーと同じく商品は作成日時の古い順、タグは名前の文字コードの順
- * - guest: ゲスト。今のまま（商品は新しい順、タグは並べ替えない）。そろえるかは 62-o7b でユーザーに確認する
+ * 並びは、ゲストもローカルファーストもサーバーと同じにする（62-o7b）
+ * - 商品: 作成日時の古い順
+ * - タグ: 名前の文字コードの順（サーバーと同じになるのは、DB の照合順序が C のとき）
  */
-
-export type CatalogOrder = "server" | "guest"
 
 export interface ItemQueryOptions {
   /** 選んでいるグループ（個人なら undefined） */
@@ -17,7 +15,6 @@ export interface ItemQueryOptions {
   tagIds?: string[]
   includePurchased?: boolean
   purchasedOnly?: boolean
-  order: CatalogOrder
 }
 
 /** 同じグループの、進行中のリストに残っている商品の名前 */
@@ -31,9 +28,9 @@ async function namesInActiveLists(db: ShoppingMemosDB, groupId: string | undefin
 }
 
 export async function queryItems(db: ShoppingMemosDB, options: ItemQueryOptions): Promise<ShoppingItem[]> {
-  const { groupId, tagIds, includePurchased, purchasedOnly, order } = options
-  const ordered = order === "server" ? db.items.orderBy("createdAt") : db.items.orderBy("createdAt").reverse()
-  const items = await ordered
+  const { groupId, tagIds, includePurchased, purchasedOnly } = options
+  const items = await db.items
+    .orderBy("createdAt")
     .filter((item) => {
       if (item.groupId !== groupId) return false
       if (purchasedOnly && !item.purchasedAt) return false
@@ -48,10 +45,7 @@ export async function queryItems(db: ShoppingMemosDB, options: ItemQueryOptions)
 /** 名前の文字コード（UTF-16）の順。照合順序が C の DB の ORDER BY と同じ */
 const byCodeUnit = (a: Tag, b: Tag) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
 
-export async function queryTags(
-  db: ShoppingMemosDB,
-  options: { groupId: string | undefined; order: CatalogOrder }
-): Promise<Tag[]> {
+export async function queryTags(db: ShoppingMemosDB, options: { groupId: string | undefined }): Promise<Tag[]> {
   const tags = await db.tags.filter((tag) => tag.groupId === options.groupId).toArray()
-  return options.order === "server" ? tags.sort(byCodeUnit) : tags
+  return tags.sort(byCodeUnit)
 }

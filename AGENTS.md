@@ -91,7 +91,7 @@ CI（`.github/workflows/ci.yml`）は、PR と main への push で lint・typec
 src/
 ├── app/                    # Next.js App Router（ページはクライアントコンポーネント中心）
 │   ├── page.tsx            # ホーム（アイテム一覧）
-│   ├── items/new, lists/, lists/new, lists/[id], history/, tags/,
+│   ├── lists/, lists/new, lists/[id], history/, tags/,
 │   │   groups/, groups/[id], settings/, login/, privacy/, terms/
 │   ├── manifest.ts         # Web App Manifest
 │   ├── providers.tsx       # Theme → TRPC → Auth → DataMerge → Group → DB の Provider 構成
