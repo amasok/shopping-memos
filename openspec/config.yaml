@@ -1,0 +1,38 @@
+schema: spec-driven
+
+# OpenSpec の成果物（proposal / specs / design / tasks）を書くときの前提。
+# コードを読めば分かることは書かない。全体像は docs/design-doc.md、運用は .claude/rules/ を正とする。
+context: |
+  - 成果物は日本語で書く。識別子・コマンド・パスは原文のまま
+  - アプリ: 家族と共有できるお買い物メモ帳の PWA。Next.js App Router / tRPC v11 / Drizzle（PostgreSQL・本番は Neon）/ Dexie（IndexedDB）/ Serwist / Vercel
+  - データの持ち方は 3 通り: ゲスト（端末の Dexie だけ）、ログイン中のサーバーファースト（tRPC）、ローカルファースト（NEXT_PUBLIC_LOCAL_FIRST。Dexie に書いて sync.push / sync.pull で同期。#62）。振る舞いを変える change は、どのモードに当たるかを書き、ゲストとログイン中で結果が同じになるようにする
+  - 境界づけられたコンテキスト: catalog（商品・タグ）/ shopping（買い物リスト・履歴）/ identity（グループ・招待）/ sync。各コンテキストは domain / application / infrastructure の層。domain は他の層に依存しない方向へ寄せている（docs/design-doc.md の「目指す構造」）
+  - タスク管理の正は GitHub Issues。change は Issue に着手するときに作り、名前に Issue 番号を入れる（例: 62-o7-catalog-local-first）
+  - テスト: Vitest（src/**/__tests__/）、実 DB は npm run test:db（*.db.test.ts）、E2E は Playwright（e2e/、push 前に npm run test:e2e:local）。カバレッジ 80% 以上
+  - DB の migration は expand（足すだけ）を先に出し、contract（削除・名前の変更・型の変更）は別のリリースに分ける
+  - main（本番）へのリリースはユーザーの確認が要る。push・PR・マージはリーダーが行う
+
+rules:
+  proposal:
+    - "冒頭に、対応する GitHub Issue へのリンク（例: Issue: #62）を書く"
+    - 対象外（Non-goals）と、ゲスト・サーバーファースト・ローカルファーストのどれに影響するかを書く
+    - ユーザーが決めたこと（UI の選択肢・文言など）は、決めた日付とともに書く
+  specs:
+    - Scenario は「#### Scenario:」の下に - **WHEN** / - **THEN**（必要なら - **AND**）で書く
+    - 各 Scenario に対応するテストを 1 つ以上用意する。Scenario 名は、テスト名にそのまま使える具体的な振る舞いにする
+    - 今の振る舞いを変えない部分は書かない。既存の機能の spec がまだないときは、change の中で、触れる機能の今の振る舞いも書き起こす（archive で specs/ に入る）
+  design:
+    - どのコンテキストのどの層に置くか、コンテキストをまたぐ依存の向きを書く
+    - DB の変更があれば expand / contract のどちらか、migration の順番、リリース手順への影響を書く
+  tasks:
+    - 1 つの change の実装手順のチェックリストとしてだけ使う（タスク管理は Issues）
+    - テストを先に書く順に並べ（RED → GREEN → REFACTOR）、各 Scenario のテストをどのタスクで書くか分かるようにする
+    - 最後に lint・test:run・build・test:e2e:local の確認と、archive のタスクを置く
+
+operations:
+  apply:
+    guidance:
+      - tasks.md の順に進め、Scenario ごとのテストが通ったらチェックを付ける
+  archive:
+    guidance:
+      - archive はマージの前に同じ PR で行う（openspec archive <change> -y）。specs/ への取り込み結果を PR の差分で確かめる

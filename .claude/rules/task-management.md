@@ -4,6 +4,8 @@
 
 **タスク管理は GitHub Issues で行う。** Claude Code の TaskCreate/TaskUpdate ツールは使用しない。
 
+Issue は「何を・なぜ・優先度・依存・バグ報告・リリースの追跡」を持つ。振る舞いの仕様・設計・実装手順は、Issue に着手するときに作る OpenSpec の change に書く（`feature-design.md`）。change 名の先頭には Issue 番号を付ける（例: `62-o7-catalog-local-first`）。
+
 ## GitHub Issues の使い方
 
 ### Issue作成
@@ -102,15 +104,19 @@ Issue本文の先頭に依存関係セクションを追加:
 3. ブランチ作成
    git checkout -b feature/issue-<番号>-<説明>
 
-4. 実装 & コミット
+4. 振る舞いが変わるなら OpenSpec の change を作り、ユーザーの承認を得る（feature-design.md）
+   openspec new change <番号>-<説明>
 
-5. PR作成（Issueを紐付け）
+5. 実装 & コミット（change があれば tasks.md の順に）
+
+6. PR作成（Issueを紐付け。change があれば、マージ前に同じ PR で archive する）
    gh pr create --title "feat: ..." --body "Closes #<番号>"
+   # change があれば本文に change のパス（archive 後は openspec/changes/archive/YYYY-MM-DD-<番号>-<説明>/）も書く
 
-6. マージ
+7. マージ
    gh pr merge <PR番号> --squash --delete-branch
 
-7. Issueを手動で閉じる（自動クローズされなかった場合）
+8. Issueを手動で閉じる（自動クローズされなかった場合）
    gh issue close <番号> --comment "PR #<PR番号> でマージ済み"
 ```
 
@@ -118,3 +124,4 @@ Issue本文の先頭に依存関係セクションを追加:
 
 - Claude Code の TaskCreate/TaskUpdate/TaskList ツールは使わない
 - タスクをマークダウンファイルで管理しない（ドキュメントとしての参照用は可）
+- OpenSpec の `tasks.md` は例外で、1 つの change の実装手順のチェックリストとしてだけ使う。Issue をまたぐ作業・優先度・担当・残りの作業の一覧を tasks.md に書かない（それは Issue に書く）
