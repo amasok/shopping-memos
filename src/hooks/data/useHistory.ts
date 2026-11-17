@@ -33,9 +33,9 @@ export function useHistory(options: UseHistoryOptions = {}) {
   const localHistory = useLiveQuery(
     async () => {
       if (!store) return undefined
-      return queryHistory(store.db, { groupId: effectiveGroupId, limit, offset, order: mode === "local" ? "server" : "guest" })
+      return queryHistory(store.db, { groupId: effectiveGroupId, limit, offset })
     },
-    [store, mode, effectiveGroupId, limit, offset]
+    [store, effectiveGroupId, limit, offset]
   )
 
   // サーバー（tRPC）クエリ

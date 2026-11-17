@@ -21,19 +21,6 @@ export async function getTagsByGroupId(groupId: string | undefined): Promise<Tag
   return db.tags.where("groupId").equals(groupId).toArray()
 }
 
-export async function createTag(name: string, groupId?: string): Promise<Tag> {
-  const now = new Date()
-  const tag: Tag = {
-    id: generateId(),
-    name,
-    groupId,
-    createdAt: now,
-    updatedAt: now,
-  }
-  await db.tags.add(tag)
-  return tag
-}
-
 export async function updateTag(id: string, name: string): Promise<void> {
   await db.tags.update(id, {
     name,

@@ -22,7 +22,6 @@ export function useLists(options: UseListsOptions = {}) {
   const { groupId, status, includeCompleted = false, includeAllGroups = false } = options
   const { mode, store, awaitingFirstSync, isAuthLoading, selectedGroupId } = useCatalogSource()
   const useServer = mode === "server"
-  const order = mode === "local" ? "server" : "guest"
 
   // 実際に使用するgroupId
   // 明示的にgroupIdが渡された場合（undefinedでも）はそれを使用
@@ -33,9 +32,9 @@ export function useLists(options: UseListsOptions = {}) {
   const localLists = useLiveQuery(
     async () => {
       if (!store) return undefined
-      return queryLists(store.db, { groupId: effectiveGroupId, status, includeCompleted, includeAllGroups, order })
+      return queryLists(store.db, { groupId: effectiveGroupId, status, includeCompleted, includeAllGroups })
     },
-    [store, order, effectiveGroupId, status, includeCompleted, includeAllGroups]
+    [store, effectiveGroupId, status, includeCompleted, includeAllGroups]
   )
 
   // サーバー（tRPC）クエリ
@@ -83,7 +82,6 @@ export function useListsWithItems(options: UseListsWithItemsOptions = {}) {
   const { status, includeCompleted = false } = options
   const { mode, store, awaitingFirstSync, isAuthLoading, selectedGroupId } = useCatalogSource()
   const useServer = mode === "server"
-  const order = mode === "local" ? "server" : "guest"
 
   // 実際に使用するgroupId
   const effectiveGroupId = "groupId" in options ? options.groupId : selectedGroupId
@@ -92,18 +90,18 @@ export function useListsWithItems(options: UseListsWithItemsOptions = {}) {
   const localLists = useLiveQuery(
     async () => {
       if (!store) return undefined
-      return queryLists(store.db, { groupId: effectiveGroupId, status, includeCompleted, order })
+      return queryLists(store.db, { groupId: effectiveGroupId, status, includeCompleted })
     },
-    [store, order, effectiveGroupId, status, includeCompleted]
+    [store, effectiveGroupId, status, includeCompleted]
   )
 
   // ローカル（Dexie）クエリ - リストアイテム（該当グループのリストに紐づくもの）
   const localListItems = useLiveQuery(
     async () => {
       if (!store || !localLists) return undefined
-      return queryListItems(store.db, localLists.map((list) => list.id), order)
+      return queryListItems(store.db, localLists.map((list) => list.id))
     },
-    [store, order, localLists]
+    [store, localLists]
   )
 
   // サーバー（tRPC）クエリ
@@ -151,7 +149,6 @@ export function useList(options: UseListOptions) {
   const { listId } = options
   const { mode, store, awaitingFirstSync, isAuthLoading } = useCatalogSource()
   const useServer = mode === "server"
-  const order = mode === "local" ? "server" : "guest"
 
   // ローカル（Dexie）クエリ
   const localList = useLiveQuery(
@@ -165,9 +162,9 @@ export function useList(options: UseListOptions) {
   const localListItems = useLiveQuery(
     async () => {
       if (!store) return undefined
-      return queryListItems(store.db, [listId], order)
+      return queryListItems(store.db, [listId])
     },
-    [store, order, listId]
+    [store, listId]
   )
 
   // サーバー（tRPC）クエリ

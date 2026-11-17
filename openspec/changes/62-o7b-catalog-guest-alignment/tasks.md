@@ -4,16 +4,16 @@
 
 ## 1. 並び
 
-- [ ] 1.1 `catalogQueries.ts` のテストを先に直し（catalog「ゲストの商品の並びもサーバーと同じ作成日時の古い順」「ゲストのタグも名前の文字コードの順に出す」）、`order` の分岐をなくす
-- [ ] 1.2 並びに頼る E2E（`e2e/item-management.spec.ts`・`tag-management.spec.ts` など）を確かめ、期待値を直す
+- [x] 1.1 `catalogQueries.ts` のテストを先に直し（catalog「ゲストの商品の並びもサーバーと同じ作成日時の古い順」「ゲストのタグも名前の文字コードの順に出す」）、`order` の分岐をなくす
+- [x] 1.2 並びに頼る E2E（`e2e/item-management.spec.ts`・`tag-management.spec.ts` など）を確かめ、期待値を直す
 
 ## 2. `/items/new`
 
-- [ ] 2.1 `app/items/new/page.tsx` を消し、`src/lib/sw/config.ts` のプリキャッシュの一覧から外す。使われなくなった `lib/db` の関数を消す。プリキャッシュの設定のテストが通ることを確かめる
+- [x] 2.1 `app/items/new/page.tsx` を消し、`src/lib/sw/config.ts` のプリキャッシュの一覧から外す。使われなくなった `lib/db` の関数を消す。プリキャッシュの設定のテストが通ることを確かめる
 
 ## 3. 確認
 
-- [ ] 3.1 `npm run lint`・`npm run test:run`・`npm run test:coverage`（80% 以上）・`npm run build` が通る
+- [x] 3.1 `npm run lint`・`npm run test:run`・`npm run test:coverage`（80% 以上）・`npm run build` が通る
 - [ ] 3.2 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く
 
 ## Workflow follow-up

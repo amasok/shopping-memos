@@ -265,7 +265,7 @@ sequenceDiagram
 ### 7.7 クライアントに独自のモデルがあり、hooks を通らない書き込みがある
 
 - `src/lib/db/index.ts` の型がサーバーのエンティティと別に定義されている
-- `app/items/new/page.tsx:50, :65` が `lib/db` の `createItem` / `createTag` を直接呼ぶ（ログイン中でもサーバーに送らない）。`app/groups/page.tsx:49, :59, :97` が tRPC の成功後に Dexie へ手で書く
+- `app/items/new/page.tsx` が `lib/db` の `createItem` / `createTag` を直接呼んでいた（ログイン中でもサーバーに送らない）。#62 o7b でページごと消した。`app/groups/page.tsx:49, :59, :97` が tRPC の成功後に Dexie へ手で書く
 - ゲストの Mutation は Dexie に直接書き、`syncQueue` を通らない（ゲストはそれで正しいが、ローカルファーストでは `infrastructure/local/repository.ts` を通す必要がある）
 
 ### 7.8 ADR-002 / 003 と実装がずれている（「9. ADR との関係」）
