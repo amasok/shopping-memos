@@ -106,7 +106,7 @@ export default function GroupsPage() {
             </p>
             <Button className="w-full max-w-xs" onClick={handleLogin}>
               <LogIn className="mr-2 h-5 w-5" />
-              Googleでログイン
+              ログイン
             </Button>
             <p className="mt-4 text-sm text-gray-500">
               ログインするとグループ機能が使えます

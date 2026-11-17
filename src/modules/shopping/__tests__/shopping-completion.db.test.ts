@@ -13,7 +13,7 @@ if (TEST_DB_URL && !["localhost", "127.0.0.1"].includes(new URL(TEST_DB_URL).hos
   throw new Error("DB_TEST_URL は localhost / 127.0.0.1 の DB だけ指定できます")
 }
 
-vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/infrastructure/auth/server", () => ({ getAuth: vi.fn() }))
 
 const BEFORE = new Date("2025-12-01T00:00:00.000Z")
 

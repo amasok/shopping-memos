@@ -23,6 +23,8 @@ describe("useDataSource ロジック", () => {
       mockUseAuth.mockReturnValue({
         user: { id: "user-1", name: "テスト", email: "test@example.com" },
         isLoading: false,
+        status: "authenticated",
+        sessionKnown: true,
         login: vi.fn(),
         logout: vi.fn(),
       })
@@ -50,6 +52,8 @@ describe("useDataSource ロジック", () => {
       mockUseAuth.mockReturnValue({
         user: { id: "user-1", name: "テスト", email: "test@example.com" },
         isLoading: false,
+        status: "authenticated",
+        sessionKnown: true,
         login: vi.fn(),
         logout: vi.fn(),
       })
@@ -77,6 +81,8 @@ describe("useDataSource ロジック", () => {
       mockUseAuth.mockReturnValue({
         user: null,
         isLoading: false,
+        status: "unauthenticated",
+        sessionKnown: true,
         login: vi.fn(),
         logout: vi.fn(),
       })
@@ -102,6 +108,8 @@ describe("useDataSource ロジック", () => {
       mockUseAuth.mockReturnValue({
         user: null,
         isLoading: true,
+        status: "loading",
+        sessionKnown: true,
         login: vi.fn(),
         logout: vi.fn(),
       })

@@ -11,7 +11,7 @@ const areTagsInScope = vi.hoisted(() => vi.fn())
 const findById = vi.hoisted(() => vi.fn())
 const activeRows = vi.hoisted(() => ({ rows: [] as { name: string }[] }))
 
-vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/infrastructure/auth/server", () => ({ getAuth: vi.fn() }))
 vi.mock("@/modules/catalog/application/services/CatalogSyncService", () => ({
   CatalogSyncService: class {
     constructor() {

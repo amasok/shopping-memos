@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 
 /**
  * ゲストのデータとログイン・ログアウト（offline-support.md「ゲストのデータとログイン・ログアウト」）
@@ -7,13 +7,14 @@ import { render, screen, waitFor } from "@testing-library/react"
 const state = vi.hoisted(() => ({
   user: { id: "user-1" } as { id: string } | null,
   isLoading: false,
+  sessionKnown: true,
   tags: [] as unknown[],
   items: [] as unknown[],
   mutateAsync: vi.fn(),
 }))
 
 vi.mock("@/contexts/AuthContext", () => ({
-  useAuth: () => ({ user: state.user, isLoading: state.isLoading }),
+  useAuth: () => ({ user: state.user, isLoading: state.isLoading, sessionKnown: state.sessionKnown }),
 }))
 vi.mock("@/lib/db", () => ({
   db: {
@@ -30,6 +31,8 @@ const guestData = vi.hoisted(() => ({
   clearGuestData: vi.fn(async () => {}),
   applyMergeOutcome: vi.fn<(userId: string, outcome: unknown) => Promise<void>>(async () => {}),
   migrated: true,
+  watchCallback: null as null | (() => void),
+  watchGuestWrites: vi.fn(),
 }))
 vi.mock("@/lib/db/guestData", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/guestData")>()),
@@ -45,6 +48,8 @@ vi.mock("@/lib/db/guestData", async (importOriginal) => ({
     }
   },
   applyMergeOutcome: guestData.applyMergeOutcome,
+  // ゲストの DB への書き込みの見張りは guestData.test.ts で確かめる。ここでは呼ばれたかと、知らせたときの動きを見る
+  watchGuestWrites: guestData.watchGuestWrites,
   // 以前の仕組みからの移行は guestData.test.ts で確かめる
   ensureGuestDataMigrated: async () => guestData.migrated,
 }))
@@ -79,12 +84,20 @@ beforeEach(() => {
   localStorage.clear()
   state.user = { id: "user-1" }
   state.isLoading = false
+  state.sessionKnown = true
   state.tags = defaultTags()
   state.items = []
   state.mutateAsync.mockReset().mockResolvedValue(result(0))
   guestData.clearGuestData.mockClear()
   guestData.applyMergeOutcome.mockClear()
   guestData.migrated = true
+  guestData.watchCallback = null
+  guestData.watchGuestWrites.mockReset().mockImplementation((cb: () => void) => {
+    guestData.watchCallback = cb
+    return () => {
+      guestData.watchCallback = null
+    }
+  })
   reload = vi.fn()
   Object.defineProperty(window, "location", { configurable: true, value: { ...window.location, reload } })
   vi.spyOn(console, "log").mockImplementation(() => {})
@@ -174,6 +187,60 @@ describe("ゲストに戻ったとき（ログアウト・セッション切れ�
     expect(localStorage.getItem("data-merge-completed-user-2")).toBeNull()
     expect(localStorage.getItem("selectedGroupId")).toBeNull()
     expect(state.mutateAsync).not.toHaveBeenCalled()
+  })
+
+  it("通信のエラーでセッションがわからないときは、ゲストとして出しても印と選んでいたグループを消さない", async () => {
+    state.user = null
+    state.sessionKnown = false
+    localStorage.setItem(MERGE_KEY, "true")
+    localStorage.setItem("selectedGroupId", "group-1")
+    renderProvider()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(localStorage.getItem(MERGE_KEY)).toBe("true")
+    expect(localStorage.getItem("selectedGroupId")).toBe("group-1")
+  })
+
+  it("セッションがわからない間にゲストの DB へ書くと、merge 済みの印を消し、次にセッションが確かになったら merge する（#61 A3a）", async () => {
+    // オフラインで開いたログイン中のユーザー（ゲストとして表示）
+    state.user = null
+    state.sessionKnown = false
+    localStorage.setItem(MERGE_KEY, "true")
+    localStorage.setItem("selectedGroupId", "group-1")
+    const { rerender } = renderProvider()
+    await waitFor(() => expect(guestData.watchGuestWrites).toHaveBeenCalled())
+
+    // ゲストの DB に商品を作る
+    state.items = [guestItem()]
+    act(() => guestData.watchCallback?.())
+    expect(localStorage.getItem(MERGE_KEY)).toBeNull()
+    expect(localStorage.getItem("selectedGroupId")).toBe("group-1")
+
+    // オンラインに戻り、セッションが確かになると、その商品を merge する
+    state.user = { id: "user-1" }
+    state.sessionKnown = true
+    rerender(
+      <DataMergeProvider>
+        <Probe />
+      </DataMergeProvider>
+    )
+    await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled())
+    // 見張りはやめている
+    expect(guestData.watchCallback).toBeNull()
+  })
+
+  it("セッションが確かなゲスト・ログイン中・読み込み中は、ゲストの DB の書き込みを見張らない", async () => {
+    state.user = null
+    state.sessionKnown = true
+    const { unmount } = renderProvider()
+    unmount()
+    state.user = { id: "user-1" }
+    renderProvider().unmount()
+    state.user = null
+    state.isLoading = true
+    state.sessionKnown = false
+    renderProvider()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(guestData.watchGuestWrites).not.toHaveBeenCalled()
   })
 
   it("認証の読み込み中は、ゲストとみなさず印を消さない", async () => {

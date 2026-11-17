@@ -37,7 +37,7 @@ export function GroupProvider({ children }: { children: ReactNode }) {
   })
 
   // ログイン状態を取得
-  const { user, isLoading: isAuthLoading } = useAuth()
+  const { user, isLoading: isAuthLoading, sessionKnown } = useAuth()
 
   // グループ一覧を取得（ログイン中のみ）
   const groupsQuery = trpc.identity.getGroups.useQuery(undefined, {
@@ -70,7 +70,8 @@ export function GroupProvider({ children }: { children: ReactNode }) {
 
   // ゲスト（未ログイン）はグループを使わない。ログイン中に選んでいたグループが残っていると、
   // ゲストのデータがそのグループで絞り込まれて見えなくなるので、個人に戻す
-  const shouldResetForGuest = !user && !isAuthLoading && selectedGroupId !== undefined
+  // セッションがわからない（通信のエラー）間は消さない。ゲストとして出すため、絞り込みには使わない（下の effectiveGroupId）
+  const shouldResetForGuest = !user && !isAuthLoading && sessionKnown && selectedGroupId !== undefined
   if (shouldResetForGuest) {
     setSelectedGroupId(undefined)
   }
@@ -91,10 +92,12 @@ export function GroupProvider({ children }: { children: ReactNode }) {
   }, [selectedGroupId])
 
   // バリデーション中かどうか
+  // ゲストとして出している間（ログインしていない・わからない）は、グループで絞り込まない
+  const effectiveGroupId = !user && !isAuthLoading ? undefined : selectedGroupId
   const isValidating = !!user && !isAuthLoading && groupsQuery.isLoading && !!selectedGroupId
 
   return (
-    <GroupContext.Provider value={{ selectedGroupId, setSelectedGroupId, isValidating }}>
+    <GroupContext.Provider value={{ selectedGroupId: effectiveGroupId, setSelectedGroupId, isValidating }}>
       {children}
     </GroupContext.Provider>
   )

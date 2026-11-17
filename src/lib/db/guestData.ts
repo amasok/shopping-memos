@@ -53,13 +53,63 @@ export async function clearGuestData(): Promise<void> {
 
 /** ログイン中だけの状態（merge 済みの印・選んでいたグループ）を消す。ログアウトのとき・ゲストに戻ったときに呼ぶ */
 export function clearLoginScopedState(storage: Storage = localStorage): void {
+  clearMergeCompletedMarks(storage)
+  storage.removeItem(SELECTED_GROUP_KEY)
+}
+
+/** merge 済みの印（全ユーザー分）だけを消す。選んでいたグループは残す（#61 A3a） */
+export function clearMergeCompletedMarks(storage: Storage = localStorage): void {
   const keys: string[] = []
   for (let i = 0; i < storage.length; i++) {
     const key = storage.key(i)
     if (key?.startsWith(`${MERGE_COMPLETED_KEY}-`)) keys.push(key)
   }
   for (const key of keys) storage.removeItem(key)
-  storage.removeItem(SELECTED_GROUP_KEY)
+}
+
+/**
+ * ゲストのデータ（商品・タグ・リスト・リストの中身）への書き込み（追加・更新・削除）を見張り、最初の 1 回だけ onWrite を呼ぶ（#61 A3a）。
+ * 戻り値の関数で見張りをやめる。
+ *
+ * ログイン中のユーザーが、セッションを確かめられない（オフラインなど）ためにゲストとして表示されている間に書いたものを、
+ * 次にセッションが確かになったときの merge で送るために使う（DataMergeContext が merge 済みの印を消す）
+ */
+export function watchGuestWrites(onWrite: () => void): () => void {
+  let fired = false
+  const notify = () => {
+    if (fired) return
+    fired = true
+    // hook の中で同期に呼ばれるので、例外を投げると書き込みのトランザクションまで失敗する。ログに出すだけにする
+    try {
+      onWrite()
+    } catch (error) {
+      console.error("[guestData] ゲストの書き込みの知らせに失敗しました", error)
+    }
+  }
+  // Dexie の hook は、返り値で書き込みの中身を変えられる。何も返さず、知らせるだけにする
+  const creating = () => {
+    notify()
+  }
+  const updating = () => {
+    notify()
+    return undefined
+  }
+  const deleting = () => {
+    notify()
+  }
+  const tables = [db.tags, db.items, db.lists, db.listItems]
+  for (const table of tables) {
+    table.hook("creating", creating)
+    table.hook("updating", updating)
+    table.hook("deleting", deleting)
+  }
+  return () => {
+    for (const table of tables) {
+      table.hook("creating").unsubscribe(creating)
+      table.hook("updating").unsubscribe(updating)
+      table.hook("deleting").unsubscribe(deleting)
+    }
+  }
 }
 
 /**

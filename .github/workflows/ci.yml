@@ -84,6 +84,8 @@ jobs:
         env:
           # ビルド時にDB接続は不要（スキーマのみ使用）
           DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
+          # クライアントに埋め込まれる Turnstile のサイトキー。Cloudflare のテスト用のキー（#61 A3a）
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"
 
   migrate:
     name: Migrate Production DB
@@ -224,10 +226,12 @@ jobs:
 
     env:
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/shopping_memos_e2e"
-      # E2E専用のダミー値（本番では使用しない）
-      AUTH_SECRET: "e2e-ci-only-secret-not-for-production"
-      # next start（NODE_ENV=production）では Auth.js が localhost を信頼しないため明示する
-      AUTH_TRUST_HOST: "true"
+      # Better Auth（#61 A3a）。E2E専用のダミー値。BETTER_AUTH_URL は playwright.config.ts が webServer ごとに渡す
+      BETTER_AUTH_SECRET: "e2e-ci-only-better-auth-secret-not-for-production"
+      OTP_EVENT_HMAC_KEY: "e2e-ci-only-otp-event-hmac-key-not-for-production"
+      # Cloudflare の Turnstile のテスト用のキー（常に成功）
+      TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA"
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"
 
     steps:
       - name: Checkout

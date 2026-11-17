@@ -151,12 +151,15 @@ main() {
 
   # .env は読まない（Next.js は .env を読むが、ここで渡す環境変数が優先される）。worktree に .env があれば知らせる
   for f in .env .env.local; do
-    [[ -e "${ROOT}/${f}" ]] && echo "[e2e-local] 注意: ${f} があります。ここで渡す変数（DATABASE_URL・AUTH_SECRET など）が優先されますが、それ以外の値は Next.js に読まれます。"
+    [[ -e "${ROOT}/${f}" ]] && echo "[e2e-local] 注意: ${f} があります。ここで渡す変数（DATABASE_URL・BETTER_AUTH_SECRET など）が優先されますが、それ以外の値は Next.js に読まれます。"
   done
 
   export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:${PG_HOST_PORT}/${DB_NAME}"
-  export AUTH_SECRET="e2e-local-$(node -e 'console.log(require("crypto").randomBytes(24).toString("hex"))')"
-  export AUTH_TRUST_HOST=true
+  # Better Auth（#61 A3a）。BETTER_AUTH_URL は playwright.config.ts が webServer ごとに渡す。Turnstile は Cloudflare のテスト用のキー（常に成功）
+  export BETTER_AUTH_SECRET="e2e-local-$(node -e 'console.log(require("crypto").randomBytes(24).toString("hex"))')"
+  export OTP_EVENT_HMAC_KEY="e2e-local-$(node -e 'console.log(require("crypto").randomBytes(24).toString("hex"))')"
+  export TURNSTILE_SECRET_KEY="1x0000000000000000000000000000000AA"
+  export NEXT_PUBLIC_TURNSTILE_SITE_KEY="1x00000000000000000000AA"
   export E2E_SEED_TOKEN="$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
   export E2E_PORT="$PORT"
   export E2E_OFFLINE_PORT="$OFFLINE_PORT"

@@ -16,7 +16,7 @@ const state = vi.hoisted(() => ({
   addMember: vi.fn(),
 }))
 
-vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/infrastructure/auth/server", () => ({ getAuth: vi.fn() }))
 vi.mock("@/modules/identity/infrastructure/repositories/DrizzleGroupRepository", () => ({
   groupRepository: {
     recordInviteCodeAttempt: state.recordInviteCodeAttempt,

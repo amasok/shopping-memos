@@ -87,9 +87,13 @@ describe("報告のみの CSP", () => {
     expect(dev["connect-src"]).toContain("ws:")
   })
 
+  it("Turnstile（#61 A3a）のスクリプトと iframe だけを外から許可する", () => {
+    expect(prod["script-src"]).toEqual(["'self'", "'unsafe-inline'", "https://challenges.cloudflare.com"])
+    expect(prod["frame-src"]).toEqual(["https://challenges.cloudflare.com"])
+  })
+
   it("埋め込み・フォーム送信先・object を制限する", () => {
     expect(prod["frame-ancestors"]).toEqual(["'none'"])
-    expect(prod["frame-src"]).toEqual(["'none'"])
     expect(prod["form-action"]).toEqual(["'self'"])
     expect(prod["object-src"]).toEqual(["'none'"])
     expect(prod["base-uri"]).toEqual(["'self'"])

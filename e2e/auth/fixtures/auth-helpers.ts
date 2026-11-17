@@ -1,4 +1,5 @@
-import { type Page } from "@playwright/test"
+import { expect, type Page } from "@playwright/test"
+import { E2E_ORIGIN } from "../../ports"
 import { e2eHeaders, getUser } from "./db-helpers"
 
 /** E2Eテスト用のユーザーメールアドレス */
@@ -15,47 +16,74 @@ export const USER_A_STORAGE = "e2e/.auth/user-a.json"
 export const USER_B_STORAGE = "e2e/.auth/user-b.json"
 export const USER_BULK_STORAGE = "e2e/.auth/user-bulk.json"
 
+/** Cloudflare の Turnstile のテスト用のトークン（E2E はテスト用の secret なので、空でなければ通る） */
+const TURNSTILE_DUMMY_TOKEN = "XXXX.DUMMY.TOKEN.XXXX"
+/** サーバーの再送の間隔（同じアドレスへの送信は 60 秒に 1 回。E2E でも制限は外さない） */
+const RESEND_INTERVAL_MS = 60_000
+
+let ipSeq = 0
 /**
- * Credentials プロバイダでログインし、storageState を保存
- *
- * カスタムログインページ（/login）にはGoogle用のUIしかないため、
- * NextAuth REST API を直接叩いてCredentials認証を行う。
- * 1. GET /api/auth/csrf → CSRFトークン取得
- * 2. POST /api/auth/callback/credentials → 認証実行（Set-Cookie でセッション取得）
- *    E2E 用のログインは x-e2e-token ヘッダが必要（#70）
+ * ログインのたびに別の IP（x-real-ip）を使い、IP ごとの上限（送信 3 通/分・20 通/日）に当たらないようにする
+ * （ローカルと CI は Vercel ではないので、ヘッダがそのまま届く。design の D8）
  */
+function nextTestIp(): string {
+  ipSeq += 1
+  const run = process.pid % 250
+  return `10.${run}.${Math.floor(ipSeq / 250) % 250}.${(ipSeq % 250) + 1}`
+}
+
+type OtpState = { otp: string | null; sentAt: string | null; now: string }
+
+async function readOtp(page: Page, email: string): Promise<OtpState> {
+  const res = await page.request.get(`${E2E_ORIGIN}/api/test/otp?email=${encodeURIComponent(email)}`, {
+    headers: e2eHeaders(),
+  })
+  if (!res.ok()) throw new Error(`テスト用のルートに失敗しました: ${res.status()}`)
+  return res.json()
+}
+
 /**
- * Credentials プロバイダでログインする（セッションの Cookie がブラウザのコンテキストに入る）。
+ * メールのコードでログインする（#61 A3a 5.2）。セッションの Cookie がブラウザのコンテキストに入る
+ *
+ * 1. コードを送る（POST /api/auth/email-otp/send-verification-otp）
+ * 2. テスト用のルート（GET /api/test/otp）から、送ったコードを読む（TestMailboxEmailSender が持つ）
+ * 3. コードでログインする（POST /api/auth/sign-in/email-otp）
+ * 同じアドレスに 60 秒以内に送ると、サーバーは黙って送らない（再送の間隔）。そのときは残りの時間だけ待ってから送る。
  * merge 済みの印は付けないので、次に画面を開くと DataMergeContext がゲストのデータを merge する
  */
-export async function loginWithCredentials(page: Page, email: string): Promise<void> {
-  // 1. CSRFトークン取得（ブラウザ経由でcookieもセットさせる）
-  await page.goto("/api/auth/csrf")
-  const csrfResponse = await page.evaluate(() =>
-    document.body.innerText
-  )
-  const { csrfToken } = JSON.parse(csrfResponse)
+export async function loginWithOtp(page: Page, email: string): Promise<void> {
+  const ip = nextTestIp()
+  const headers = { "content-type": "application/json", origin: E2E_ORIGIN, "x-real-ip": ip }
 
-  // 2. Credentials プロバイダで認証（POST）
-  // page.goto で POST はできないので、page.evaluate 内で fetch を使う
-  await page.evaluate(
-    async ({ csrfToken, email, headers }) => {
-      const res = await fetch("/api/auth/callback/credentials", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded", ...headers },
-        body: new URLSearchParams({
-          csrfToken,
-          email,
-        }),
-        redirect: "follow",
-      })
-      // セッションcookieがセットされる
-      if (!res.ok && res.status !== 302 && res.status !== 200) {
-        throw new Error(`Auth failed: ${res.status}`)
-      }
-    },
-    { csrfToken, email, headers: e2eHeaders() }
-  )
+  const before = await readOtp(page, email)
+  if (before.sentAt) {
+    const elapsed = new Date(before.now).getTime() - new Date(before.sentAt).getTime()
+    if (elapsed < RESEND_INTERVAL_MS) await page.waitForTimeout(RESEND_INTERVAL_MS - elapsed + 1000)
+  }
+
+  const send = await page.request.post(`${E2E_ORIGIN}/api/auth/email-otp/send-verification-otp`, {
+    headers: { ...headers, "x-turnstile-token": TURNSTILE_DUMMY_TOKEN },
+    data: { email, type: "sign-in" },
+  })
+  if (!send.ok()) throw new Error(`コードの送信に失敗しました: ${send.status()} ${await send.text()}`)
+
+  let otp: string | null = null
+  await expect
+    .poll(
+      async () => {
+        const after = await readOtp(page, email)
+        otp = after.sentAt && after.sentAt !== before.sentAt ? after.otp : null
+        return otp
+      },
+      { timeout: 10_000, message: "新しいコードが届かない" }
+    )
+    .not.toBeNull()
+
+  const signIn = await page.request.post(`${E2E_ORIGIN}/api/auth/sign-in/email-otp`, {
+    headers,
+    data: { email, otp },
+  })
+  if (!signIn.ok()) throw new Error(`コードでのログインに失敗しました: ${signIn.status()} ${await signIn.text()}`)
 }
 
 export async function loginAndSaveState(
@@ -63,7 +91,7 @@ export async function loginAndSaveState(
   email: string,
   storagePath: string
 ): Promise<string> {
-  await loginWithCredentials(page, email)
+  await loginWithOtp(page, email)
 
   // 3. ホームに遷移してセッション確認
   await page.goto("/")

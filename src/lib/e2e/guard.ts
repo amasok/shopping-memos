@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "crypto"
 
 /**
- * E2E 専用の機能（/api/e2e/seed、E2E 用の Credentials ログイン）の有効化条件（#70）
+ * E2E 専用の機能（/api/e2e/seed、/api/test/otp、OTP を手元に持つ TestMailbox）の有効化条件（#70・#61）
  *
  * - ビルド時: `E2E_BUILD=true` のビルドにだけ含める（`next.config.ts` の pageExtensions と env）
  * - 実行時: 次をすべて満たすときだけ有効

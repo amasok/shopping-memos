@@ -4,7 +4,7 @@ import { TRPCError } from "@trpc/server"
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch"
 import { z } from "@/shared/schemas/z"
 
-vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn(async () => null) }))
+vi.mock("@/infrastructure/auth/server", () => ({ getAuth: vi.fn() }))
 
 import { router, publicProcedure, protectedProcedure } from "../server"
 import { INTERNAL_ERROR_MESSAGE, formatErrorShape, toClientError } from "../error-format"

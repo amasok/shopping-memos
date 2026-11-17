@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginWithCredentials } from "./fixtures/auth-helpers"
+import { loginWithOtp } from "./fixtures/auth-helpers"
 import { trpcQuery } from "./fixtures/trpc-helpers"
 import { seedTable } from "../fixtures/test-helpers"
 import { createItem } from "../fixtures/test-data"
@@ -57,12 +57,17 @@ async function waitForGuestDb(page: Page) {
 }
 
 async function loginAndMerge(page: Page, email: string) {
-  await loginWithCredentials(page, email)
+  await loginWithOtp(page, email)
   await page.goto("/")
   await expect
-    .poll(() => page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("data-merge-completed-"))), {
-      timeout: 30_000,
-    })
+    // merge の後に画面を読み込み直すことがあるので、その間の evaluate の失敗は「まだ」として待ち続ける
+    .poll(
+      () =>
+        page
+          .evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("data-merge-completed-")))
+          .catch(() => false),
+      { timeout: 30_000 }
+    )
     .toBe(true)
   await page.waitForLoadState("networkidle")
 }
@@ -81,7 +86,8 @@ async function logout(page: Page) {
 }
 
 test("取り込めなかったものだけがアカウントごとに残り、ゲストの画面には出ず、別のアカウントでは送られず、破棄で消える", async ({ page }) => {
-  test.setTimeout(180_000)
+  // 同じアドレスに 2 回ログインするので、再送の間隔（60 秒）を待つことがある（#61 A3a）
+  test.setTimeout(240_000)
   const good = `取り込める-${suffix}`
   const bad = `取り込めない-${suffix}`
 

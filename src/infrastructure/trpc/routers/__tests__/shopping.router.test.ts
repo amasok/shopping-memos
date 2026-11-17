@@ -19,7 +19,7 @@ const areTagsInScope = vi.hoisted(() => vi.fn())
 // リストのアイテムの ID が使用済みかの確認（addNewItemToList）で返す行
 const existingListItems = vi.hoisted(() => ({ rows: [] as { id: string }[] }))
 
-vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/infrastructure/auth/server", () => ({ getAuth: vi.fn() }))
 vi.mock("@/infrastructure/db/drizzle/client", () => ({
   db: { select: () => ({ from: () => ({ where: () => Promise.resolve(existingListItems.rows) }) }) },
 }))

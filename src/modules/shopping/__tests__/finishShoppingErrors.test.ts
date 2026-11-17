@@ -7,7 +7,7 @@ import { TRPCError } from "@trpc/server"
  */
 const state = vi.hoisted(() => ({ error: null as unknown }))
 
-vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/infrastructure/auth/server", () => ({ getAuth: vi.fn() }))
 vi.mock("@/modules/shopping/application/services/ShoppingSyncService", () => ({
   ShoppingSyncService: class {
     canAccessList = async () => true

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginWithCredentials } from "./fixtures/auth-helpers"
+import { loginWithOtp } from "./fixtures/auth-helpers"
 import { trpcQuery } from "./fixtures/trpc-helpers"
 import { seedTable } from "../fixtures/test-helpers"
 import { createItem } from "../fixtures/test-data"
@@ -8,7 +8,7 @@ import { createItem } from "../fixtures/test-data"
  * ゲストのデータとログイン・ログアウト（offline-support.md「ゲストのデータとログイン・ログアウト」）
  * ログイン → merge → ログアウト → ゲストで追加 → 再ログイン の流れを、実際の画面と実 DB で確かめる
  *
- * ほかのテストのデータと混ざらないよう、このテスト専用の E2E ユーザーを使う（Credentials のログインで作られる）
+ * ほかのテストのデータと混ざらないよう、このテスト専用の E2E ユーザーを使う（メールのコードのログインで作られる）
  */
 const EMAIL = "guest-lifecycle@e2e-test.local"
 
@@ -56,12 +56,17 @@ async function waitForGuestDb(page: Page) {
 
 /** ログインして画面を開き、merge が終わる（このログインの印が付く）まで待つ */
 async function loginAndMerge(page: Page) {
-  await loginWithCredentials(page, EMAIL)
+  await loginWithOtp(page, EMAIL)
   await page.goto("/")
   await expect
-    .poll(() => page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("data-merge-completed-"))), {
-      timeout: 30_000,
-    })
+    // merge の後に画面を読み込み直すことがあるので、その間の evaluate の失敗は「まだ」として待ち続ける
+    .poll(
+      () =>
+        page
+          .evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("data-merge-completed-")))
+          .catch(() => false),
+      { timeout: 30_000 }
+    )
     .toBe(true)
   await page.waitForLoadState("networkidle")
 }
@@ -87,7 +92,8 @@ async function logout(page: Page) {
 test("ログイン → merge → ログアウト → ゲストで追加 → 再ログイン で、ゲストのデータが毎回引き継がれ、ログアウト後は空のゲストになる", async ({
   page,
 }) => {
-  test.setTimeout(120_000)
+  // 同じアドレスに 2 回ログインするので、再送の間隔（60 秒）を待つことがある（#61 A3a）
+  test.setTimeout(180_000)
   const suffix = Date.now().toString(36)
   const first = `ゲスト1-${suffix}`
   const second = `ゲスト2-${suffix}`

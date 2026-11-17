@@ -11,11 +11,11 @@ const state = vi.hoisted(() => ({
   storageAtSignOut: {} as Record<string, string | null>,
 }))
 
-vi.mock("next-auth/react", () => ({
-  SessionProvider: ({ children }: { children: React.ReactNode }) => children,
-  useSession: () => ({ data: { user: { id: "user-1", name: "A", email: "a@example.com" } }, status: "authenticated" }),
-  signIn: vi.fn(),
-  signOut: state.signOut,
+vi.mock("@/infrastructure/auth/client", () => ({
+  authClient: {
+    useSession: () => ({ data: { user: { id: "user-1", name: "A", email: "a@example.com" } }, isPending: false, error: null }),
+    signOut: state.signOut,
+  },
 }))
 vi.mock("@/infrastructure/trpc/client", () => ({
   trpc: { identity: { getGroups: { useQuery: () => ({ data: [], isLoading: false }) } } },
@@ -29,6 +29,11 @@ vi.mock("@/lib/db/guestData", async (importOriginal) => ({
 import { AuthProvider, useAuth } from "../AuthContext"
 
 beforeEach(() => {
+  // ログアウトの後のホームへの移動（jsdom は画面の移動をしない）
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { ...window.location, assign: vi.fn() },
+  })
   localStorage.clear()
   state.signOut.mockReset().mockImplementation(async () => {
     state.storageAtSignOut = {
@@ -65,7 +70,7 @@ describe("logout", () => {
 describe("GroupContext（ゲスト）", () => {
   it("ゲストのときに選んでいたグループが残っていたら、個人に戻す", async () => {
     vi.resetModules()
-    vi.doMock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: null, isLoading: false }) }))
+    vi.doMock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: null, isLoading: false, sessionKnown: true }) }))
     localStorage.setItem("selectedGroupId", "group-1")
     const { GroupProvider, useGroup } = await import("../GroupContext")
     function Probe() {
@@ -79,6 +84,25 @@ describe("GroupContext（ゲスト）", () => {
     )
     expect(screen.getByTestId("group")).toHaveTextContent("personal")
     expect(localStorage.getItem("selectedGroupId")).toBe("undefined")
+    vi.doUnmock("@/contexts/AuthContext")
+  })
+
+  it("通信のエラーでセッションがわからないときは、個人として出すが、選んでいたグループは消さない", async () => {
+    vi.resetModules()
+    vi.doMock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: null, isLoading: false, sessionKnown: false }) }))
+    localStorage.setItem("selectedGroupId", "group-1")
+    const { GroupProvider, useGroup } = await import("../GroupContext")
+    function Probe() {
+      const { selectedGroupId } = useGroup()
+      return <span data-testid="group">{selectedGroupId ?? "personal"}</span>
+    }
+    render(
+      <GroupProvider>
+        <Probe />
+      </GroupProvider>
+    )
+    expect(screen.getByTestId("group")).toHaveTextContent("personal")
+    expect(localStorage.getItem("selectedGroupId")).toBe("group-1")
     vi.doUnmock("@/contexts/AuthContext")
   })
 })

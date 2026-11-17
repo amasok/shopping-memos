@@ -2,6 +2,8 @@ import { fetchRequestHandler } from "@trpc/server/adapters/fetch"
 import { appRouter } from "@/infrastructure/trpc/routers"
 import { createContext } from "@/infrastructure/trpc/server"
 import { enforceRequestLimits } from "@/infrastructure/trpc/request-limits"
+import { resolveAuthEnv } from "@/infrastructure/auth/env"
+import { crossOriginResponse, isSameOriginRequest } from "@/lib/security/origin"
 
 const ENDPOINT = "/api/trpc"
 
@@ -10,6 +12,11 @@ const ENDPOINT = "/api/trpc"
  * Next.js App Router用
  */
 const handler = async (req: Request) => {
+  // 別のオリジンからの mutation（POST）を断る（#61 A3a 3.3。design の D6。#71 の残り）
+  if (req.method === "POST" && !isSameOriginRequest(req, resolveAuthEnv(process.env).trustedOrigins)) {
+    return crossOriginResponse()
+  }
+
   // バッチ件数とボディの大きさの上限（#72）
   const checked = await enforceRequestLimits(req, ENDPOINT)
   if ("response" in checked) return checked.response
