@@ -7,7 +7,10 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = "primary", size = "md", disabled, style, ...props }, ref) => {
+  (
+    { className, variant = "primary", size = "md", disabled, style, onMouseEnter, onMouseLeave, ...props },
+    ref
+  ) => {
     const isPrimary = variant === "primary"
 
     return (
@@ -45,14 +48,15 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
           if (isPrimary && !disabled) {
             e.currentTarget.style.backgroundColor = "var(--theme-primary-hover)"
           }
-          props.onMouseEnter?.(e)
+          onMouseEnter?.(e)
         }}
         onMouseLeave={(e) => {
           if (isPrimary && !disabled) {
             e.currentTarget.style.backgroundColor = "var(--theme-primary)"
           }
-          props.onMouseLeave?.(e)
+          onMouseLeave?.(e)
         }}
+        // onMouseEnter / onMouseLeave は上で受け取って合成する。props に残すと、ここで内部のハンドラーを上書きしてしまう（#158）
         {...props}
       />
     )

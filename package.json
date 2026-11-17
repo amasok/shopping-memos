@@ -15,6 +15,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:sw-lifecycle": "bash scripts/e2e-sw-lifecycle.sh",
     "test:e2e:local": "bash scripts/e2e-local.sh",
+    "test:db": "bash scripts/test-db.sh",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -64,5 +65,14 @@
     "typescript": "^5",
     "vitest": "^4.0.18",
     "yaml": "^2.9.1"
+  },
+  "overrides": {
+    "mysql2": "^3.24.6",
+    "valibot": "^1.5.0",
+    "hono": "^4.13.19",
+    "lodash": "^4.18.1",
+    "deepmerge-ts": "^8.0.2",
+    "effect": "^3.20.0",
+    "@hono/node-server": "^2.1.8"
   }
 }

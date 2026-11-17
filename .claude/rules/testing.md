@@ -34,4 +34,8 @@
 - 一部だけ流すときは `npm run test:e2e:local -- e2e/ogp-preview.spec.ts`（引数は playwright test に渡す。offline は流さない）。ログイン済み（`e2e/auth`）を流すときは `--project=chromium-auth --workers=1` を付ける（同じユーザーを共有するので、並列だと干渉する）
 - tester は結果（件数）を報告に書き、リーダーは PR の本文に書く。CI の E2E は main へのリリースのときだけ動く最後の確認
 
+## 実 DB のテスト（#151）
+
+- `npm run test:db` で `src/**/*.db.test.ts` を全部流す。docker の postgres に一時 DB を作り、migrate して、終わったら消す。CI では流さない（通常の `test:run` ではスキップされる）
+
 コード例・モックの書き方は `testing-patterns` スキル、TDD の進め方は `tdd-guide` エージェントを参照。

@@ -44,7 +44,9 @@
 
 - 月の上限を超えないよう、CI は PR で確認し、develop への push では migrate-develop だけを動かす（Test・Build・E2E は動かさない）。E2E は main への PR と main への push だけ（#142）
 - develop へのマージは関連 PR をまとめる（Vercel と同じ）。PR への push は最小限にする（push のたびに Test・Build・E2E が走る）。直しはまとめてから push する
-- docs/・.claude/・*.md だけの変更では CI が動かない（AGENTS.md と CLAUDE.md は #122 の検査のため動く）。docs だけの PR はチェックが付かないので、`gh pr checks` の結果でマージを判定する場合は「チェックなし」を失敗と取り違えない
-- 本番の migrate が失敗したら、Actions の画面か `gh run rerun <run id> --failed` で再実行する。main への push が docs だけのときは migrate が動かないので、やり直しを次の push に任せない
+- リポジトリは public（2026-11-17）。標準のランナーは無料だが、無駄に回さない方針は続ける（E2E はローカルが基本）
+- ブランチ保護: develop は Test・Build、main は Test・Build・E2E Tests が通らないとマージできない（PR 必須、force push・削除は禁止）。必須チェックが必ず付くよう、CI は docs だけの変更でも動く。保護を迂回する `--admin` でのマージはしない
+- fork からの PR のワークフローは、外部の人の分はすべて承認制
+- 本番の migrate が失敗したら、Actions の画面か `gh run rerun <run id> --failed` で再実行する。やり直しを次の push に任せない
 - SW のライフサイクル E2E（sw-e2e.yml）は SW 関連のファイルの変更と手動実行だけ（package.json は devDependencies を足しただけでも動いてしまうため対象にしない。#143）
 - main へのリリースの PR では、`gh workflow run sw-e2e.yml --ref <branch>` で SW の E2E を手動で 1 回動かす（Dependabot で Next や Serwist を上げたものが含まれるとき）

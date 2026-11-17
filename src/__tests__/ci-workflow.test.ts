@@ -371,81 +371,16 @@ describe("develop 用 DB のマイグレーション（migrate-develop ジョブ
   })
 })
 
-/**
- * GitHub Actions の paths の評価を真似る（後に書いたパターンほど優先。! で除外）。
- * `**` は / を含む任意の文字列、`*` は / を含まない任意の文字列
- */
-function globToRegExp(glob: string): RegExp {
-  let re = ""
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i]
-    if (c === "*" && glob[i + 1] === "*") {
-      if (glob[i + 2] === "/") {
-        re += "(?:.*/)?"
-        i += 2
-      } else {
-        re += ".*"
-        i += 1
-      }
-    } else if (c === "*") {
-      re += "[^/]*"
-    } else {
-      re += c.replace(/[.+?^${}()|[\]\\]/g, "\\$&")
-    }
-  }
-  return new RegExp(`^${re}$`)
-}
-
-function triggeredBy(paths: string[], file: string): boolean {
-  let matched = false
-  for (const pattern of paths) {
-    const negated = pattern.startsWith("!")
-    if (globToRegExp(negated ? pattern.slice(1) : pattern).test(file)) matched = !negated
-  }
-  return matched
-}
-
-describe("CI の起動条件（Actions の使用量削減）", () => {
-  it.each([["push"], ["pull_request"]] as const)("%s は paths で絞り、paths-ignore は使わない", (event) => {
-    const trigger = workflow.on[event]
-    expect(trigger?.branches).toEqual(["main", "develop"])
-    expect(trigger?.["paths-ignore"]).toBeUndefined()
-    expect(trigger?.paths?.length ?? 0).toBeGreaterThan(0)
-  })
-
-  it("ルート直下の .md も明示して除外する（`**/` がディレクトリ 0 個に一致するかに頼らない）", () => {
-    const paths = workflow.on.push?.paths ?? []
-    expect(paths).toContain("!*.md")
-    // AGENTS.md・CLAUDE.md を戻す行は、除外の行より後に置く
-    expect(paths.indexOf("AGENTS.md")).toBeGreaterThan(paths.indexOf("!*.md"))
-    expect(paths.indexOf("CLAUDE.md")).toBeGreaterThan(paths.indexOf("!*.md"))
-  })
-
-  it.each([
-    ["docs/features/sharing.md", false],
-    ["docs/ogp-link-preview.md", false],
-    ["docs/images/flow.png", false],
-    ["README.md", false],
-    ["GEMINI.md", false],
-    ["src/components/README.md", false],
-    [".claude/rules/team-operation.md", false],
-    [".claude/settings.json", false],
-    // #122 の検査（repo-invariants.test.ts）の対象なので、変わったら CI を動かす
-    ["AGENTS.md", true],
-    ["CLAUDE.md", true],
-    ["src/app/page.tsx", true],
-    ["package.json", true],
-    [".github/workflows/ci.yml", true],
-    ["drizzle/0005_x.sql", true],
-  ])("%s だけの変更で CI が動くか: %s", (file, expected) => {
-    for (const event of ["push", "pull_request"] as const) {
-      expect(triggeredBy(workflow.on[event]?.paths ?? [], file), `${event}`).toBe(expected)
-    }
-  })
-
-  it("push と pull_request の paths は同じ", () => {
-    expect(workflow.on.push?.paths).toEqual(workflow.on.pull_request?.paths)
-  })
+describe("CI の起動条件", () => {
+  it.each([["push"], ["pull_request"]] as const)(
+    "%s は paths で絞らない（docs だけの PR にもブランチ保護の必須チェックが付くように）",
+    (event) => {
+      const trigger = workflow.on[event]
+      expect(trigger?.branches).toEqual(["main", "develop"])
+      expect(trigger?.paths).toBeUndefined()
+      expect(trigger?.["paths-ignore"]).toBeUndefined()
+    },
+  )
 
   it.each([["test"], ["build"]])("%s は PR と main への push だけで動く（develop への push では動かさない）", (name) => {
     expect(workflow.jobs[name].if).toBe("github.event_name == 'pull_request' || github.ref == 'refs/heads/main'")

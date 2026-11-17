@@ -11,6 +11,10 @@ const id = () => crypto.randomUUID()
 const iso = "2026-01-01T00:00:00.000Z"
 const empty = { items: [], tags: [], lists: [], listItems: [], history: [] }
 
+/** オブジェクトから指定したキーを除いたコピー */
+const omit = <T extends object>(obj: T, keys: (keyof T)[]) =>
+  Object.fromEntries(Object.entries(obj).filter(([k]) => !keys.includes(k as keyof T)))
+
 const validItem = () => ({
   id: id(),
   name: "牛乳",
@@ -82,7 +86,7 @@ describe("syncMergeInputSchema（sync.merge の入力検証 #86）", () => {
 
   it("空のデータ・省略可能な項目の欠落も受け付ける", () => {
     expect(parse(empty).success).toBe(true)
-    const { memo: _m, purchasedAt: _p, ...rest } = validItem()
+    const rest = omit(validItem(), ["memo", "purchasedAt"])
     expect(parse({ ...empty, items: [rest] }).success).toBe(true)
   })
 
@@ -92,10 +96,7 @@ describe("syncMergeInputSchema（sync.merge の入力検証 #86）", () => {
       ["id が UUID でない", { ...validItem(), id: "not-a-uuid" }],
       [
         "id が欠落",
-        (() => {
-          const { id: _i, ...r } = validItem()
-          return r
-        })(),
+        omit(validItem(), ["id"]),
       ],
       ["name が空", { ...validItem(), name: "" }],
       ["name が 101 文字", { ...validItem(), name: "あ".repeat(101) }],
@@ -120,10 +121,7 @@ describe("syncMergeInputSchema（sync.merge の入力検証 #86）", () => {
       ["createdAt が不正な日付", { ...validItem(), createdAt: "not-a-date" }],
       [
         "createdAt が欠落",
-        (() => {
-          const { createdAt: _c, ...r } = validItem()
-          return r
-        })(),
+        omit(validItem(), ["createdAt"]),
       ],
     ])("items: %s", (_label, item) => {
       expect(parse({ ...empty, items: [item] }).success).toBe(false)

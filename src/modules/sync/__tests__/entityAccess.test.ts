@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest"
-import {
-  canAccessScope,
-  checkEntityAccess,
-  type DbExecutor,
-} from "../infrastructure/entityAccess"
+import { checkEntityAccess } from "../infrastructure/entityAccess"
+import { canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
 
 /**
  * select().from().innerJoin().where().limit() のチェーンを受け付け、
