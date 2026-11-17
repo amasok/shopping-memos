@@ -1,11 +1,12 @@
 import { and, eq, type SQL } from "drizzle-orm"
 import { notDeleted, type SyncTable } from "@/infrastructure/db/syncColumns"
 import { items, tags, shoppingLists, listItems } from "@/infrastructure/db/drizzle/schema"
-import { canAccessScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
+import { canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
+import type { OwnerScope } from "@/shared/domain/ownerScope"
 import type { SyncEntity, EntityAccess } from "../domain/entities/SyncOperation"
 
-// 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
-// ここからは再エクスポートしない（#151）
+// 所有スコープの型と純粋な判定（OwnerScope・isSameScope）は src/shared/domain/ownerScope.ts、
+// DB を使う判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101・#179）。ここからは再エクスポートしない（#151）
 
 export interface ScopeLookupOptions {
   /**

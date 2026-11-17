@@ -336,7 +336,9 @@ describe.skipIf(!TEST_DB_URL)("論理削除と同期用の列（実 DB）", () =
       expect(deleted).toEqual([item.id])
       expect((await rawItem(item.id)).deletedAt).not.toBeNull()
 
-      const purchased = await ctx.scope.markScopedItemsPurchasedByName(ctx.db, scope, item.name, new Date())
+      // 削除済みのアイテムは候補に出ず、ID を渡しても購入済みにしない（#179）
+      expect(await ctx.scope.findScopedCandidatesByNames(ctx.db, scope, [item.name])).toEqual([])
+      const purchased = await ctx.scope.markItemsPurchased(ctx.db, scope, [item.id], new Date())
       expect(purchased).toEqual([])
     })
   })
@@ -368,7 +370,8 @@ describe.skipIf(!TEST_DB_URL)("論理削除と同期用の列（実 DB）", () =
       const gone = await newItem("revert-same")
       await ctx.items.markAsPurchased(gone.id, owner)
       await ctx.items.delete(gone.id, owner)
-      expect(await ctx.scope.markScopedItemsUnpurchasedByName(ctx.db, scope, gone.name)).toEqual([])
+      expect(await ctx.scope.findScopedCandidatesByNames(ctx.db, scope, [gone.name])).toEqual([])
+      expect(await ctx.scope.markItemsUnpurchased(ctx.db, scope, [gone.id])).toEqual([])
       expect((await rawItem(gone.id)).purchasedAt).not.toBeNull()
     })
   })

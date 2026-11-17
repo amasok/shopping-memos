@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import { areTagsInScope } from "../application/services/ownership"
-import { isSameScope, type DbExecutor } from "@/infrastructure/db/ownership"
+import type { DbExecutor } from "@/infrastructure/db/ownership"
+import { isSameScope } from "@/shared/domain/ownerScope"
 
 /** select().from().where() の結果として rows を返すモック executor */
 function createExecutor(rows: unknown[]): DbExecutor {

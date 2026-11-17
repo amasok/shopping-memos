@@ -509,7 +509,7 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
       expect((await rawListItem(eggLi)).deletedAt).not.toBeNull()
     })
 
-    it("買い物の完了は、購入日時が操作より新しく書き換えられたカタログのアイテムを変えない（フィールド単位の LWW）", async () => {
+    it("同期で届いた完了は操作の時刻より新しい購入日時を上書きしない", async () => {
       const { listId, catalogMilk } = await shoppingSetup()
       // 完了（T2）より後（T3）に、別の端末で「未購入」にしていた（先にサーバーに届いた）
       await push1(owner, op({ entity: "item", type: "update", entityId: catalogMilk, patch: { purchasedAt: null }, clientTime: T3 }))
@@ -521,7 +521,7 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
       expect(milk.fieldModifiedAt.purchasedAt).toBe(T3)
     })
 
-    it("完了済みのリストの完了は conflict（already_completed）で、serverRow を返す", async () => {
+    it("同期で届いた完了済みのリストの完了は conflict にする", async () => {
       const { listId } = await shoppingSetup()
       await push1(owner, finish(listId, T2))
       const again = await push1(owner, finish(listId, T3))
@@ -542,7 +542,7 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
       expect(milk.fieldModifiedAt.purchasedAt).toBe(T3)
     })
 
-    it("新しい取り消しの後に届いた、古い完了は適用しない（conflict: stale）", async () => {
+    it("同期で届いた古い完了は conflict にする（新しい取り消しの後に届いた古い完了）", async () => {
       const { listId, catalogMilk } = await shoppingSetup()
       await push1(owner, finish(listId, T1))
       await push1(owner, revert(listId, T3))
@@ -553,9 +553,58 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
       expect((await rawItem(catalogMilk)).purchasedAt).toBeNull()
     })
 
-    it("完了していないリストの取り消しは conflict（not_completed）", async () => {
+    it("同期で届いた購入履歴でないリストの取り消しは conflict にする", async () => {
       const { listId } = await shoppingSetup()
       expect(await push1(owner, revert(listId, T2))).toMatchObject({ status: "conflict", reason: "not_completed" })
+    })
+
+    it("同期で届いたチェック 0 件の完了も完了でき空の購入履歴になる（今のサーバーの振る舞い）", async () => {
+      const name = `空-${crypto.randomUUID()}`
+      const catalogItem = await createItem(owner, { name })
+      const list = op({ entity: "list", type: "create", patch: { name: "買い物" } })
+      await push1(owner, list)
+      const entry = op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name } })
+      await push1(owner, entry)
+
+      expect(await push1(owner, finish(list.entityId, T2))).toMatchObject({ status: "applied" })
+
+      expect((await rawList(list.entityId)).status).toBe("completed")
+      expect((await rawListItem(entry.entityId)).deletedAt).not.toBeNull()
+      expect((await rawItem(catalogItem)).purchasedAt).toBeNull()
+    })
+
+    it("同期で届いた完了は同じ名前の購入済みの商品も購入日時を操作の時刻にする", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      // 前に買った同じ名前の商品（購入日時は操作より前）
+      const oldMilk = await createItem(owner, { name: "牛乳", purchasedAt: T1 }, T1)
+
+      expect(await push1(owner, finish(listId, T2))).toMatchObject({ status: "applied" })
+
+      expect((await rawItem(catalogMilk)).purchasedAt?.toISOString()).toBe(T2)
+      expect((await rawItem(oldMilk)).purchasedAt?.toISOString()).toBe(T2)
+    })
+
+    it("同期で届いた使えないリストの取り消しは rejected にする", async () => {
+      const { listId } = await shoppingSetup()
+      await push1(owner, finish(listId, T2))
+      expect(await push1(stranger, revert(listId, T3))).toMatchObject({ status: "rejected", reason: "not_found" })
+      expect((await rawList(listId)).status).toBe("completed")
+    })
+
+    it("同期で届いた削除したリストの取り消しは conflict にする", async () => {
+      const { listId } = await shoppingSetup()
+      await push1(owner, finish(listId, T2))
+      await push1(owner, op({ entity: "list", type: "delete", entityId: listId }))
+      expect(await push1(owner, revert(listId, T3))).toMatchObject({ status: "conflict", reason: "deleted" })
+    })
+
+    it("同期で届いた古い取り消しは conflict にする（購入日時が入っているリストで、新しい完了の後に届いた古い取り消し）", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      await push1(owner, finish(listId, T3))
+
+      expect(await push1(owner, revert(listId, T2))).toMatchObject({ status: "conflict", reason: "stale" })
+      expect((await rawList(listId)).status).toBe("completed")
+      expect((await rawItem(catalogMilk)).purchasedAt?.toISOString()).toBe(T3)
     })
 
     it("リスト以外・未知のフィールド・他人のリスト・削除済みのリストは適用しない", async () => {

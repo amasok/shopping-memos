@@ -6,7 +6,6 @@ const state = vi.hoisted(() => ({
   syncOps: [] as Array<Record<string, unknown>>,
   canAccess: true,
   history: null as null | { id: string; items: Array<{ name: string }> },
-  revertHistory: vi.fn(),
   deleteHistory: vi.fn(),
 }))
 
@@ -25,7 +24,6 @@ vi.mock("@/modules/shopping/application/services/ShoppingSyncService", () => ({
   ShoppingSyncService: class {
     canAccessHistory = async () => state.canAccess
     getHistoryById = async () => state.history
-    revertHistory = state.revertHistory
     // カタログのアイテムの削除（コールバック）を、記録用の DB で実行する（#62 O3b）
     deleteHistory = async (
       id: string,
@@ -49,59 +47,134 @@ describe("履歴の差し戻し・削除のカタログアイテム更新範囲 
     state.syncOps = []
     state.canAccess = true
     state.history = { id: LIST_ID, items: [{ name: "牛乳" }, { name: "パン" }] }
-    state.revertHistory.mockReset().mockResolvedValue({ id: LIST_ID })
     state.deleteHistory.mockReset().mockResolvedValue(undefined)
   })
 
-  describe("revertHistory", () => {
-    it("個人リストでは、作成者の購入済みアイテムだけを未購入に戻す", async () => {
+  describe("revertHistory（取り消しは ShoppingService の 1 トランザクション。#179）", () => {
+    const PURCHASED = new Date("2026-01-01T00:00:00.000Z")
+    const lockedList = { id: LIST_ID, userId: "user-A", groupId: null, status: "completed", purchasedAt: PURCHASED }
+    const entries = [
+      { id: "li-milk", name: "牛乳", checked: true },
+      { id: "li-bread", name: "パン", checked: true },
+    ]
+    const catalog = (id: string, over: Record<string, unknown> = {}) => ({
+      id,
+      name: "牛乳",
+      userId: "user-A",
+      groupId: null,
+      purchasedAt: PURCHASED,
+      deletedAt: null,
+      ...over,
+    })
+    const writes = () => state.fake.queries.filter((q) => q.kind !== "select")
+
+    it("リストの商品と同じ名前の購入済みの商品を未購入に戻す（個人のリストは作成者の商品だけ）", async () => {
       state.fake = createFakeDb({
-        listScope: { userId: "user-A", groupId: null },
-        itemIdsByName: { 牛乳: ["mine-milk"], パン: ["mine-bread"] },
+        lockedList,
+        entries,
+        catalogItems: [
+          catalog("mine-milk"),
+          catalog("mine-bread", { name: "パン" }),
+          catalog("mine-unpurchased", { purchasedAt: null }),
+          catalog("others-milk", { userId: "user-B" }),
+          catalog("group-milk", { groupId: "group-1" }),
+        ],
       })
 
       const res = await caller().revertHistory({ historyId: LIST_ID })
 
       expect(res.revertedItemIds).toEqual(["mine-milk", "mine-bread"])
-      for (const q of itemQueries()) {
-        expect(q.kind).toBe("update")
-        expect(q.set).toMatchObject({ purchasedAt: null })
-        expect(q.sql).toContain('"items"."purchased_at" is not null')
-        expect(q.sql).toContain('"items"."group_id" is null')
-        expect(q.params[1]).toBe("user-A")
-      }
-      expect(state.syncOps.map((o) => o.entityId)).toEqual(["mine-milk", "mine-bread"])
+      const [update] = itemQueries().filter((q) => q.kind === "update")
+      expect(update.set).toMatchObject({ purchasedAt: null })
+      expect(update.sql).toContain('"items"."purchased_at" is not null')
+      expect(update.sql).toContain('"items"."group_id" is null')
+      expect(update.params).toContain("user-A")
+      expect(update.params).not.toContain("others-milk")
+      expect(update.params).not.toContain("group-milk")
+      // 同期ログは、実際に戻したアイテムの分と、リストの分
+      expect(state.syncOps.map((o) => [o.entity, o.entityId])).toEqual([
+        ["item", "mine-milk"],
+        ["item", "mine-bread"],
+        ["list", LIST_ID],
+      ])
     })
 
-    it("グループリストでは、グループのアイテムに限定する", async () => {
+    it("グループのリストでは、グループのアイテムに限定する", async () => {
       state.fake = createFakeDb({
-        listScope: { userId: "user-A", groupId: "group-1" },
-        itemIdsByName: { 牛乳: ["g-milk"] },
+        lockedList: { ...lockedList, groupId: "group-1" },
+        entries,
+        catalogItems: [catalog("g-milk", { groupId: "group-1" })],
       })
 
       const res = await caller("user-B").revertHistory({ historyId: LIST_ID })
 
       expect(res.revertedItemIds).toEqual(["g-milk"])
       for (const q of itemQueries()) {
-        expect(q.sql).toContain('"items"."group_id" = $2')
-        expect(q.sql).not.toContain("user_id")
-        expect(q.params[1]).toBe("group-1")
+        expect(q.sql).toContain('"items"."group_id" =')
+        expect(q.sql).not.toContain('"items"."user_id"')
+        expect(q.params).toContain("group-1")
       }
     })
 
-    it("リストが見つからない（スコープ不明）場合はカタログアイテムに触れない", async () => {
-      state.fake = createFakeDb({ itemIdsByName: { 牛乳: ["other"] } })
+    it("取り消したリストは進行中に戻り、日時と場所が消える", async () => {
+      state.fake = createFakeDb({ lockedList, entries, catalogItems: [] })
 
-      const res = await caller().revertHistory({ historyId: LIST_ID })
+      await caller().revertHistory({ historyId: LIST_ID })
 
-      expect(res.revertedItemIds).toEqual([])
-      expect(itemQueries()).toHaveLength(0)
+      const [listUpdate] = state.fake.queries.filter((q) => q.table === "shopping_lists" && q.kind === "update")
+      expect(listUpdate.set).toMatchObject({ status: "in_progress", completedAt: null, purchasedAt: null, location: null })
+      expect(listUpdate.sql).toContain('"shopping_lists"."deleted_at" is null')
+      expect(listUpdate.sql).toContain('"group_members"."user_id"')
+    })
+
+    it("購入履歴でないリストは取り消せない（NOT_FOUND で何も書かない）", async () => {
+      state.history = null
+      state.fake = createFakeDb({ lockedList: { ...lockedList, status: "in_progress", purchasedAt: null }, entries })
+
+      await expect(caller().revertHistory({ historyId: LIST_ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
+      expect(writes()).toHaveLength(0)
+      expect(state.syncOps).toHaveLength(0)
+    })
+
+    it("トランザクションの中で読み直して購入日時がなければ NOT_FOUND で何も書かない", async () => {
+      state.fake = createFakeDb({ lockedList: { ...lockedList, status: "in_progress", purchasedAt: null }, entries })
+
+      await expect(caller().revertHistory({ historyId: LIST_ID })).rejects.toMatchObject({
+        code: "NOT_FOUND",
+        message: "履歴が見つかりません",
+      })
+      expect(writes()).toHaveLength(0)
+    })
+
+    it("確認の後に使えなくなった履歴は取り消さない（NOT_FOUND で何も書かない）", async () => {
+      state.fake = createFakeDb({ lockedList: null, entries, catalogItems: [catalog("mine-milk")] })
+
+      await expect(caller().revertHistory({ historyId: LIST_ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
+      const [lock] = state.fake.queries.filter((q) => q.table === "shopping_lists")
+      expect(lock.forUpdate).toBe(true)
+      expect(lock.sql).toContain('"shopping_lists"."deleted_at" is null')
+      expect(lock.sql).toContain('"group_members"."user_id"')
+      expect(writes()).toHaveLength(0)
+      expect(state.syncOps).toHaveLength(0)
+    })
+
+    it("取り消しの途中で失敗したら何も反映しない（すべて 1 つのトランザクションの中で書き、同期の記録も書かない）", async () => {
+      state.fake = createFakeDb({
+        lockedList,
+        entries,
+        catalogItems: [catalog("mine-milk")],
+        failListUpdate: new Error("list update failed"),
+      })
+
+      await expect(caller().revertHistory({ historyId: LIST_ID })).rejects.toBeDefined()
+      expect(writes().length).toBeGreaterThan(0)
+      expect(writes().every((q) => q.inTransaction)).toBe(true)
       expect(state.syncOps).toHaveLength(0)
     })
 
     it("権限がなければFORBIDDENでカタログアイテムに触れない", async () => {
       state.canAccess = false
-      state.fake = createFakeDb({ listScope: { userId: "user-A", groupId: null } })
+      state.fake = createFakeDb({ lockedList, entries })
 
       await expect(caller("user-X").revertHistory({ historyId: LIST_ID })).rejects.toMatchObject({
         code: "FORBIDDEN",

@@ -93,6 +93,3 @@ export const compoundPatchSchemas = {
   finishShopping: z.object({ location: z.string().max(TEXT_LIMITS.location).nullish() }).strict(),
   revertHistory: z.object({}).strict(),
 } as const
-
-/** 複合操作がまとめて変えるリストのフィールド */
-export const LIST_STATE_FIELDS = ["status", "completedAt", "purchasedAt", "location"] as const

@@ -187,23 +187,6 @@ export class ShoppingSyncService {
     return deletedCatalogItemIds
   }
 
-  async revertHistory(id: string, userId: string): Promise<ShoppingList> {
-    // リストを未購入に戻す
-    const list = await this.shoppingListRepository.markAsUnpurchased(id, userId)
-
-    // 同期ログを記録
-    await syncRepository.createOperation({
-      id: crypto.randomUUID(),
-      userId,
-      entity: "list",
-      entityId: id,
-      operation: "update",
-      payload: { id, purchasedAt: null, status: list.status },
-    })
-
-    return list
-  }
-
   async canAccessHistory(listId: string, userId: string): Promise<boolean> {
     return this.shoppingListRepository.canAccess(listId, userId)
   }

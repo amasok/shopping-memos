@@ -18,6 +18,7 @@ import { itemRepository } from "@/modules/catalog/infrastructure/repositories/Dr
 import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
 import { CatalogSyncService } from "@/modules/catalog/application/services/CatalogSyncService"
 import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
+import { excludeItemsInActiveLists } from "@/modules/shopping/domain/services/activeListExclusion"
 import { verifyGroupMembership } from "../middleware/groupAuth"
 
 // 同期サービスインスタンス
@@ -78,10 +79,11 @@ export const catalogRouter = router({
         .innerJoin(shoppingLists, eq(listItems.listId, shoppingLists.id))
         .where(and(...listConditions))
 
-      const namesInActiveLists = new Set(activeListItems.map((item) => item.name))
-
-      // 進行中リストに含まれるアイテムを除外
-      return items.filter((item) => !namesInActiveLists.has(item.name))
+      // 進行中リストに含まれるアイテムを除外（規則は shopping の domain。#179）
+      return excludeItemsInActiveLists(
+        items,
+        activeListItems.map((item) => item.name)
+      )
     }),
 
   /** アイテムを取得 */
