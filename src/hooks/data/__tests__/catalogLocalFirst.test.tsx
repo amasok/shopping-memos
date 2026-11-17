@@ -346,7 +346,7 @@ describe("買い物の hooks（端末の DB）", () => {
     const { result } = renderHook(() => ({ lists: useListMutations(), history: useHistoryMutations() }))
     let listId = ""
     await act(async () => {
-      listId = (await result.current.lists.createList({ name: "買い物" })).id
+      listId = (await result.current.lists.createList({ name: "買い物" }))!.id
       await result.current.lists.addNewItemToList({ listId, name: "牛乳" })
       const [entry] = await userDb.listItems.toArray()
       await result.current.lists.checkItem(entry.id, true)
@@ -374,7 +374,7 @@ describe("買い物の hooks（端末の DB）", () => {
     const { result } = renderHook(() => useListMutations())
     let listId = ""
     await act(async () => {
-      listId = (await result.current.createList({ name: "買い物" })).id
+      listId = (await result.current.createList({ name: "買い物" }))!.id
       await result.current.addNewItemToList({ listId, name: "牛乳" })
     })
 
