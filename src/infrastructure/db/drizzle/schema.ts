@@ -4,11 +4,27 @@ import {
   integer,
   boolean,
   timestamp,
+  jsonb,
   primaryKey,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
+
+/**
+ * 同期用の列（#62 O3。docs/features/offline-support.md「## 実装方針」）
+ * - updatedAt: サーバーの書き込み時刻。pull のカーソル専用（LWW の判定には使わない）
+ * - fieldModifiedAt: フィールド名 → 最後に適用した操作時刻（補正済みの ISO 文字列）。LWW の判定専用
+ * - deletedAt: 論理削除（tombstone）の時刻
+ */
+const syncColumns = () => ({
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  fieldModifiedAt: jsonb("field_modified_at")
+    .$type<Record<string, string>>()
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  deletedAt: timestamp("deleted_at"),
+})
 
 // ============================================================
 // Identity コンテキスト
@@ -178,12 +194,14 @@ export const items = pgTable(
     groupId: text("group_id").references(() => groups.id, { onDelete: "set null" }),
     purchasedAt: timestamp("purchased_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    ...syncColumns(),
   },
   (table) => [
     index("items_user_idx").on(table.userId),
     index("items_group_idx").on(table.groupId),
     index("items_purchased_idx").on(table.purchasedAt),
+    index("items_group_updated_idx").on(table.groupId, table.updatedAt),
+    index("items_user_updated_idx").on(table.userId, table.updatedAt),
   ]
 )
 
@@ -201,11 +219,13 @@ export const tags = pgTable(
     userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     groupId: text("group_id").references(() => groups.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    ...syncColumns(),
   },
   (table) => [
     index("tags_user_idx").on(table.userId),
     index("tags_group_idx").on(table.groupId),
+    index("tags_group_updated_idx").on(table.groupId, table.updatedAt),
+    index("tags_user_updated_idx").on(table.userId, table.updatedAt),
   ]
 )
 
@@ -248,12 +268,15 @@ export const shoppingLists = pgTable(
     completedAt: timestamp("completed_at"),
     purchasedAt: timestamp("purchased_at"), // 購入日時（購入履歴として表示）
     location: text("location"), // 購入場所
+    ...syncColumns(),
   },
   (table) => [
     index("shopping_lists_user_idx").on(table.userId),
     index("shopping_lists_group_idx").on(table.groupId),
     index("shopping_lists_status_idx").on(table.status),
     index("shopping_lists_purchased_idx").on(table.purchasedAt),
+    index("shopping_lists_group_updated_idx").on(table.groupId, table.updatedAt),
+    index("shopping_lists_user_updated_idx").on(table.userId, table.updatedAt),
   ]
 )
 
@@ -277,10 +300,13 @@ export const listItems = pgTable(
     groupId: text("group_id"),
     checked: boolean("checked").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    ...syncColumns(),
   },
   (table) => [
     index("list_items_list_idx").on(table.listId),
     index("list_items_user_idx").on(table.userId),
+    index("list_items_group_updated_idx").on(table.groupId, table.updatedAt),
+    index("list_items_user_updated_idx").on(table.userId, table.updatedAt),
   ]
 )
 

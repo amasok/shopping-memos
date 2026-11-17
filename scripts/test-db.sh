@@ -25,6 +25,8 @@ docker exec "${PG_CONTAINER}" psql -U postgres -v ON_ERROR_STOP=1 -q -c "CREATE 
 
 export DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/${DB_NAME}"
 export OWNERSHIP_DB_TEST_URL="${DATABASE_URL}"
+# マイグレーションのテスト（#62 O3）は、このサーバーに専用の DB を作って消す
+export DB_TEST_URL="${DATABASE_URL}"
 npm run db:migrate
 # SQL ログ（開発用の logger）が多いので --silent で出さない
 npx vitest run --silent --testTimeout=30000 .db.test.ts "$@"
