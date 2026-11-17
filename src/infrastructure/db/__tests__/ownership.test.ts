@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest"
 import type { SQL } from "drizzle-orm"
 import { PgDialect } from "drizzle-orm/pg-core"
 import { items, shoppingLists, tags } from "@/infrastructure/db/drizzle/schema"
-import { accessibleByUser, canAccessScope, isSameScope, scopeCondition, type DbExecutor } from "../ownership"
+import { accessibleByUser, canAccessScope, isSameScope, ownedOrInGroups, scopeCondition, type DbExecutor } from "../ownership"
 
 const dialect = new PgDialect()
 const render = (where: SQL) => dialect.sqlToQuery(where)
@@ -105,5 +105,19 @@ describe("accessibleByUser（#73-1）", () => {
       '(("items"."group_id" is null and "items"."user_id" = $1) or "items"."group_id" IN (SELECT "group_members"."group_id" FROM "group_members" WHERE "group_members"."user_id" = $2))'
     )
     expect(q.params).toEqual(["user-1", "user-1"])
+  })
+})
+
+describe("ownedOrInGroups（#62 O5）", () => {
+  it("所属グループの ID の配列で表し、サブクエリを使わない", () => {
+    const q = render(ownedOrInGroups(items, "user-1", ["g1", "g2"]))
+    expect(q.sql).toBe('(("items"."group_id" is null and "items"."user_id" = $1) or "items"."group_id" in ($2, $3))')
+    expect(q.params).toEqual(["user-1", "g1", "g2"])
+    expect(q.sql).not.toContain("select")
+  })
+
+  it("所属グループがなければ、自分の個人データだけ", () => {
+    const q = render(ownedOrInGroups(items, "user-1", []))
+    expect(q.sql).toBe('("items"."group_id" is null and "items"."user_id" = $1)')
   })
 })

@@ -1,4 +1,4 @@
-import { and, eq, isNull, or, sql, type SQL } from "drizzle-orm"
+import { and, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm"
 import type { AnyPgColumn } from "drizzle-orm/pg-core"
 import type { DrizzleDB } from "./drizzle/client"
 import { groupMembers } from "./drizzle/schema"
@@ -72,6 +72,16 @@ export function accessibleByUser(table: ScopedTable, userId: string): SQL {
     and(isNull(table.groupId), eq(table.userId, userId)),
     sql`${table.groupId} IN (SELECT ${groupMembers.groupId} FROM ${groupMembers} WHERE ${groupMembers.userId} = ${userId})`
   ) as SQL
+}
+
+/**
+ * accessibleByUser と同じ範囲を、先に読んだ所属グループの ID で表した WHERE 条件（#62 O5）。
+ * サブクエリを使わないので、(user_id, updated_at) と (group_id, updated_at) のインデックスが、両方とも絞り込みに使える
+ * （sync.pull のように、所属グループを同じトランザクションで先に読む読み取り用）
+ */
+export function ownedOrInGroups(table: ScopedTable, userId: string, groupIds: readonly string[]): SQL {
+  const personal = and(isNull(table.groupId), eq(table.userId, userId)) as SQL
+  return groupIds.length > 0 ? (or(personal, inArray(table.groupId, [...groupIds])) as SQL) : personal
 }
 
 /**

@@ -29,26 +29,10 @@ describe("Sync API スキーマテスト", () => {
     })
   })
 
-  describe("syncPullInputSchema", () => {
-    it("since日時を正しくパースする", () => {
-      const input = {
-        since: "2025-01-01T00:00:00.000Z",
-      }
-
-      const result = syncPullInputSchema.parse(input)
-      expect(result.since).toBeInstanceOf(Date)
-    })
-
-    it("groupIdsをフィルタリングに使用できる", () => {
-      const input = {
-        groupIds: [
-          "123e4567-e89b-12d3-a456-426614174000",
-          "223e4567-e89b-12d3-a456-426614174000",
-        ],
-      }
-
-      const result = syncPullInputSchema.parse(input)
-      expect(result.groupIds).toHaveLength(2)
+  describe("syncPullInputSchema（#62 O5）", () => {
+    it("カーソルと protocolVersion を受け入れ、カーソルは省略できる", () => {
+      expect(syncPullInputSchema.parse({ protocolVersion: 1, cursor: "abc" }).cursor).toBe("abc")
+      expect(syncPullInputSchema.parse({ protocolVersion: 1 }).cursor).toBeUndefined()
     })
   })
 

@@ -140,19 +140,46 @@ export const syncPushOutputSchema = z.object({
 export type SyncPushOutput = z.infer<typeof syncPushOutputSchema>
 
 /**
- * 同期プルリクエスト
+ * 同期プルリクエスト（#62 O5）
+ * cursor は前回の nextCursor（不透明な文字列）。省略すると最初から全件
  */
 export const syncPullInputSchema = z.object({
-  since: z.coerce.date().optional(),
-  groupIds: z.array(z.string().uuid()).max(REQUEST_LIMITS.groupIds).optional(),
+  cursor: z.string().max(REQUEST_LIMITS.pullCursor).optional(),
+  protocolVersion: z.number().int(),
 })
 
 export type SyncPullInput = z.infer<typeof syncPullInputSchema>
 
+/** sync.pull で返すエンティティ */
+export type SyncPullEntity = "tags" | "items" | "lists" | "listItems"
+
+const pulledRowsSchema = z.array(z.record(z.string(), z.unknown()))
+
 /**
- * 同期プルレスポンス（エンティティごとの変更）
+ * 同期プルレスポンス（#62 O5）
+ * - changes: 前回からの変更（tombstone を含む。アイテムは tagIds つき）
+ * - memberships: 所属グループの現在の一覧（前回と変わったら、クライアントはカーソルなしで取り直す）
+ * - hasMore が true の間、nextCursor で続きを取る。false になったら nextCursor を保存し、次の pull で使う
  */
 export const syncPullOutputSchema = z.object({
+  serverTime: z.string(),
+  changes: z.object({
+    tags: pulledRowsSchema,
+    items: pulledRowsSchema,
+    lists: pulledRowsSchema,
+    listItems: pulledRowsSchema,
+  }),
+  memberships: z.object({ groupIds: z.array(z.string()) }),
+  nextCursor: z.string(),
+  hasMore: z.boolean(),
+})
+
+export type SyncPullOutput = z.infer<typeof syncPullOutputSchema>
+
+/**
+ * サーバーのデータ（sync.merge のレスポンスで返す、エンティティごとの全件）
+ */
+export const syncServerDataSchema = z.object({
   items: z.array(z.record(z.string(), z.unknown())),
   tags: z.array(z.record(z.string(), z.unknown())),
   lists: z.array(z.record(z.string(), z.unknown())),
@@ -161,7 +188,7 @@ export const syncPullOutputSchema = z.object({
   syncedAt: z.coerce.date(),
 })
 
-export type SyncPullOutput = z.infer<typeof syncPullOutputSchema>
+export type SyncServerData = z.infer<typeof syncServerDataSchema>
 
 /**
  * 初回ログイン時のマージリクエスト
@@ -335,7 +362,7 @@ export type IdMapping = z.infer<typeof idMappingSchema>
  */
 export const syncMergeOutputSchema = z.object({
   idMappings: z.array(idMappingSchema),
-  serverData: syncPullOutputSchema,
+  serverData: syncServerDataSchema,
 })
 
 export type SyncMergeOutput = z.infer<typeof syncMergeOutputSchema>

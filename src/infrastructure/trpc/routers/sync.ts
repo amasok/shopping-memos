@@ -13,6 +13,7 @@ import { syncRepository } from "@/modules/sync/infrastructure/repositories/Drizz
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
 import { dataMergeService } from "@/modules/sync/application/services/DataMergeService"
 import { syncPushService } from "@/modules/sync/application/services/SyncPushService"
+import { InvalidCursorError, syncPullService } from "@/modules/sync/application/services/SyncPullService"
 
 /**
  * Sync コンテキストのルーター
@@ -35,35 +36,23 @@ export const syncRouter = router({
     }),
 
   /**
-   * サーバーから変更をプル
-   * - since以降に更新されたデータを取得
-   * - ユーザーがアクセス可能なグループのデータのみ
+   * 前回からの変更を、カーソルで少しずつ取る（#62 O5）
+   * - 自分の個人データと所属グループのデータ（tombstone を含む）。1 回 500 行まで
+   * - 対応外の protocolVersion は CLIENT_TOO_OLD
    */
   pull: protectedProcedure
     .input(syncPullInputSchema)
     .query(async ({ input, ctx }) => {
-      // ユーザーが所属するグループを取得
-      const userGroups = await groupRepository.findByUserId(ctx.userId)
-      const accessibleGroupIds = userGroups.map((g) => g.id)
-
-      // groupIdsパラメータがあればそれでフィルタ
-      const targetGroupIds = input.groupIds
-        ? input.groupIds.filter((id) => accessibleGroupIds.includes(id))
-        : accessibleGroupIds
-
-      // 変更されたエンティティを取得
-      const changes = await syncRepository.getChangedEntities(
-        targetGroupIds,
-        input.since
-      )
-
-      return {
-        items: changes.items,
-        tags: changes.tags,
-        lists: changes.lists,
-        listItems: changes.listItems,
-        history: changes.history,
-        syncedAt: new Date(),
+      if (!SUPPORTED_SYNC_PROTOCOL_VERSIONS.includes(input.protocolVersion)) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: CLIENT_TOO_OLD })
+      }
+      try {
+        return await syncPullService.pull(ctx.userId, input.cursor)
+      } catch (error) {
+        if (error instanceof InvalidCursorError) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error.message })
+        }
+        throw error
       }
     }),
 

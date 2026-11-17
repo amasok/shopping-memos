@@ -156,9 +156,10 @@ describe("入力の上限（#72）", () => {
   })
 
   describe("sync.pull", () => {
-    it("上限を超えるグループ数を拒否する", () => {
-      expect(syncPullInputSchema.safeParse({ groupIds: uuids(REQUEST_LIMITS.groupIds) }).success).toBe(true)
-      expect(syncPullInputSchema.safeParse({ groupIds: uuids(REQUEST_LIMITS.groupIds + 1) }).success).toBe(false)
+    it("上限を超える長さのカーソルを拒否する（#62 O5）", () => {
+      const cursor = (n: number) => "a".repeat(n)
+      expect(syncPullInputSchema.safeParse({ protocolVersion: 1, cursor: cursor(REQUEST_LIMITS.pullCursor) }).success).toBe(true)
+      expect(syncPullInputSchema.safeParse({ protocolVersion: 1, cursor: cursor(REQUEST_LIMITS.pullCursor + 1) }).success).toBe(false)
     })
   })
 
