@@ -4,6 +4,8 @@ import {
   USER_B_EMAIL,
   USER_A_STORAGE,
   USER_B_STORAGE,
+  USER_BULK_EMAIL,
+  USER_BULK_STORAGE,
   loginAndSaveState,
 } from "./fixtures/auth-helpers"
 import { cleanupE2EData } from "./fixtures/db-helpers"
@@ -23,4 +25,9 @@ setup("authenticate user-a", async ({ page }) => {
 
 setup("authenticate user-b", async ({ page }) => {
   await loginAndSaveState(page, USER_B_EMAIL, USER_B_STORAGE)
+})
+
+// 大量のデータを入れるテスト（merge-chunks.spec.ts）専用（#170）
+setup("authenticate user-bulk", async ({ page }) => {
+  await loginAndSaveState(page, USER_BULK_EMAIL, USER_BULK_STORAGE)
 })
