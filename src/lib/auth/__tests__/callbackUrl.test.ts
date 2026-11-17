@@ -21,6 +21,12 @@ describe("ログインの後の戻り先（#61 A3a 4.2）", () => {
     "javascript:alert(1)",
     "http://shopping.counoco.net/",
     "https://shopping.counoco.net.evil.example.com/",
+    // ドットのセグメントが畳まれて "//evil.example" になるもの（レビューの High）
+    "/.//evil.example",
+    "/x/..//evil.example",
+    "/%2e//evil.example",
+    "/..//evil.example/x",
+    "https://shopping.counoco.net/.//evil.example",
   ])("戻り先に別のサイトは指定できない（%s はホーム）", (value) => {
     expect(safeCallbackPath(value, ORIGIN)).toBe("/")
   })

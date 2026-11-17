@@ -91,6 +91,26 @@ describe("認証の環境変数の確認（#61 A3a 0.3）", () => {
     ).toThrow(/BETTER_AUTH_TRUSTED_ORIGINS/)
   })
 
+  it.each(["production", "preview"])("Vercel（%s）では http の URL を拒否する（Cookie の Secure が付かなくなるため）", (vercelEnv) => {
+    const base = { ...PROD_ENV, VERCEL_ENV: vercelEnv }
+    expect(() => resolveAuthEnv({ ...base, BETTER_AUTH_URL: "http://shopping.counoco.net" })).toThrow(/BETTER_AUTH_URL/)
+    expect(() => resolveAuthEnv({ ...base, BETTER_AUTH_TRUSTED_ORIGINS: "http://preview.example.com" })).toThrow(
+      /BETTER_AUTH_TRUSTED_ORIGINS/
+    )
+  })
+
+  it("NODE_ENV=production だけ（ローカルの E2E）では http://localhost を受け付ける", () => {
+    const env = resolveAuthEnv({ ...PROD_ENV, VERCEL_ENV: "", NODE_ENV: "production", BETTER_AUTH_URL: "http://localhost:43123" })
+    expect(env.baseURL).toBe("http://localhost:43123")
+  })
+
+  it.each([
+    ["BETTER_AUTH_SECRET", "e2e-ci-only-better-auth-secret-not-for-production"],
+    ["OTP_EVENT_HMAC_KEY", "dev-only-otp-event-hmac-key-do-not-use-in-production"],
+  ])("Vercel では CI・開発用のダミーの %s を拒否する（貼り間違い）", (name, value) => {
+    expect(() => resolveAuthEnv({ ...PROD_ENV, [name]: value })).toThrow(new RegExp(name))
+  })
+
   it("本番（VERCEL_ENV=production）では Turnstile のテスト用のキーを拒否する", () => {
     expect(() =>
       resolveAuthEnv({ ...PROD_ENV, TURNSTILE_SECRET_KEY: TURNSTILE_TEST_SECRET_KEY })

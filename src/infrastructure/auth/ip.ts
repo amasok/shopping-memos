@@ -13,6 +13,15 @@ export const CLIENT_IP_HEADERS = ["x-real-ip"] as const
 export const IPV6_SUBNET = 64
 export const UNKNOWN_IP = "unknown"
 
+/** Turnstile の siteverify に渡す訪問者の IP（丸めない）。取れなければ 'unknown'（siteverify には渡さない） */
+export function clientIpForTurnstile(headers: Headers): string {
+  for (const name of CLIENT_IP_HEADERS) {
+    const value = headers.get(name)
+    if (value && getIPFromHeader(value, { ipv6Subnet: 128 })) return value.trim()
+  }
+  return UNKNOWN_IP
+}
+
 export function clientIpKey(headers: Headers): string {
   for (const name of CLIENT_IP_HEADERS) {
     const value = headers.get(name)

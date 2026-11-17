@@ -10,7 +10,7 @@ import * as schema from "@/infrastructure/db/drizzle/schema"
 import { OtpEventRepository } from "@/modules/identity/infrastructure/OtpEventRepository"
 import { createEmailSender, resolveEmailConfig, type EmailSender } from "./email"
 import { resolveAuthEnv, type AuthEnv } from "./env"
-import { clientIpKey, IPV6_SUBNET, CLIENT_IP_HEADERS } from "./ip"
+import { clientIpForTurnstile, clientIpKey, IPV6_SUBNET, CLIENT_IP_HEADERS } from "./ip"
 import { readOtpEmail } from "./otpEmail"
 
 /**
@@ -103,6 +103,24 @@ export function createAuth(deps: AuthDeps) {
   const now = deps.now ?? (() => new Date())
   const { env } = deps
 
+  /**
+   * そのアドレスに期限内のコードがあるか。Better Auth は期限切れの検証の行を、ほかのリクエストのついでに全体から消すので、
+   * 期限切れのコードを入れたときに「不一致」になることがある。行がなければ照合に進まず、期限切れと同じ応答にする
+   */
+  async function hasLiveOtp(email: string): Promise<boolean> {
+    const rows = await deps.db
+      .select({ id: schema.authVerifications.id })
+      .from(schema.authVerifications)
+      .where(
+        and(
+          eq(schema.authVerifications.identifier, `sign-in-otp-${email}`),
+          gt(schema.authVerifications.expiresAt, new Date())
+        )
+      )
+      .limit(1)
+    return rows.length > 0
+  }
+
   /** IP ごとの 24 時間の送信の上限（otp_events の sent を IP で数える） */
   async function sentFromIpToday(ip: string): Promise<number> {
     const since = new Date(now().getTime() - 24 * 60 * 60 * 1000)
@@ -124,9 +142,10 @@ export function createAuth(deps: AuthDeps) {
       const headers = ctx.headers ?? new Headers()
       const ip = clientIpKey(headers)
       // アドレスに依存しない理由（Turnstile・IP の上限）は、その旨を返してよい（specs「送信の結果でアドレスの存在が分からない」）
+      // Cloudflare には丸める前の訪問者の IP を渡す（/64 に丸めたキーではなく）
       const turnstileOk = await deps.verifyTurnstile({
         token: headers.get(TURNSTILE_TOKEN_HEADER),
-        remoteIp: ip,
+        remoteIp: clientIpForTurnstile(headers),
         challenge: false,
       })
       if (!turnstileOk) {
@@ -153,6 +172,10 @@ export function createAuth(deps: AuthDeps) {
       if (!email) badRequest("INVALID_EMAIL", "Invalid email")
       const otp = typeof body.otp === "string" ? body.otp : ""
 
+      // コードがない（期限切れで消えた・使った・送っていない）なら、照合として数えずに期限切れと同じ応答
+      if (!(await hasLiveOtp(email))) {
+        throw new APIError("BAD_REQUEST", { code: "OTP_EXPIRED", message: "OTP expired" })
+      }
       const ip = clientIpKey(ctx.headers ?? new Headers())
       const decision = await deps.otpEvents.guardVerify(email, ip, now())
       if (decision.kind === "reject") {
@@ -170,7 +193,9 @@ export function createAuth(deps: AuthDeps) {
 
   const after = createAuthMiddleware(async (ctx) => {
     if (ctx.path !== SIGN_IN_OTP_PATH || !ctx.context.newSession) return
-    const email = ctx.context.newSession.user.email
+    // hooks.before で正規化した本文のアドレス（照合に使ったもの）を使う
+    const email = readOtpEmail(ctx.body)
+    if (!email) return
     await deps.otpEvents.recordUnlocked(email, clientIpKey(ctx.headers ?? new Headers()), now())
   })
 

@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 
 /**
  * OtpEventRepository（#61 A3a 1.3）を実 DB で確かめるテスト
@@ -178,19 +178,44 @@ describe.skipIf(!TEST_DB_URL)("OtpEventRepository（実 DB）", () => {
     expect(left).toEqual([recent.getTime()])
   })
 
-  it("掃除は 1 日 1 回だけ（2 回目の送信では消さない）", async () => {
+  it("掃除は、送信のついでにプロセス（インスタンス）ごとに 1 日 1 回だけ呼ぶ", async () => {
+    // 同じ DB をほかのテストのファイルも並列に使うので、DB の行ではなく呼び出しの回数で確かめる
     const { repo, email } = setup()
-    const { email: oldEmail } = setup()
+    const purge = vi.spyOn(repo, "purgeExpired")
     const now = new Date()
     await repo.guardSend(email, IP, now)
-    const old = new Date(now.getTime() - 30 * DAY - MIN)
-    await ctx.db
-      .insert(ctx.schema.otpEvents)
-      .values({ id: crypto.randomUUID(), emailHash: repo.hashEmail(oldEmail), ip: IP, kind: "sent", createdAt: old })
+    expect(purge).toHaveBeenCalledTimes(1)
+    await repo.guardSend(`${crypto.randomUUID()}@example.com`, IP, new Date(now.getTime() + 60 * MIN))
+    expect(purge).toHaveBeenCalledTimes(1)
+    await repo.guardSend(`${crypto.randomUUID()}@example.com`, IP, new Date(now.getTime() + DAY + MIN))
+    expect(purge).toHaveBeenCalledTimes(2)
+  })
 
-    await repo.guardSend(`${crypto.randomUUID()}@example.com`, IP, new Date(now.getTime() + MIN))
-    expect(await rows(repo, oldEmail)).toHaveLength(1)
-    await repo.purgeExpired(now)
-    expect(await rows(repo, oldEmail)).toHaveLength(0)
+  it("別の IP の行を 1000 件以上積まれても、この IP のロックは解けない（読み込みの上限で落とさない）", async () => {
+    const { repo, email } = setup()
+    const start = Date.now() - 60 * MIN
+    for (let i = 0; i < 4; i++) {
+      const t = start + i * 10 * MIN
+      await repo.guardSend(email, IP, new Date(t))
+      for (let j = 1; j <= 3 && i * 3 + j <= 10; j++) await repo.guardVerify(email, IP, new Date(t + j * 1000))
+    }
+    expect(await repo.guardVerify(email, IP)).toEqual({ kind: "reject", reason: "locked" })
+
+    // 攻撃者が別の IP から、ロックの後の時刻の行を 1200 件積む
+    const hash = repo.hashEmail(email)
+    const base = Date.now() - 5 * MIN
+    const rowsToAdd = Array.from({ length: 1200 }, (_, i) => ({
+      id: crypto.randomUUID(),
+      emailHash: hash,
+      ip: `198.51.${Math.floor(i / 250)}.${(i % 250) + 1}`,
+      kind: i % 4 === 0 ? "sent" : "attempted",
+      createdAt: new Date(base + i * 100),
+    }))
+    for (let i = 0; i < rowsToAdd.length; i += 300) {
+      await ctx.db.insert(ctx.schema.otpEvents).values(rowsToAdd.slice(i, i + 300))
+    }
+
+    expect(await repo.guardVerify(email, IP)).toEqual({ kind: "reject", reason: "locked" })
+    expect(await repo.guardSend(email, IP, new Date(Date.now() + 2 * MIN))).toMatchObject({ kind: "silent" })
   })
 })

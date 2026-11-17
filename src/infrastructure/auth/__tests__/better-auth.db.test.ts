@@ -65,10 +65,13 @@ describe.skipIf(!TEST_DB_URL)("Better Auth のメールのコードでのログ�
   })
 
   let ipSeq = 0
-  /** テストごとに別の IP（rate limit の記録が混ざらないように） */
+  /**
+   * テストごとに別の IP（rate limit の記録が混ざらないように）。test:db は 1 回ごとに新しい DB なので、
+   * このファイルの中で重ならなければよい。ほかのファイル（session.db.test は 10.250.*）とも重ならない 10.11.* を使う
+   */
   function newIp() {
     ipSeq++
-    return `10.${Math.floor(Math.random() * 200) + 1}.${Math.floor(ipSeq / 250)}.${(ipSeq % 250) + 1}`
+    return `10.11.${Math.floor(ipSeq / 250)}.${(ipSeq % 250) + 1}`
   }
   function newEmail() {
     const email = `${crypto.randomUUID()}@example.com`
@@ -196,7 +199,8 @@ describe.skipIf(!TEST_DB_URL)("Better Auth のメールのコードでのログ�
       const t = setup()
       const email = newEmail()
       const ip = newIp()
-      await t.send(email, ip)
+      expect(await t.apiSend(email, ip)).toEqual({ success: true })
+      expect(t.lastOtp(email)).toBeDefined()
       await db
         .update(schema.authVerifications)
         .set({ expiresAt: new Date(Date.now() - 1000) })
@@ -248,7 +252,32 @@ describe.skipIf(!TEST_DB_URL)("Better Auth のメールのコードでのログ�
       await t.apiSend(email, ip)
       const otp = t.lastOtp(email)!
       expect(await t.apiSignIn(email, otp, ip)).toBe("ok")
-      expect(await t.apiSignIn(email, otp, ip)).toBe("INVALID_OTP")
+      // 使ったコードの行は消えているので、期限切れと同じ応答（再送信を促す）
+      expect(await t.apiSignIn(email, otp, ip)).toBe("OTP_EXPIRED")
+    })
+
+    it("期限切れのコードの行がほかのリクエストの掃除で消えていても、期限切れの文言になる", async () => {
+      const t = setup()
+      const email = newEmail()
+      const ip = newIp()
+      await t.apiSend(email, ip)
+      await db
+        .delete(schema.authVerifications)
+        .where(drizzle.eq(schema.authVerifications.identifier, `sign-in-otp-${email}`))
+      expect(await t.apiSignIn(email, t.lastOtp(email)!, ip)).toBe("OTP_EXPIRED")
+    })
+
+    it("コードを送っていないアドレスの照合は、照合として数えずに期限切れと同じ応答", async () => {
+      const t = setup()
+      const email = newEmail()
+      const ip = newIp()
+      expect(await t.apiSignIn(email, "123456", ip)).toBe("OTP_EXPIRED")
+      const repo = new Repo(db, resolveAuthEnv({}).otpEventHmacKey)
+      const rows = await db
+        .select()
+        .from(schema.otpEvents)
+        .where(drizzle.eq(schema.otpEvents.emailHash, repo.hashEmail(email)))
+      expect(rows).toHaveLength(0)
     })
 
     it("新しいコードを送ると古いコードは使えない", async () => {

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest"
-import { CLIENT_IP_HEADERS, IPV6_SUBNET, UNKNOWN_IP, clientIpKey } from "../ip"
+import { CLIENT_IP_HEADERS, IPV6_SUBNET, UNKNOWN_IP, clientIpForTurnstile, clientIpKey } from "../ip"
 
 function headers(init: Record<string, string>) {
   return new Headers(init)
@@ -41,6 +41,13 @@ describe("IP のキー（#61 A3a 1.2。design の D4）", () => {
 
   it("IPv4 を埋め込んだ IPv6 は IPv4 にする", () => {
     expect(clientIpKey(headers({ "x-real-ip": "::ffff:203.0.113.1" }))).toBe("203.0.113.1")
+  })
+
+  it("Turnstile には丸める前の x-real-ip を渡し、IP でなければ 'unknown'", () => {
+    expect(clientIpForTurnstile(headers({ "x-real-ip": "2001:db8:1:2::1" }))).toBe("2001:db8:1:2::1")
+    expect(clientIpForTurnstile(headers({ "x-real-ip": "203.0.113.1", "x-forwarded-for": "1.1.1.1" }))).toBe("203.0.113.1")
+    expect(clientIpForTurnstile(headers({ "x-real-ip": "1.1.1.1, 2.2.2.2" }))).toBe(UNKNOWN_IP)
+    expect(clientIpForTurnstile(headers({}))).toBe(UNKNOWN_IP)
   })
 
   it.each(["", "not-an-ip", "203.0.113.1, 198.51.100.1", "999.1.1.1"])(

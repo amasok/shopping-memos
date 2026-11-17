@@ -58,6 +58,7 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
     await client.end()
   })
 
+  let ipSeq = 0
   function setup(origin = "http://localhost:3000") {
     const env = { ...resolveAuthEnv({}), baseURL: origin, trustedOrigins: [origin] }
     const mails: { to: string; otp: string }[] = []
@@ -75,7 +76,9 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
     })
     current.auth = auth
     const route = createAuthRouteHandler({ handle: (r) => auth.handler(r), trustedOrigins: () => env.trustedOrigins })
-    const ip = `10.250.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250) + 1}`
+    ipSeq++
+    // ほかの db テストのファイル（better-auth.db.test は 10.11.*）と重ならない
+    const ip = `10.12.${Math.floor(ipSeq / 250)}.${(ipSeq % 250) + 1}`
     const email = `${crypto.randomUUID()}@example.com`
     emails.push(email)
 
@@ -160,6 +163,27 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
     expect(setCookie).toMatch(/;\s*Secure/i)
     expect(setCookie).toMatch(/;\s*HttpOnly/i)
     expect(setCookie).toMatch(/;\s*SameSite=Lax/i)
+  })
+
+  it("使っている間は、1 日ごとに DB と Cookie の期限が延びる", async () => {
+    const t = setup()
+    const { cookie, userId } = await t.login()
+    // 2 日前に作られたセッション（残り 28 日）にする
+    const day = 24 * 60 * 60 * 1000
+    await db
+      .update(schema.authSessions)
+      .set({ expiresAt: new Date(Date.now() + 28 * day), updatedAt: new Date(Date.now() - 2 * day) })
+      .where(drizzle.eq(schema.authSessions.userId, userId))
+
+    const res = await t.call("GET", "/get-session", undefined, cookie)
+    expect(res.status).toBe(200)
+    const setCookie = res.headers.get("set-cookie") ?? ""
+    expect(setCookie).toMatch(/better-auth\.session_token=/)
+    const maxAge = Number(/Max-Age=(\d+)/i.exec(setCookie)?.[1] ?? 0)
+    expect(Math.round(maxAge / (24 * 60 * 60))).toBe(30)
+
+    const [row] = await db.select().from(schema.authSessions).where(drizzle.eq(schema.authSessions.userId, userId))
+    expect(Math.round((row.expiresAt.getTime() - Date.now()) / day)).toBe(30)
   })
 
   it("セッションは 30 日で失効する", async () => {

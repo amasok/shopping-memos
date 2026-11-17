@@ -9,9 +9,13 @@ const CONTROL_OR_BACKSLASH = /[\u0000-\u001f\u007f\\]/
 export function safeCallbackPath(value: string | null | undefined, origin: string): string {
   if (!value || CONTROL_OR_BACKSLASH.test(value)) return "/"
   try {
+    const appOrigin = new URL(origin).origin
     const url = new URL(value, origin)
-    if (url.origin !== new URL(origin).origin) return "/"
+    if (url.origin !== appOrigin) return "/"
     const path = `${url.pathname}${url.search}${url.hash}`
+    // ドットのセグメントが畳まれて "//evil.example" になる値（"/.//evil.example" など）は、
+    // そのまま渡すとプロトコル相対で外へ移るので断る。組み立てた path も、もう一度同じオリジンに解決されるかを確かめる
+    if (path.startsWith("//") || new URL(path, origin).origin !== appOrigin) return "/"
     // ログイン画面に戻すと、ログインの後にまたログイン画面が出るのでホームにする
     return url.pathname === "/login" ? "/" : path
   } catch {

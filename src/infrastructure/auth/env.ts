@@ -7,6 +7,8 @@ import { z } from "@/shared/schemas/z"
  *   （src/instrumentation.ts がサーバーの起動時に確かめる。ビルドでは確かめない）
  * - ローカルの開発では、欠けた値を開発用の値と Cloudflare の Turnstile のテスト用のキー（常に成功）で埋める
  * - 本番（VERCEL_ENV=production）では Turnstile のテスト用のキーを拒否する（Preview と E2E では使う）
+ * - Vercel（production・preview）では、URL は https だけ（Cookie の Secure は baseURL の https で決まる）。
+ *   CI・開発用の既知のダミー（not-for-production・dev-only を含む値）の secret・鍵も拒否する
  *
  * エラーのメッセージには環境変数の名前だけを書き、値は書かない
  */
@@ -41,6 +43,8 @@ const DEV_SECRET = "dev-only-better-auth-secret-do-not-use-in-production"
 const DEV_OTP_EVENT_HMAC_KEY = "dev-only-otp-event-hmac-key-do-not-use-in-production"
 
 const KEY_MIN_LENGTH = 32
+/** CI・E2E・開発用のダミーの値に付けている印。Vercel で使われたら貼り間違い */
+const DUMMY_MARKERS = /not-for-production|dev-only|e2e-ci-only|e2e-local/i
 
 const blankToUndefined = z
   .string()
@@ -82,6 +86,10 @@ const envSchema = z.object({
   TURNSTILE_SECRET_KEY: blankToUndefined,
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: blankToUndefined,
 })
+
+function baseURLIsHttps(url: string | undefined): boolean {
+  return url?.startsWith("https://") ?? false
+}
 
 function isDeployed(env: Env): boolean {
   return Boolean(env.VERCEL_ENV && env.VERCEL_ENV !== "development") || env.NODE_ENV === "production"
@@ -130,6 +138,19 @@ export function resolveAuthEnv(env: Env): AuthEnv {
       throw new AuthConfigError(
         `本番では Turnstile のテスト用のキーを使えません: ${testKeys.map(([name]) => name).join(", ")}`
       )
+    }
+  }
+
+  if (env.VERCEL_ENV === "production" || env.VERCEL_ENV === "preview") {
+    const bad: string[] = []
+    if (!baseURLIsHttps(v.BETTER_AUTH_URL)) bad.push("BETTER_AUTH_URL")
+    if ((v.BETTER_AUTH_TRUSTED_ORIGINS ?? []).some((o) => !o.startsWith("https://"))) {
+      bad.push("BETTER_AUTH_TRUSTED_ORIGINS")
+    }
+    if (DUMMY_MARKERS.test(secret)) bad.push("BETTER_AUTH_SECRET")
+    if (DUMMY_MARKERS.test(otpEventHmacKey)) bad.push("OTP_EVENT_HMAC_KEY")
+    if (bad.length > 0) {
+      throw new AuthConfigError(`Vercel では https の URL と本番用の鍵が必要です: ${bad.join(", ")}`)
     }
   }
 

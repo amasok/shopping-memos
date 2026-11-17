@@ -18,8 +18,13 @@ type Db = PostgresJsDatabase<typeof schema>
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
 
 const DAY = 24 * 60 * 60 * 1000
-/** 1 つのアドレスの直近 24 時間の記録の読み込みの上限（IP ごとの上限があるので、通常は数十件） */
-const READ_LIMIT = 1000
+/**
+ * 1 つの「アドレス × IP」の直近 24 時間の記録の読み込みの上限。IP ごとの上限（送信 5 通・照合 10 回でロック）があるので、
+ * 通常は数十件。アドレス全体の行は読まない（別の IP の行を積まれても、この IP の locked が読み込みから落ちないように）
+ */
+const READ_LIMIT_PER_IP = 500
+/** 最新の sent の後の attempted（1 つのコードの 3 回の判定用。ロックの中で記録するので 3 件を超えない） */
+const READ_LIMIT_ATTEMPTS_ON_CODE = 100
 
 /**
  * otp_events の読み書き（#61 A3a 1.3。design の D2・D4）
@@ -54,7 +59,7 @@ export class OtpEventRepository {
   async guardSend(email: string, ip: string, now: Date = new Date()): Promise<SendDecision> {
     const emailHash = this.hashEmail(email)
     const decision = await this.db.transaction(async (tx) => {
-      const events = await this.lockAndRead(tx, emailHash, now)
+      const events = await this.lockAndRead(tx, emailHash, ip, now)
       const result = decideSend(events, ip, now)
       if (result.kind === "send") await this.insert(tx, emailHash, ip, "sent", now)
       return result
@@ -67,7 +72,7 @@ export class OtpEventRepository {
   async guardVerify(email: string, ip: string, now: Date = new Date()): Promise<VerifyDecision> {
     const emailHash = this.hashEmail(email)
     return this.db.transaction(async (tx) => {
-      const events = await this.lockAndRead(tx, emailHash, now)
+      const events = await this.lockAndRead(tx, emailHash, ip, now)
       const result = decideVerify(events, ip, now)
       if (result.kind === "verify") {
         await this.insert(tx, emailHash, ip, "attempted", now)
@@ -111,16 +116,51 @@ export class OtpEventRepository {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`otp-events:${emailHash}`}, 0))`)
   }
 
-  private async lockAndRead(tx: Tx, emailHash: string, now: Date): Promise<OtpEventRecord[]> {
+  /**
+   * 判定に要る記録だけを読む（otpAbusePolicy が見るのは次の 3 つ）
+   * - この IP の直近 24 時間の行（ロック・「アドレス × IP」の送信の数・累積ロックの数）
+   * - アドレスの最新の sent と最新の unlocked（再送の間隔・数え直しの区切り）
+   * - 最新の sent の後の attempted（1 つのコードの 3 回。IP によらない）
+   */
+  private async lockAndRead(tx: Tx, emailHash: string, ip: string, now: Date): Promise<OtpEventRecord[]> {
     await this.lock(tx, emailHash)
     const since = new Date(now.getTime() - OTP_POLICY.windowMs)
-    const rows = await tx
-      .select({ kind: otpEvents.kind, ip: otpEvents.ip, createdAt: otpEvents.createdAt })
+    const columns = { id: otpEvents.id, kind: otpEvents.kind, ip: otpEvents.ip, createdAt: otpEvents.createdAt }
+    const ofAddress = eq(otpEvents.emailHash, emailHash)
+
+    const fromIp = await tx
+      .select(columns)
       .from(otpEvents)
-      .where(and(eq(otpEvents.emailHash, emailHash), gt(otpEvents.createdAt, since)))
+      .where(and(ofAddress, eq(otpEvents.ip, ip), gt(otpEvents.createdAt, since)))
       .orderBy(desc(otpEvents.createdAt))
-      .limit(READ_LIMIT)
-    return rows.map((r) => ({ kind: r.kind as OtpEventKind, ip: r.ip, createdAt: r.createdAt }))
+      .limit(READ_LIMIT_PER_IP)
+    const latestOf = async (kind: OtpEventKind) =>
+      tx
+        .select(columns)
+        .from(otpEvents)
+        .where(and(ofAddress, eq(otpEvents.kind, kind)))
+        .orderBy(desc(otpEvents.createdAt))
+        .limit(1)
+    const lastSent = await latestOf("sent")
+    const lastUnlocked = await latestOf("unlocked")
+    const attemptsOnCode = await tx
+      .select(columns)
+      .from(otpEvents)
+      .where(
+        and(
+          ofAddress,
+          eq(otpEvents.kind, "attempted"),
+          gt(otpEvents.createdAt, lastSent[0]?.createdAt ?? since)
+        )
+      )
+      .orderBy(desc(otpEvents.createdAt))
+      .limit(READ_LIMIT_ATTEMPTS_ON_CODE)
+
+    const byId = new Map<string, OtpEventRecord>()
+    for (const r of [...fromIp, ...lastSent, ...lastUnlocked, ...attemptsOnCode]) {
+      byId.set(r.id, { kind: r.kind as OtpEventKind, ip: r.ip, createdAt: r.createdAt })
+    }
+    return [...byId.values()]
   }
 
   private async insert(tx: Tx, emailHash: string, ip: string, kind: OtpEventKind, now: Date): Promise<void> {
