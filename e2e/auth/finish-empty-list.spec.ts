@@ -4,6 +4,7 @@ import { USER_A_EMAIL } from "./fixtures/auth-helpers"
 
 /**
  * チェック 0 件の完了（ログイン中。#179 の 179b。openspec の shopping「チェック 0 件の完了」）
+ * と、メニューからのリストの削除（#191。openspec の shopping「メニューからのリストの削除」）
  *
  * ほかのテストのデータと混ざらないよう、名前は毎回ユニークにする
  */
@@ -63,5 +64,35 @@ test.describe("チェック 0 件の完了（ログイン中）", () => {
     await page.goto("/history")
     await expect(page.getByTestId("history-list").or(page.getByTestId("history-empty-state"))).toBeVisible({ timeout: 15000 })
     await expect(page.getByTestId(`history-item-${listId}`)).toHaveCount(0)
+  })
+})
+
+test.describe("メニューからのリストの削除（ログイン中。#191）", () => {
+  test.beforeAll(async () => {
+    userA = await getUser(USER_A_EMAIL)
+  })
+
+  test("メニューで商品ごと消すとリストと同じ名前の未購入の商品も削除する", async ({ page }) => {
+    const names = [name("メニュー1"), name("メニュー2")]
+    await seedItems({ userId: userA.id, items: names.map((n) => ({ id: testUUID(), name: n })) })
+    await openPersonal(page, userA.id)
+    for (const n of names) await expect(page.getByTestId("item-list")).toContainText(n)
+    const listId = await createListFrom(page, names)
+
+    await page.getByTestId("list-menu-button").click()
+    await page.getByTestId("list-delete-menu").click()
+    await page.getByTestId("list-delete-dialog").waitFor({ state: "visible" })
+    await page.getByTestId("list-delete-option-with-items").check()
+    await page.getByTestId("list-delete-confirm").click()
+
+    await expect(page).toHaveURL(/\/lists$/, { timeout: 15000 })
+    await expect(
+      page.locator("[data-testid^='list-item-']").first().or(page.getByTestId("lists-empty-state"))
+    ).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId(`list-item-${listId}`)).toHaveCount(0)
+    // カタログの商品も消え、「買いたいもの」の一覧に戻らない
+    await page.goto("/")
+    await expect(page.getByTestId("item-list").or(page.getByTestId("home-empty-state"))).toBeVisible({ timeout: 15000 })
+    for (const n of names) await expect(page.getByText(n)).toHaveCount(0)
   })
 })
