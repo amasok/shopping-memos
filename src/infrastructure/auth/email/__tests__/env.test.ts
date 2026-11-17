@@ -10,16 +10,41 @@ const KEY = "re_test_dummy_key_for_unit_tests"
 const FROM = "買い物メモ <noreply@mail.example.com>"
 const E2E_TOKEN = "a".repeat(32)
 const E2E_ENV = { E2E_TEST: "true", E2E_SEED_TOKEN: E2E_TOKEN }
+const E2E_BUILD = { e2eBuild: true }
 
 describe("メールの環境変数の検証と送り方の選択", () => {
-  it("E2E の実行時条件を満たすときは TestMailbox（Resend のキーがあっても送らない）", () => {
-    expect(resolveEmailConfig({ ...E2E_ENV, RESEND_API_KEY: KEY, EMAIL_FROM: FROM }).mode).toBe("test")
+  it("E2E_BUILD のビルドで E2E の実行時条件を満たすときは TestMailbox（Resend のキーがあっても送らない）", () => {
+    expect(
+      resolveEmailConfig({ ...E2E_ENV, RESEND_API_KEY: KEY, EMAIL_FROM: FROM }, E2E_BUILD).mode
+    ).toBe("test")
     // オフライン E2E は本番ビルド（NODE_ENV=production）で動かす
-    expect(resolveEmailConfig({ ...E2E_ENV, NODE_ENV: "production" }).mode).toBe("test")
+    expect(resolveEmailConfig({ ...E2E_ENV, NODE_ENV: "production" }, E2E_BUILD).mode).toBe("test")
   })
 
   it("E2E_TEST があっても Vercel 上なら TestMailbox にしない", () => {
-    expect(() => resolveEmailConfig({ ...E2E_ENV, VERCEL_ENV: "preview" })).toThrow(EmailConfigError)
+    expect(() => resolveEmailConfig({ ...E2E_ENV, VERCEL_ENV: "preview" }, E2E_BUILD)).toThrow(
+      EmailConfigError
+    )
+  })
+
+  it("E2E_BUILD でないビルドでは、E2E_TEST を誤って設定しても TestMailbox にしない", () => {
+    const notE2EBuild = { e2eBuild: false }
+    // 本番ビルドでキーがなければ、Map に入れて黙るのではなく起動時にエラーにする
+    expect(() => resolveEmailConfig({ ...E2E_ENV, NODE_ENV: "production" }, notE2EBuild)).toThrow(
+      /RESEND_API_KEY/
+    )
+    expect(
+      resolveEmailConfig({ ...E2E_ENV, RESEND_API_KEY: KEY, EMAIL_FROM: FROM }, notE2EBuild).mode
+    ).toBe("resend")
+    expect(resolveEmailConfig(E2E_ENV, notE2EBuild).mode).toBe("console")
+  })
+
+  it("E2E_BUILD は既定でビルド時に埋め込まれた process.env.E2E_BUILD を読む", () => {
+    vi.stubEnv("E2E_BUILD", "true")
+    expect(resolveEmailConfig(E2E_ENV).mode).toBe("test")
+    vi.stubEnv("E2E_BUILD", "false")
+    expect(resolveEmailConfig(E2E_ENV).mode).toBe("console")
+    vi.unstubAllEnvs()
   })
 
   it("RESEND_API_KEY と EMAIL_FROM があれば Resend", () => {
@@ -110,7 +135,8 @@ describe("createEmailSender", () => {
   it("設定に応じた実装を返す", () => {
     expect(createEmailSender({ RESEND_API_KEY: KEY, EMAIL_FROM: FROM })).toBeInstanceOf(ResendEmailSender)
     expect(createEmailSender({})).toBeInstanceOf(ConsoleEmailSender)
-    expect(createEmailSender(E2E_ENV)).toBeInstanceOf(TestMailboxEmailSender)
+    expect(createEmailSender(E2E_ENV, { e2eBuild: true })).toBeInstanceOf(TestMailboxEmailSender)
+    expect(createEmailSender(E2E_ENV, { e2eBuild: false })).toBeInstanceOf(ConsoleEmailSender)
   })
 
   it("本番でキーがなければエラー", () => {
@@ -132,7 +158,7 @@ describe("createEmailSender", () => {
   it("許可リストは TestMailbox にもかかる", async () => {
     const sender = createEmailSender(
       { ...E2E_ENV, EMAIL_RECIPIENT_ALLOWLIST: "taro@example.com" },
-      { log: vi.fn() }
+      { log: vi.fn(), e2eBuild: true }
     )
     await sender.sendOtp({ to: "hanako@example.com", otp: "123456", type: "sign-in" })
     expect(getTestMailbox().latestOtp("hanako@example.com")).toBeUndefined()
@@ -145,6 +171,7 @@ describe("createEmailSender", () => {
   })
 
   it("env を渡さなければ process.env を読む", () => {
+    vi.stubEnv("E2E_BUILD", "")
     vi.stubEnv("VERCEL_ENV", "")
     vi.stubEnv("NODE_ENV", "test")
     vi.stubEnv("E2E_TEST", "")

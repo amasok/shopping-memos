@@ -5,7 +5,8 @@ import { z } from "@/shared/schemas/z"
 /**
  * メールの環境変数の検証と送り方の選択（#61 A1）
  *
- * 1. E2E の実行時条件（E2E_TEST・VERCEL_ENV・E2E_SEED_TOKEN）を満たす → TestMailbox
+ * 1. E2E_BUILD=true のビルドで、E2E の実行時条件（E2E_TEST・VERCEL_ENV・E2E_SEED_TOKEN）を満たす → TestMailbox
+ *    （#70 と同じ二重の守り。本番ビルドで E2E_TEST を誤って設定しても、メールが Map に入って届かない状態にしない）
  * 2. RESEND_API_KEY がある → Resend（EMAIL_FROM も必須）
  * 3. Vercel 上（VERCEL_ENV が development 以外）か NODE_ENV=production でキーがない → エラー
  *    （起動時に気づけるようにする。本番でコードをログに出さない）
@@ -72,11 +73,27 @@ const envSchema = z.object({
   OTP_ALERT_EMAIL: optionalString.pipe(normalizedEmail.optional()),
 })
 
+/**
+ * E2E_BUILD=true のビルドか。`process.env.E2E_BUILD` は next.config.ts の `env` でビルド時に埋め込まれるので、
+ * 必ずこの字のとおりに読む（`env.E2E_BUILD` のように別名で読むと埋め込まれない）
+ */
+function isE2EBuild(): boolean {
+  return process.env.E2E_BUILD === "true"
+}
+
+export interface ResolveEmailConfigOptions {
+  /** E2E_BUILD=true のビルドか（テストで差し替える） */
+  e2eBuild?: boolean
+}
+
 function isDeployed(env: Env): boolean {
   return Boolean(env.VERCEL_ENV && env.VERCEL_ENV !== "development") || env.NODE_ENV === "production"
 }
 
-export function resolveEmailConfig(env: Env): EmailConfig {
+export function resolveEmailConfig(
+  env: Env,
+  { e2eBuild = isE2EBuild() }: ResolveEmailConfigOptions = {}
+): EmailConfig {
   const parsed = envSchema.safeParse(env)
   if (!parsed.success) {
     const names = [...new Set(parsed.error.issues.map((i) => String(i.path[0])))]
@@ -88,7 +105,7 @@ export function resolveEmailConfig(env: Env): EmailConfig {
     ...(OTP_ALERT_EMAIL ? { alertEmail: OTP_ALERT_EMAIL } : {}),
   }
 
-  if (isE2ERuntimeEnabled(env)) return { mode: "test", ...extras }
+  if (e2eBuild && isE2ERuntimeEnabled(env)) return { mode: "test", ...extras }
 
   if (RESEND_API_KEY) {
     if (!EMAIL_FROM) throw new EmailConfigError("RESEND_API_KEY を使うには EMAIL_FROM が必要です")

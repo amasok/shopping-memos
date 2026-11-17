@@ -46,7 +46,10 @@ export const users = pgTable("users", {
   emailVerifiedFlag: boolean("email_verified_flag").default(false).notNull(),
   image: text("image"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
 })
 
 /**
@@ -176,7 +179,7 @@ export const passkeys = pgTable(
     backedUp: boolean("backed_up").notNull(),
     transports: text("transports"),
     aaguid: text("aaguid"),
-    createdAt: timestamp("created_at").defaultNow(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [index("passkeys_user_idx").on(table.userId)]
 )
@@ -190,25 +193,36 @@ export const rateLimits = pgTable("rate_limits", {
 })
 
 /**
- * OTP の送信と失敗の記録（#72。設計書「#### OTP 送信の乱用対策」）
- * email_hash は OTP_EVENT_HMAC_KEY を鍵にした HMAC-SHA256。判定には直近 24 時間、保持は 30 日
+ * OTP の送信・照合・制限の記録（#72。設計書「#### OTP 送信の乱用対策」、61-a3 の design の D4）
+ * - email_hash: OTP_EVENT_HMAC_KEY を鍵にした HMAC-SHA256。管理者への知らせ（alerted）だけは特定のアドレスに結びつかないので NULL
+ * - ip: IP が取れないときは固定の値 'unknown'（NULL にすると (email_hash, ip) の照合が効かない）
+ * - kind: sent（送信）/ attempted（照合の前に記録）/ locked / unlocked / notified（本人への制限の通知）/ alerted（管理者への知らせ）
+ * 判定には直近 24 時間、保持は 30 日
  */
 export const otpEvents = pgTable(
   "otp_events",
   {
     id: text("id").primaryKey(),
-    emailHash: text("email_hash").notNull(),
-    // IP が取れないときは NULL
-    ip: text("ip"),
-    kind: text("kind").notNull(), // 'sent' | 'failed' | 'locked' | 'unlocked'
+    emailHash: text("email_hash"),
+    ip: text("ip").notNull(),
+    kind: text("kind").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
-    index("otp_events_email_created_idx").on(table.emailHash, table.createdAt),
-    index("otp_events_email_ip_created_idx").on(table.emailHash, table.ip, table.createdAt),
+    index("otp_events_email_kind_created_idx").on(table.emailHash, table.kind, table.createdAt),
+    index("otp_events_email_ip_kind_created_idx").on(
+      table.emailHash,
+      table.ip,
+      table.kind,
+      table.createdAt
+    ),
     // 全体の送信数の監視と、古い行の削除に使う
     index("otp_events_kind_created_idx").on(table.kind, table.createdAt),
-    check("otp_events_kind_check", sql`${table.kind} in ('sent', 'failed', 'locked', 'unlocked')`),
+    check(
+      "otp_events_kind_check",
+      sql`${table.kind} in ('sent', 'attempted', 'locked', 'unlocked', 'notified', 'alerted')`
+    ),
+    check("otp_events_email_hash_check", sql`${table.kind} = 'alerted' or ${table.emailHash} is not null`),
   ]
 )
 

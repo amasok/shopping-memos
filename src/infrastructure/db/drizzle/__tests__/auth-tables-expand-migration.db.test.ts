@@ -199,14 +199,28 @@ describe.skipIf(!TEST_DB_URL)("Better Auth 用テーブルの expand マイグ�
     ).rejects.toThrow(/rate_limits_key_unique/)
   })
 
-  it("otp_events の kind は sent / failed / locked / unlocked だけ", async () => {
-    for (const [i, kind] of ["sent", "failed", "locked", "unlocked"].entries()) {
+  it("otp_events の kind は sent / attempted / locked / unlocked / notified / alerted だけ", async () => {
+    const kinds = ["sent", "attempted", "locked", "unlocked", "notified", "alerted"]
+    for (const [i, kind] of kinds.entries()) {
       await sql`INSERT INTO otp_events (id, email_hash, ip, kind) VALUES (${`e${i}`}, 'h', '203.0.113.1', ${kind})`
     }
-    await sql`INSERT INTO otp_events (id, email_hash, ip, kind) VALUES ('e-noip', 'h', NULL, 'sent')`
     await expect(
-      sql`INSERT INTO otp_events (id, email_hash, kind) VALUES ('e-bad', 'h', 'bogus')`
+      sql`INSERT INTO otp_events (id, email_hash, ip, kind) VALUES ('e-bad', 'h', 'unknown', 'failed')`
     ).rejects.toThrow(/otp_events_kind_check/)
+  })
+
+  it("otp_events の ip は NOT NULL（取れないときは 'unknown' を入れる）", async () => {
+    await sql`INSERT INTO otp_events (id, email_hash, ip, kind) VALUES ('e-unknown', 'h', 'unknown', 'sent')`
+    await expect(
+      sql`INSERT INTO otp_events (id, email_hash, ip, kind) VALUES ('e-noip', 'h', NULL, 'sent')`
+    ).rejects.toThrow(/null value in column "ip"/)
+  })
+
+  it("otp_events の email_hash は alerted だけ NULL を許す", async () => {
+    await sql`INSERT INTO otp_events (id, email_hash, ip, kind) VALUES ('e-alert', NULL, 'unknown', 'alerted')`
+    await expect(
+      sql`INSERT INTO otp_events (id, email_hash, ip, kind) VALUES ('e-nohash', NULL, 'unknown', 'sent')`
+    ).rejects.toThrow(/otp_events_email_hash_check/)
   })
 
   it("otp_events に判定・監視用のインデックスがある", async () => {
@@ -215,8 +229,8 @@ describe.skipIf(!TEST_DB_URL)("Better Auth 用テーブルの expand マイグ�
     const defs = rows.map((r) => r.indexdef)
     expect(defs).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("(email_hash, created_at)"),
-        expect.stringContaining("(email_hash, ip, created_at)"),
+        expect.stringContaining("(email_hash, kind, created_at)"),
+        expect.stringContaining("(email_hash, ip, kind, created_at)"),
         expect.stringContaining("(kind, created_at)"),
       ])
     )

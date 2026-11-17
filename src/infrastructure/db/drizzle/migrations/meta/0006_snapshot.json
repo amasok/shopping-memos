@@ -1,5 +1,5 @@
 {
-  "id": "7a01e7b6-e1dc-4857-badf-f0c204eb349f",
+  "id": "4bf51374-f80b-40a1-91f8-2a7028083418",
   "prevId": "f48a9f9e-4b8f-4e6a-906b-394eb03694c4",
   "version": "7",
   "dialect": "postgresql",
@@ -1216,13 +1216,13 @@
           "name": "email_hash",
           "type": "text",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "ip": {
           "name": "ip",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "kind": {
           "name": "kind",
@@ -1239,11 +1239,17 @@
         }
       },
       "indexes": {
-        "otp_events_email_created_idx": {
-          "name": "otp_events_email_created_idx",
+        "otp_events_email_kind_created_idx": {
+          "name": "otp_events_email_kind_created_idx",
           "columns": [
             {
               "expression": "email_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1260,8 +1266,8 @@
           "method": "btree",
           "with": {}
         },
-        "otp_events_email_ip_created_idx": {
-          "name": "otp_events_email_ip_created_idx",
+        "otp_events_email_ip_kind_created_idx": {
+          "name": "otp_events_email_ip_kind_created_idx",
           "columns": [
             {
               "expression": "email_hash",
@@ -1271,6 +1277,12 @@
             },
             {
               "expression": "ip",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1316,7 +1328,11 @@
       "checkConstraints": {
         "otp_events_kind_check": {
           "name": "otp_events_kind_check",
-          "value": "\"otp_events\".\"kind\" in ('sent', 'failed', 'locked', 'unlocked')"
+          "value": "\"otp_events\".\"kind\" in ('sent', 'attempted', 'locked', 'unlocked', 'notified', 'alerted')"
+        },
+        "otp_events_email_hash_check": {
+          "name": "otp_events_email_hash_check",
+          "value": "\"otp_events\".\"kind\" = 'alerted' or \"otp_events\".\"email_hash\" is not null"
         }
       },
       "isRLSEnabled": false
@@ -1389,7 +1405,7 @@
           "name": "created_at",
           "type": "timestamp",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         }
       },

@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS "passkeys" (
 	"backed_up" boolean NOT NULL,
 	"transports" text,
 	"aaguid" text,
-	"created_at" timestamp DEFAULT now(),
+	"created_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "passkeys_credential_id_unique" UNIQUE("credential_id"),
 	CONSTRAINT "passkeys_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action
 );--> statement-breakpoint
@@ -85,16 +85,17 @@ CREATE TABLE IF NOT EXISTS "rate_limits" (
 );--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "otp_events" (
 	"id" text PRIMARY KEY NOT NULL,
-	"email_hash" text NOT NULL,
-	"ip" text,
+	"email_hash" text,
+	"ip" text NOT NULL,
 	"kind" text NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL,
-	CONSTRAINT "otp_events_kind_check" CHECK ("otp_events"."kind" in ('sent', 'failed', 'locked', 'unlocked'))
+	CONSTRAINT "otp_events_kind_check" CHECK ("otp_events"."kind" in ('sent', 'attempted', 'locked', 'unlocked', 'notified', 'alerted')),
+	CONSTRAINT "otp_events_email_hash_check" CHECK ("otp_events"."kind" = 'alerted' or "otp_events"."email_hash" is not null)
 );--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "auth_sessions_user_idx" ON "auth_sessions" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "auth_accounts_user_idx" ON "auth_accounts" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "auth_verifications_identifier_idx" ON "auth_verifications" USING btree ("identifier");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "passkeys_user_idx" ON "passkeys" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "otp_events_email_created_idx" ON "otp_events" USING btree ("email_hash","created_at");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "otp_events_email_ip_created_idx" ON "otp_events" USING btree ("email_hash","ip","created_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "otp_events_email_kind_created_idx" ON "otp_events" USING btree ("email_hash","kind","created_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "otp_events_email_ip_kind_created_idx" ON "otp_events" USING btree ("email_hash","ip","kind","created_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "otp_events_kind_created_idx" ON "otp_events" USING btree ("kind","created_at");
