@@ -364,15 +364,15 @@ output: {
 
 ### クライアント
 
-**Dexie version 9**
+**Dexie version 10**（v9 は #144 の `pendingMerge` で使ったため、同期の変更は v10。2026-11-17）
 
-- `lists`, `listItems` に `updatedAt` を追加する。ローカルで更新するたびに、全エンティティの `updatedAt` を補正済みの時刻で更新する（現在 `db.items.update` が `updatedAt` を更新していない問題も直す）
+- `lists`, `listItems` に `updatedAt` を追加する（既存の行は `createdAt` で埋める。以前の形の `syncQueue` は使っていなかったので v10 で捨てる）。ローカルで更新するたびに、全エンティティの `updatedAt` を補正済みの時刻で更新する（現在 `db.items.update` が `updatedAt` を更新していない問題も直す）
 - `syncQueue` を拡張: `{ id(opId), entity, entityId, type, patch, fieldTimes, clientTime, retryCount, status: "pending" | "inflight" | "failed", lastError? }`
 - **キューの圧縮**: 同じエンティティへの `pending` の操作をまとめる
   - create + update → create（パッチを統合）、update + update → update（統合）、create + delete → 両方消す、update + delete → delete
   - パッチを統合するとき、`fieldTimes` は**フィールドごとに新しい方**を残す（操作全体の `clientTime` は最新のものにする）
-  - **`inflight`（送信中）の操作は圧縮の対象から外す**。例えば create を送信中に delete が来た場合、両方消すとサーバーには作成だけが残る。そのため、delete は新しい操作として積む
-- **Dexie のバージョン更新（v8 → v9）**: 古いタブが開いていると `blocked` になる。古いタブ側は `versionchange` を受けたら DB を閉じてリロードする。新しいタブ側は `blocked` のときに「他のタブを閉じてください」と表示する
+  - **`inflight`（送信中）の操作は圧縮の対象から外す**。例えば create を送信中に delete が来た場合、両方消すとサーバーには作成だけが残る。そのため、delete は新しい操作として積む。一度送ってレスポンスが届かずに `pending` に戻した操作（`attempted`）も、サーバーで処理済みかもしれないので同じく圧縮しない（まとめると再送が `duplicate` になり、後の変更が届かない）。まとめた結果が push の上限を超えるときも、まとめずに積む
+- **Dexie のバージョン更新（v9 → v10）**: 古いタブが開いていると `blocked` になる。古いタブ側は `versionchange` を受けたら DB を閉じてリロードする。新しいタブ側は `blocked` のときに「他のタブを閉じてください」と表示する
 - ユーザー DB の `meta` テーブル: `cursor`, `serverTimeOffset`, `lastSyncAt`, `groupIds`
 
 **リポジトリ層（新規 `src/infrastructure/local/`）**
@@ -418,7 +418,7 @@ output: {
 | `src/infrastructure/trpc/routers/sync.ts` | push / pull の作り直し |
 | `src/infrastructure/trpc/routers/{catalog,shopping}.ts`、サービス層・リポジトリ層 | 論理削除、`deleted_at` の絞り込み、クライアント ID の受け入れ |
 | `src/shared/schemas/*` | `id` の追加、push のパッチ用スキーマ |
-| `src/lib/db/index.ts` | Dexie v9、ユーザーごとの DB |
+| `src/lib/db/index.ts` | Dexie v10、ユーザーごとの DB |
 | `src/infrastructure/local/*`（新規） | リポジトリ層 |
 | `src/infrastructure/sync/SyncEngine.ts`, `src/contexts/SyncContext.tsx`, `src/app/providers.tsx` | push / pull の実装と組み込み |
 | `src/hooks/data/*` | ローカルファースト化（tRPC の分岐を削除） |
@@ -542,7 +542,7 @@ develop に PR をマージ
 | O3b | `feat: 削除を論理削除に変更しクライアントIDを受け入れ` | 既存の削除を論理削除に、取得クエリの `deleted_at IS NULL`、update / delete の WHERE にスコープ（#73-1）、通常の mutation でも `updated_at` / `field_modified_at` を更新、作成時のクライアント ID 受け入れ | O3 | ~400 |
 | O4 | `feat: sync.push を実データに反映する冪等 API に作り直し` | 操作ごとの認可、パッチの検証と上限、フィールド単位の LWW と削除優先、`opId` による冪等化、`serverTime`、`protocolVersion`（#69 の push 部分を解消） | O3b、#68、#69（merge 部分） | ~500 |
 | O5 | `feat: sync.pull をカーソル差分取得に作り直し` | カーソル（60 秒のさかのぼり、ステートメントタイムアウト）、tombstone、`tagIds` の埋め込み、メンバーシップ、ページング、`protocolVersion` | O3b（O4 とは独立だが、ルールに従い O4 のマージ後に着手） | ~350 |
-| O6 | `feat: クライアント同期エンジン（push/pull/キュー圧縮）を実装` | Dexie v9（`versionchange` / `blocked` の処理）、ユーザーごとの DB、`meta`、リポジトリ層の土台、SyncEngine の push/pull/バックオフ/ロック/drain モード、キューの圧縮（`inflight` を除外、`fieldTimes` の統合）、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、SyncProvider の組み込み（この PR では hook はまだ tRPC 直呼びのまま。同期エンジンは「キューが空なら pull するだけ」で動く） | O4, O5 | ~500 |
+| O6 | `feat: クライアント同期エンジン（push/pull/キュー圧縮）を実装` | 2 つの PR に分ける。**O6a**: Dexie v10（`versionchange` / `blocked` の処理）、ユーザーごとの DB、`meta`、時刻の補正、リポジトリ層の土台、キューの圧縮（`inflight` を除外、`fieldTimes` の統合）、使っていなかった旧 SyncEngine / SyncContext の削除。**O6b**: SyncEngine の push/pull/バックオフ/ロック/drain モード、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、SyncProvider の組み込み（O6b では hook はまだ tRPC 直呼びのまま。同期エンジンは「キューが空なら pull するだけ」で動く） | O4, O5 | ~500 |
 | O7 | `refactor: カタログ（items/tags）をローカルファーストに移行` | `useItems` / `useTags` / ミューテーションをリポジトリ経由に（フラグが false なら従来の tRPC の分岐）。マージ後のゲスト DB 消去と初回の全件 pull | O6 | ~400 |
 | O8 | `refactor: 買い物（lists/listItems/history）をローカルファーストに移行` | `useLists` / `useListMutations` / `useHistory*` の移行（フラグで切り替え）、`finishShopping` / `revertHistory` の複合操作 | O7 | ~500 |
 | O9 | `feat: オフライン時のセッション保持と同期状態 UI を追加` | `lastKnownUser`、`status: "offline"`、セッション切れの処理、ログアウト時の消去と確認、OfflineBanner / SyncStatusBadge / FailedOperationsSheet / 手動更新、オンライン限定操作の無効化 | O8、#61 の A3（AuthContext の置き換え） | ~450 |
