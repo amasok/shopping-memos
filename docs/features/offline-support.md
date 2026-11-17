@@ -401,7 +401,7 @@ output: {
   - 所属グループが変わったら、抜けたグループのローカルデータを消し、カーソルなしで取り直す（前回の一覧がない最初の pull では比べない）。保存は、カーソルを消してから一覧を書く順にする（一覧だけ保存して止まると、次の pull が古いカーソルの差分だけを取る）
   - drain モードでは pull しない。エンジンは、ログイン中で merge が終わってから作る（`isMergeCompleted`）。`useSync()` は `engine`（O7 でリポジトリが時計と DB を使う）と `requestSync()`（書き込みの後の 2 秒のデバウンス）も返す
   - `groups` / `groupMembers` のキャッシュ（`identity.getGroups` での上書き）と、ログアウト時のユーザー DB の削除は、まだ行わない（O7 / O9）→ `groups` のキャッシュは O7 で入れた（下の「O7 での細部」）。`groupMembers` のキャッシュとユーザー DB の削除は O9
-- **O7 での細部（2026-11-17）**（`src/hooks/data/useCatalogSource.ts`、`src/infrastructure/local/catalogRepository.ts`、`src/hooks/data/catalogQueries.ts`。仕様は `openspec/changes/62-o7-catalog-local-first/`）:
+- **O7 での細部（2026-11-17）**（`src/hooks/data/useCatalogSource.ts`、`src/infrastructure/local/catalogRepository.ts`、`src/hooks/data/catalogQueries.ts`。仕様は `openspec/changes/archive/2026-11-17-62-o7-catalog-local-first/`）:
   - カタログの読み書きの経路: ゲスト（とログイン中で merge の前）はゲスト DB（キューに積まない）、ログイン中・フラグ false は tRPC、ログイン中・フラグ true はユーザー DB（キューに積み、書き込みの後に `requestSync()`）。買い物の hooks（`useDataSource`）は O8 まで tRPC のまま
   - ローカルファーストの一覧の並びはサーバーと同じ（商品は作成の古い順、タグは名前の文字コードの順。タグは本番の DB の照合順序が C のときだけサーバーと一致）。ゲストの並びは今のまま（そろえるかは保留の change `62-o7b-catalog-guest-alignment`）
   - ユーザー DB の初回の同期（`lastSyncAt` がない）が終わるまで、カタログとグループの一覧は読み込み中にする
