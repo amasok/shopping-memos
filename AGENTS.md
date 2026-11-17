@@ -71,7 +71,7 @@ docker compose down           # 停止
 npm run lint && npm run test:run && npm run build
 ```
 
-CI（`.github/workflows/ci.yml`）は、PR と main への push で lint・typecheck・unit test・coverage・build を実行する。develop への push では develop 用 DB の migrate だけを行う。E2E は main への PR と main への push だけ（develop への PR の前に `npm run test:e2e:local` で全部流す）、本番 DB の migrate は main への push だけ。docs だけの変更では動かない。
+CI（`.github/workflows/ci.yml`）は、PR と main への push で lint・typecheck・unit test・coverage・build を実行する。develop への push では develop 用 DB の migrate だけを行う。E2E は main への PR と main への push だけ（develop への PR の前に `npm run test:e2e:local` で全部流す）、本番 DB の migrate は main への push だけ。docs だけの変更でも動く（ブランチ保護の必須チェックを付けるため）。
 
 ### CI が使う DB の接続先（GitHub Actions の secret）
 
