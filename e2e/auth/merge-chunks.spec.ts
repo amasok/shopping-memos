@@ -1,6 +1,11 @@
 import { test, expect } from "@playwright/test"
 import { testUUID } from "./fixtures/db-helpers"
 import { trpcMutation, trpcMutationStatus, trpcQuery } from "./fixtures/trpc-helpers"
+import { USER_BULK_STORAGE } from "./fixtures/auth-helpers"
+
+// 上限ちょうどの 1000 件を取り込むので、共有のユーザー A ではなく専用のユーザーで流す。
+// A に残ると、後に流れる画面のテスト（preview-checklist など）のホームの一覧が遅くなり、表示待ちに間に合わない（#170）
+test.use({ storageState: USER_BULK_STORAGE })
 
 /**
  * #116: ゲストデータの sync.merge の分割送信（実 DB）

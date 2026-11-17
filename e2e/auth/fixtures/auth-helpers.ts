@@ -4,10 +4,16 @@ import { e2eHeaders, getUser } from "./db-helpers"
 /** E2Eテスト用のユーザーメールアドレス */
 export const USER_A_EMAIL = "user-a@e2e-test.local"
 export const USER_B_EMAIL = "user-b@e2e-test.local"
+/**
+ * 大量のデータ（上限ちょうどの 1000 件など）を入れるテスト専用のユーザー（#170）。
+ * 共有のユーザー A に入れると、その後に流れる画面のテスト（ホームの一覧の表示待ち）が遅くなって落ちるため、分ける
+ */
+export const USER_BULK_EMAIL = "user-bulk@e2e-test.local"
 
 /** storageState ファイルパス */
 export const USER_A_STORAGE = "e2e/.auth/user-a.json"
 export const USER_B_STORAGE = "e2e/.auth/user-b.json"
+export const USER_BULK_STORAGE = "e2e/.auth/user-bulk.json"
 
 /**
  * Credentials プロバイダでログインし、storageState を保存
