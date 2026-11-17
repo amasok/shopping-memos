@@ -4,8 +4,7 @@ import { tags } from "@/infrastructure/db/drizzle/schema"
 import { isSameScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
 
 // 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
-// 既存の import のために再エクスポートする
-export { isSameScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
+// ここからは再エクスポートしない（#151）
 
 /**
  * 指定したタグがすべて存在し、かつ scope と同じ所有スコープに属するか判定する

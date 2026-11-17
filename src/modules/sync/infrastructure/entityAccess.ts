@@ -4,8 +4,7 @@ import { canAccessScope, type DbExecutor, type OwnerScope } from "@/infrastructu
 import type { SyncEntity, EntityAccess } from "../domain/entities/SyncOperation"
 
 // 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
-// 既存の import のために再エクスポートする
-export { canAccessScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
+// ここからは再エクスポートしない（#151）
 
 /**
  * エンティティの所有スコープを取得する

@@ -23,6 +23,21 @@ const eslintConfig = defineConfig([
               group: ["zod/*"],
               message: 'zod は "@/shared/schemas/z" から import してください（CSP の eval 違反を防ぐ。#71）',
             },
+            // 所有スコープの型と判定は "@/infrastructure/db/ownership" から import する（#101・#151）。
+            // 古い経路（catalog の ownership、sync の entityAccess、shopping の catalogItemScope）は再エクスポートをやめた
+            {
+              group: [
+                "**/services/ownership",
+                "**/infrastructure/entityAccess",
+                "**/services/catalogItemScope",
+                // 同じフォルダからの相対 import（./ownership など）
+                "./ownership",
+                "./entityAccess",
+                "./catalogItemScope",
+              ],
+              importNames: ["isSameScope", "canAccessScope", "scopeCondition", "DbExecutor", "OwnerScope"],
+              message: '所有スコープの型と判定は "@/infrastructure/db/ownership" から import してください（#101・#151）',
+            },
           ],
         },
       ],

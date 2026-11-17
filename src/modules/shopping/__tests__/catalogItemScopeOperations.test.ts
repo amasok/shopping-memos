@@ -4,8 +4,8 @@ import {
   markScopedItemsPurchasedByName,
   markScopedItemsUnpurchasedByName,
   deleteScopedItemsByName,
-  type DbExecutor,
 } from "../application/services/catalogItemScope"
+import type { DbExecutor } from "@/infrastructure/db/ownership"
 import { createFakeDb } from "./helpers/fakeDb"
 
 const NOW = new Date("2026-01-01T00:00:00Z")
