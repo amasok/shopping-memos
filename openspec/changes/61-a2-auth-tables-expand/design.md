@@ -31,3 +31,7 @@ expand だけ。足す列は既定値つき、新しいテーブルは旧コー�
 
 - 0006 は 0005 の後。develop → main のリリースで、Vercel の本番デプロイより前に本番の migrate を流す（team-operation.md の「DB の変更を含むリリース」）。expand なので、A3 より前のリリースで当ててよい
 - 旧コードとの互換は、このブランチ（コードは Auth.js のまま）で `npm run test:e2e:local` を全部流して確かめる（設計書の L-10 に当たる）
+
+## 既知の差（害はない）
+
+- 0006 を本番に当ててから A3 を出すまでの間に Auth.js が作ったユーザーは、`email_verified` が入っていても `email_verified_flag` は false のまま（0006 の写しは当てた時点の行だけ）。Better Auth はコードでのログインに成功したときに true にするので、実害はない

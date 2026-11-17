@@ -29,3 +29,7 @@
 ## DB
 
 なし。
+
+## A3 への申し送り
+
+- `createEmailSender()` を `auth/index.ts` のモジュールの最上位で呼ばない。CI の `next build`（`NODE_ENV=production` で `RESEND_API_KEY` なし）が、ページデータの収集でモジュールを読み込んだときに `EmailConfigError` で落ちるため。最初の送信のときに作る（遅延して作り、作ったものを使い回す）か、CI のビルドにダミーの値を渡すかを A3 で決める
