@@ -63,7 +63,7 @@ Drizzle・Dexie・tRPC・`@/infrastructure` を import しない。入力は dom
 ### D3. サーバーの組み立て（application 層）
 
 - 完了・取り消しの I/O の手順を `src/modules/shopping/application/services/` の関数（例: `applyFinishShopping(tx, listRow, at, opTime?)`・`applyRevertHistory(...)`）にまとめ、tRPC（`ShoppingService`）と sync.push（`SyncPushService`）の両方から呼ぶ。手順: リストの行をロック → リストの商品を読む → `plan*` → 候補を `name IN (...)` とスコープ・未削除で 1 回で読む → `select*` で選ぶ → id の一覧で 1 回で UPDATE（sync.push は `fieldNotNewerThan` を WHERE に足す）→ 外す商品を論理削除 → リストを更新
-- **スコープの条件を落とさない（#73-1）**: tRPC では、リストの行をロックする SELECT（`FOR UPDATE`）の WHERE に `notDeleted` と `accessibleByUser(ctx.userId)` を付け、0 行なら今と同じエラー（完了は「リストが見つかりません」の BAD_REQUEST、取り消しは「履歴が見つかりません」の NOT_FOUND）にする。リストの UPDATE の WHERE にも同じ 2 つを残す。`canAccess` の後に権限が変わった場合のテストを置く。sync.push は今の `usable` の確認とロックのまま
+- **スコープの条件を落とさない（#73-1）**: tRPC では、リストの行をロックする SELECT（`FOR UPDATE`）の WHERE に `notDeleted` と `accessibleByUser(ctx.userId)` を付け、0 行なら今と同じエラー（完了は「リストが見つかりません」の BAD_REQUEST、取り消しは NOT_FOUND。今の取り消しは repository の `writableList` で 0 行のとき `RowNotFoundError` → NOT_FOUND で、その前にカタログだけ書き換わっていた）にする。リストの UPDATE の WHERE にも同じ 2 つを残す。`canAccess` の後に権限が変わった場合のテストを置く。sync.push は今の `usable` の確認とロックのまま
 - **書く id と記録する id**: カタログの UPDATE は `returning` した id を結果にし、tRPC はその id を今と同じく `sync_operations` に記録する（コミットの後）。sync.push は LWW の条件で UPDATE から外れた id を含めない。今の「名前ごとの UPDATE の returning」と同じ集合になることを、購入済み・別スコープ・削除済み・LWW で外れる商品を混ぜたテストで確かめる
 - 名前ごとの UPDATE（N+1）が、候補の SELECT 1 回と UPDATE 1 回になる
 - tRPC の取り消しは `ShoppingService.revertHistory` に移し、1 トランザクションにする。同期の記録は今と同じくコミットの後に書く
