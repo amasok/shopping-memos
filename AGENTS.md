@@ -22,7 +22,7 @@ AI コーディングエージェント向けのプロジェクトガイド。`C
 - **ローカル DB**: Dexie (IndexedDB) + dexie-react-hooks
 - **バリデーション**: Zod v4
 - **スタイリング**: Tailwind CSS v4、lucide-react
-- **PWA**: `src/app/manifest.ts` + 最小の `public/sw.js`（キャッシュなし、インストール要件のみ）。Service Worker ライブラリは未導入（ADR 005 で Serwist 採用を提案中）
+- **PWA**: `src/app/manifest.ts` + Serwist の Service Worker（`src/app/sw.ts` を `@serwist/turbopack` で `/serwist/sw.js` として配る。アプリシェルのプリキャッシュ、`/api/**` はキャッシュしない。kill switch あり）。`public/sw.js` は古いインストールを解除するためだけに残す（O11 で削除）
 - **テスト**: Vitest + Testing Library（jsdom）/ Playwright
 - **ランタイム**: Node.js 22.22.0（`.tool-versions`、asdf）※ CI は Node 20
 - **ホスティング**: Vercel
@@ -134,8 +134,11 @@ src/
 └── types/next-auth.d.ts
 
 e2e/                        # Playwright（fixtures/, auth/ はログイン必須のグループ系テスト）
-docs/adr/                   # ADR 001〜005
-docs/features/              # 機能設計書（.claude/rules/feature-design.md に従って作成）
+docs/design-doc.md          # 全体の設計書（構成・コンテキスト・同期・現状の課題と目指す構造）
+docs/adr/                   # ADR 001〜005（実装とのずれは design-doc.md に記載）
+docs/features/              # 以前の機能設計書（新しくは作らない。offline-support.md は #62 が終わるまで #62 の設計の正として更新、ほかは参照用）
+openspec/                   # OpenSpec。specs/ は今の振る舞いの正、changes/ は進行中の変更（feature-design.md）
+.agents/skills/openspec-*   # OpenSpec のスキル（.claude/skills/openspec-* はそこへのリンク）
 ```
 
 パスエイリアス: `@/*` → `src/*`
@@ -148,7 +151,7 @@ docs/features/              # 機能設計書（.claude/rules/feature-design.md 
   - ログイン直後: `DataMergeContext` がローカルのデータをサーバーへマージし、完了までは Dexie を使う。ログインのたびにゲストのデータがあれば送り、全部取り込めたら Dexie を空にする。ログアウトすると空のゲストに戻る（docs/features/offline-support.md「4b」）。
 - `src/hooks/data/*` のフックはこの判定で Dexie と tRPC を切り替えるので、ページ・コンポーネントはフック経由でデータにアクセスする。
 - グループ選択は `GroupContext`（`selectedGroupId`）。tRPC 側は `middleware/groupAuth.ts` でメンバーシップを検証する。
-- Dexie には `syncQueue` テーブルと `SyncEngine` / `SyncContext` があるが、現時点で Provider には組み込まれていない（#62 で対応中）。
+- ログイン中でマージが終わると `SyncProvider` が `SyncEngine` を動かす（#62 O6）。`NEXT_PUBLIC_LOCAL_FIRST=true` なら push と pull、false なら残ったキューの push だけ（drain）。どちらでも画面の読み書きはまだ tRPC のまま（hooks をローカルのリポジトリ経由にするのは O7・O8）。詳しくは `docs/design-doc.md`。
 
 ### データモデル
 
@@ -177,7 +180,7 @@ docs/features/              # 機能設計書（.claude/rules/feature-design.md 
 詳細は `.claude/rules/` を参照。
 
 - **タスク管理は GitHub Issues**（`gh issue ...`）。Claude Code の Task ツールやマークダウンでの管理はしない（`task-management.md`）
-- **機能実装前に設計書を作成し、承認を得てから実装**する。置き場所は `docs/features/<機能名>.md`（`feature-design.md`）
+- **振る舞いを変える実装の前に OpenSpec の change（proposal・specs）を作り、ユーザーの承認を得てから実装**する。Issue は何を・なぜ・優先度、change は振る舞いの仕様・設計・手順（`feature-design.md`）
 - **プロダクトコードの変更にはテストを付ける**。カバレッジ 80% 以上（`testing.md`）
 - ブランチは develop から `feature/` `fix/` `refactor/` `docs/` を切り、develop 向けに PR を作る。コミットは Conventional Commits（`git-workflow.md`）
 - E2E テストは IndexedDB を `page.evaluate()` で直接操作する。主要コンポーネントには `data-testid` を付ける

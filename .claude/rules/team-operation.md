@@ -14,6 +14,13 @@
 - チームメイトどうしは名前を指定した SendMessage で直接やりとりする。指摘・修正・再確認の往復はチームメイトどうしで済ませ、リーダーを経由しない
 - レビュー担当も SendMessage を使える種類のエージェントで作る（code-reviewer・database-reviewer などの読み取り専用の種類は SendMessage が使えず、リーダーの中継が要るため。general-purpose などで作り、指示で「ファイルを書き換えない」と縛る）
 
+## 仕様から実装までの流れ（OpenSpec）
+- 振る舞いが変わる Issue は、仕様（OpenSpec の change の proposal・specs）→ ユーザーの承認 → 実装 → tester → reviewer の順に進める（`feature-design.md`）
+- change は設計・実装の担当が作り、リーダーがユーザーに承認を取る。承認の前にコードを書かない
+- tester は、specs の Scenario ごとに対応するテストがあり、通っていることを確かめ、テストのない Scenario を報告に書く
+- reviewer は、実装が specs と合っているか、tasks.md のチェックがそろっているかを確かめる
+- archive は、tester の結果と reviewer の LGTM がそろった後、実装の担当が同じブランチで流してコミットする（未完了のタスクがあれば止める。手順は `feature-design.md` の「archive の手順」）。reviewer がその archive のコミット（specs/ への取り込み）を確かめてから、実装の担当がリーダーに報告する
+
 ## push・PR・マージ
 - チームメイトは push や PR 作成をしない。ローカルブランチにコミットしたら、tester → reviewer（ローカル差分でレビュー）の順に受け渡す
 - LGTM の後、リーダーが push・PR 作成・develop へのマージを行う
