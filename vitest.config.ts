@@ -20,13 +20,13 @@ export default defineConfig({
         "**/*.config.{ts,js}",
         "**/types/**",
       ],
-      // 目標は 80%。現状値（2026-11 時点: lines 72.4 / statements 72.8 / functions 63.9 / branches 66.2）の
-      // 少し下に置き、段階的に 80 まで上げる。下げない（#83）
+      // 目標は 80%（#155 で 4 項目とも達成）。現状値（2026-11 時点: lines 86.8 / statements 86.6 /
+      // functions 82.2 / branches 81.2）の少し下に置く。下げない（#83）
       thresholds: {
-        branches: 66,
-        functions: 63,
-        lines: 72,
-        statements: 72,
+        branches: 80,
+        functions: 81,
+        lines: 85,
+        statements: 85,
       },
     },
   },
