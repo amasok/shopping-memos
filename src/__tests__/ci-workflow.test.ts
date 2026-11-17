@@ -468,9 +468,9 @@ describe("本番 DB への手動 migrate（migrate-production.yml）(#164)", () 
   const check = manual.jobs.check
   const migrate = manual.jobs.migrate
   const stepNamed = (job: Job, name: string) => job.steps.find((s) => s.name === name)
-  /** GitHub Actions の既定の shell（bash -eo pipefail）で run を実行する */
+  /** shell を指定しない step の既定（bash -e {0}）と同じく、bash -e で run を実行する */
   const runBash = (run: string, env: Record<string, string>, cwd?: string) =>
-    spawnSync("bash", ["-eo", "pipefail", "-c", run], { env: { ...process.env, ...env }, cwd, encoding: "utf-8" })
+    spawnSync("bash", ["-e", "-c", run], { env: { ...process.env, ...env }, cwd, encoding: "utf-8" })
 
   it("手動実行（workflow_dispatch）だけで動き、確認の入力が必須", () => {
     expect(Object.keys(manual.on)).toEqual(["workflow_dispatch"])
@@ -505,6 +505,13 @@ describe("本番 DB への手動 migrate（migrate-production.yml）(#164)", () 
   it("main への push で動く ci.yml の本番 migrate は残っている", () => {
     expect(workflow.jobs.migrate.if).toBe("github.ref == 'refs/heads/main'")
     expect(workflow.jobs.migrate.steps.some((s) => s.run?.includes("db:migrate"))).toBe(true)
+  })
+
+  it("checkout は認証情報を残さない（後の step で git の資格情報を使わない）", () => {
+    for (const job of [check, migrate]) {
+      const checkout = job.steps.find((s) => s.uses?.startsWith("actions/checkout")) as (Step & { with?: Record<string, unknown> }) | undefined
+      expect(checkout?.with?.["persist-credentials"]).toBe(false)
+    }
   })
 
   it("式を run に直接埋め込まない（入力や secret は env で受け取る）", () => {
