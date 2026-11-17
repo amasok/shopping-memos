@@ -50,6 +50,8 @@ openspec show <change>
 4. tester が Scenario ごとのテストと E2E を確かめ、reviewer がレビュー（LGTM）
 5. tester の結果と LGTM がそろったら、実装の担当が同じブランチで archive してコミットする（下の「archive の手順」）
 6. reviewer が archive のコミットを確かめる → 実装の担当がリーダーに報告
+   - archive の後に specs の直しが要るとわかったら、archive のコミットを git revert して change に戻し、change の specs（と tasks）を直してから、テスト・レビューを経て archive し直す（振る舞いが変わるならユーザーの承認を取り直す）。specs/ を手で直さない
+   - コードだけの直しなら、archive の後のブランチにそのままコミットしてよい
 7. リーダーが PR を作り、本文に `Closes #N` と change のパス（archive 後のパス）を書く
 ```
 
