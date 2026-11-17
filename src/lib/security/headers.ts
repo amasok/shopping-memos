@@ -22,6 +22,9 @@ type Options = { isDev: boolean }
 
 type Directives = Record<string, string[]>
 
+/** Cloudflare Turnstile（#61 A3a 4.4。design の D9） */
+const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com"
+
 function serialize(directives: Directives): string {
   return Object.entries(directives)
     .map(([name, values]) => [name, ...values].join(" "))
@@ -42,7 +45,8 @@ export function buildReportOnlyCsp({ isDev }: Options): string {
   return serialize({
     "default-src": ["'self'"],
     // 開発時は React の開発ビルドが eval を使う
-    "script-src": ["'self'", "'unsafe-inline'", ...(isDev ? ["'unsafe-eval'"] : [])],
+    // Turnstile（#61 A3a。ログイン画面の非表示のウィジェット）のスクリプト
+    "script-src": ["'self'", "'unsafe-inline'", TURNSTILE_ORIGIN, ...(isDev ? ["'unsafe-eval'"] : [])],
     "style-src": ["'self'", "'unsafe-inline'"],
     // OGP 画像は任意の https の URL。data: / blob: はアイコンやプレビュー用
     "img-src": ["'self'", "data:", "blob:", "https:"],
@@ -51,12 +55,12 @@ export function buildReportOnlyCsp({ isDev }: Options): string {
     "connect-src": ["'self'", ...(isDev ? ["ws:"] : [])],
     "worker-src": ["'self'"],
     "manifest-src": ["'self'"],
-    "frame-src": ["'none'"],
+    // Turnstile のウィジェットは iframe
+    "frame-src": [TURNSTILE_ORIGIN],
     "frame-ancestors": ["'none'"],
     "object-src": ["'none'"],
     "base-uri": ["'self'"],
-    // Google ログインは next-auth/react の signIn（fetch のあと window.location で遷移）で、
-    // フォーム送信ではないため form-action の対象にならない。<form> で外部へ送る画面を作るときは見直す
+    // ログイン画面の <form> は fetch で送る（preventDefault）ので外部へは送らない。<form> で外部へ送る画面を作るときは見直す
     "form-action": ["'self'"],
   })
 }

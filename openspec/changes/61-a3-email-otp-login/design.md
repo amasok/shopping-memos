@@ -106,6 +106,8 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 - `AuthContext` は今の `user`・`isLoading`・`login`・`logout` を保ち、`status: "authenticated" | "unauthenticated" | "loading"` を足す（O9 が `"offline"` を足す）。`login()` はログイン画面（`/login?callbackUrl=<今のパス>`）への移動にする。`logout()` は今と同じくログイン中だけの状態を消してから `signOut`
 - 戻り先（`callbackUrl`）は、`new URL(value, location.origin)` の `origin` がアプリのオリジンと同じときだけ、その `pathname + search + hash` を使い、ほかはホームにする（`/\evil.example` やタブ・改行を含む値を通さない。レビュー M1）
 
+- **実装（4.x で決めた）**: `login()` と、ログインの成功の後の移動、ログアウトの後のホームへの移動は、`window.location.assign` で読み込み直す（React Query のキャッシュなど、前のユーザーの状態を残さない。ゲストのデータの取り込みは読み込みの後に `DataMergeContext` が行う）。戻り先の検証は `src/lib/auth/callbackUrl.ts`（`/login` には戻さない）。ログイン画面は `src/components/auth/LoginForm.tsx`、文言は `otpMessages.ts`（エラーのコードから決める）、Turnstile は `useTurnstile.ts`（`execution: "execute"` の非表示のウィジェット。送信のたびに reset してトークンを取り直す。E2E のビルドでテスト用のサイトキーのときだけ、スクリプトを読まずに Cloudflare のダミーのトークンを使う）
+
 ### D6. 別のオリジンからの POST（#71 の残り。レビュー H3）
 
 - tRPC の route（`src/app/api/trpc/[trpc]/route.ts`）と認証の route（`src/app/api/auth/[...all]/route.ts`）の POST に、同じ確認（`src/lib/security/origin.ts` に置く）をかける: `Origin` があって、`BETTER_AUTH_URL`（と `BETTER_AUTH_TRUSTED_ORIGINS`）のオリジンと違えば 403（`null` も 403）。`Sec-Fetch-Site: cross-site` なら 403。`Origin` も `Sec-Fetch-Site` もないリクエストは通す（ブラウザ以外。Cookie を持たないので CSRF にならない）

@@ -121,10 +121,10 @@ export default function SettingsPage() {
                     ログインして同期
                   </p>
                   <p className="mt-1 text-sm text-gray-600">
-                    Googleアカウントでログインすると、デバイス間でデータを同期できます
+                    メールアドレスでログインすると、デバイス間でデータを同期できます
                   </p>
                   <Button className="mt-3" size="sm" data-testid="login-button" onClick={handleLogin}>
-                    Googleでログイン
+                    ログイン
                   </Button>
                 </div>
               </div>

@@ -36,10 +36,10 @@
 
 ## 4. クライアント
 
-- [ ] 4.1 `src/infrastructure/auth/client.ts`（`createAuthClient` + `emailOTPClient`）と `AuthContext` の置き換え（`status` を足す、`login()` はログイン画面へ、`logout()` は今と同じくログイン中だけの状態を消してから `signOut`）。テストを先に書く（「ログアウトするとゲストに戻り、保護されたデータが見えない」）
-- [ ] 4.2 戻り先の検証の関数のテストを先に書き、実装する（「ログインの前にいた画面に戻る」「戻り先に別のサイトは指定できない」）
-- [ ] 4.3 ログイン画面（メール → コードの 2 段階、非表示の Turnstile、再送の 60 秒、エラーの文言、オフライン、移行の案内）のテストを先に書き、実装する（「ログイン画面に Google のボタンがない」「オフラインではコードを送れない」「送信から 60 秒は再送できない」「ログイン画面に移行の案内が出る」）。設定・グループの画面の「Googleでログイン」を「ログイン」に変える。`next.config.ts` の `lh3.googleusercontent.com` の `remotePatterns` は、Auth.js に戻すときのために残し、A6 で消す
-- [ ] 4.4 `src/lib/security/headers.ts` の Report-Only の `script-src`・`frame-src` に `https://challenges.cloudflare.com` を足し、テストを直す
+- [x] 4.1 `src/infrastructure/auth/client.ts`（`createAuthClient` + `emailOTPClient`）と `AuthContext` の置き換え（`status` を足す、`login()` はログイン画面へ、`logout()` は今と同じくログイン中だけの状態を消してから `signOut`）。テストを先に書く（「ログアウトするとゲストに戻り、保護されたデータが見えない」）
+- [x] 4.2 戻り先の検証の関数のテストを先に書き、実装する（「ログインの前にいた画面に戻る」「戻り先に別のサイトは指定できない」）
+- [x] 4.3 ログイン画面（メール → コードの 2 段階、非表示の Turnstile、再送の 60 秒、エラーの文言、オフライン、移行の案内）のテストを先に書き、実装する（「ログイン画面に Google のボタンがない」「オフラインではコードを送れない」「送信から 60 秒は再送できない」「ログイン画面に移行の案内が出る」）。設定・グループの画面の「Googleでログイン」を「ログイン」に変える。`next.config.ts` の `lh3.googleusercontent.com` の `remotePatterns` は、Auth.js に戻すときのために残し、A6 で消す
+- [x] 4.4 `src/lib/security/headers.ts` の Report-Only の `script-src`・`frame-src` に `https://challenges.cloudflare.com` を足し、テストを直す
 
 ## 5. E2E
 

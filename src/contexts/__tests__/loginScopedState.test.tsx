@@ -11,11 +11,11 @@ const state = vi.hoisted(() => ({
   storageAtSignOut: {} as Record<string, string | null>,
 }))
 
-vi.mock("next-auth/react", () => ({
-  SessionProvider: ({ children }: { children: React.ReactNode }) => children,
-  useSession: () => ({ data: { user: { id: "user-1", name: "A", email: "a@example.com" } }, status: "authenticated" }),
-  signIn: vi.fn(),
-  signOut: state.signOut,
+vi.mock("@/infrastructure/auth/client", () => ({
+  authClient: {
+    useSession: () => ({ data: { user: { id: "user-1", name: "A", email: "a@example.com" } }, isPending: false }),
+    signOut: state.signOut,
+  },
 }))
 vi.mock("@/infrastructure/trpc/client", () => ({
   trpc: { identity: { getGroups: { useQuery: () => ({ data: [], isLoading: false }) } } },
@@ -29,6 +29,11 @@ vi.mock("@/lib/db/guestData", async (importOriginal) => ({
 import { AuthProvider, useAuth } from "../AuthContext"
 
 beforeEach(() => {
+  // ログアウトの後のホームへの移動（jsdom は画面の移動をしない）
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { ...window.location, assign: vi.fn() },
+  })
   localStorage.clear()
   state.signOut.mockReset().mockImplementation(async () => {
     state.storageAtSignOut = {
