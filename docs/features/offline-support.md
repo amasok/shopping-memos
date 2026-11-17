@@ -407,7 +407,13 @@ output: {
   - ユーザー DB の初回の同期（`lastSyncAt` がない）が終わるまで、カタログとグループの一覧は読み込み中にする
   - タグの削除は、外した商品ごとに `update {tagIds}` もキューに積む（送る前のタグの create + delete が圧縮で消えたとき、商品のパッチに消えたタグが残らないように）
   - フラグが true の同期は、pull の後に `identity.getGroups` で `groups` のキャッシュを上書きし（失敗しても同期は成功）、`useGroups` はそれを読む。キャッシュは `ownerId` と `inviteCodeExpiresAt` を持たない（表示だけに使う）
-  - 買い物（tRPC）の変更の後は、`catalog.getItems` の invalidate の代わりに、フラグが true なら `sync()` する（「買いたいもの」の除外を追いつかせる）
+  - 買い物（tRPC）の変更の後は、`catalog.getItems` の invalidate の代わりに、フラグが true なら `sync()` する（「買いたいもの」の除外を追いつかせる）（O8 で、買い物も端末の DB に書くようになったのでやめた）
+- **O8 での細部（2026-11-17）**（`src/infrastructure/local/shoppingRepository.ts`、`src/hooks/data/shoppingQueries.ts`。仕様は `openspec/specs/shopping` の「端末の DB の…」）:
+  - 買い物の hooks も O7 の `useCatalogSource` の経路を使う。ゲストの hooks にあった完了・取り消し・スナップショット・照合のコピーはなくなり、ゲストも同じリポジトリ（キューに積まない）を通る
+  - 完了と取り消しは、端末の DB のカタログの商品・リストの商品・リストを 1 トランザクションで更新し、キューには `finishShopping`（location）/ `revertHistory` を 1 つだけ積む（サーバーが同じ規則で適用する）。端末の照合は、リストと同じ groupId の同じ名前の商品
+  - 進行中のリストを消すときは、リストの商品ごとの `delete` も積む（送る前の create を圧縮で一緒に消す）。完了したリスト（履歴の削除を含む）では、リストの `delete` だけを積む（サーバーは完了したリストの商品の削除を `list_completed` で断る）
+  - ゲストで残す振る舞い: チェック 0 件の完了はエラー、完了の照合は未購入だけ（`179b-finish-empty-list-dialog` で決める）。リストとリストの商品の並びは今のまま（`62-o8b-shopping-guest-order` で決める）。ローカルファーストはサーバーと同じ（作成の古い順、0 件でも完了でき、購入済みも更新する）
+  - 完了・取り消しがサーバーで conflict / rejected になると、端末で変えたカタログの商品は全件の取り直しまでずれが残る（まれ。O9 の失敗の表示で見直す）
 
 **オフライン時のセッション（#61 に依存）**
 
@@ -561,7 +567,7 @@ develop に PR をマージ
 | O5 | `feat: sync.pull をカーソル差分取得に作り直し` | カーソル（60 秒のさかのぼり、ステートメントタイムアウト）、tombstone、`tagIds` の埋め込み、メンバーシップ、ページング、`protocolVersion` | O3b（O4 とは独立だが、ルールに従い O4 のマージ後に着手） | ~350 |
 | O6 | `feat: クライアント同期エンジン（push/pull/キュー圧縮）を実装` | 2 つの PR に分ける。**O6a**: Dexie v10（`versionchange` / `blocked` の処理）、ユーザーごとの DB、`meta`、時刻の補正、リポジトリ層の土台、キューの圧縮（`inflight` を除外、`fieldTimes` の統合）、使っていなかった旧 SyncEngine / SyncContext の削除。**O6b**: SyncEngine の push/pull/バックオフ/ロック/drain モード、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、SyncProvider の組み込み（O6b では hook はまだ tRPC 直呼びのまま。同期エンジンは「キューが空なら pull するだけ」で動く） | O4, O5 | ~500 |
 | O7 | `refactor: カタログ（items/tags）をローカルファーストに移行` | `useItems` / `useTags` / ミューテーションをリポジトリ経由に（フラグが false なら従来の tRPC の分岐）。初回の同期が終わるまでの読み込み中、`groups` のキャッシュ（「マージ後のゲスト DB 消去」は #144 で済み。初回の全件 pull は O6 の SyncEngine がカーソルなしで行う） | O6 | ~400 |
-| O8 | `refactor: 買い物（lists/listItems/history）をローカルファーストに移行` | `useLists` / `useListMutations` / `useHistory*` の移行（フラグで切り替え）、`finishShopping` / `revertHistory` の複合操作 | O7 | ~500 |
+| O8 | `refactor: 買い物（lists/listItems/history）をローカルファーストに移行` | `useLists` / `useListMutations` / `useHistory*` の移行（フラグで切り替え）、`finishShopping` / `revertHistory` の複合操作（`LocalShoppingRepository` が #179 の domain の関数で端末の DB を更新し、複合操作を 1 つ積む）。ゲストも同じリポジトリを通る | O7 | ~500 |
 | O9 | `feat: オフライン時のセッション保持と同期状態 UI を追加` | `lastKnownUser`、`status: "offline"`、セッション切れの処理、ログアウト時の消去と確認、OfflineBanner / SyncStatusBadge / FailedOperationsSheet / 手動更新、オンライン限定操作の無効化 | O8、#61 の A3（AuthContext の置き換え） | ~450 |
 | O10 | `docs: ADR-004/005 と同期実装状況を更新` | ADR の更新、`sync-implementation-status.md` の更新 | O9 | ~150 |
 | O11 | `refactor: サーバーファーストの分岐と移行用コードを削除` | hook の tRPC 分岐、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、`public/sw.js`（自己解除用）の削除 | O10、R3 から 2 週間安定 | ~300（削除が中心） |

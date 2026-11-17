@@ -24,6 +24,9 @@ const state = vi.hoisted(() => ({
   getTagsQuery: vi.fn(),
   getGroupsQuery: vi.fn(),
   createItemMutate: vi.fn(async () => ({ id: "server-item" })),
+  createListMutate: vi.fn(async () => ({ id: "server-list" })),
+  getListsQuery: vi.fn(),
+  getHistoryQuery: vi.fn(),
 }))
 
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ user: state.user, isLoading: false }) }))
@@ -46,7 +49,14 @@ vi.mock("@/infrastructure/trpc/client", () => {
   })
   return {
     trpc: {
-      useUtils: () => ({ catalog: { getItems: { invalidate: state.invalidateItems }, getTags: { invalidate: vi.fn() } } }),
+      useUtils: () => ({
+        catalog: { getItems: { invalidate: state.invalidateItems }, getTags: { invalidate: vi.fn() } },
+        shopping: {
+          getLists: { invalidate: vi.fn() },
+          getList: { invalidate: vi.fn() },
+          getHistory: { invalidate: vi.fn() },
+        },
+      }),
       catalog: {
         getItems: query(state.getItemsQuery),
         getTags: query(state.getTagsQuery),
@@ -61,6 +71,21 @@ vi.mock("@/infrastructure/trpc/client", () => {
         getGroups: query(state.getGroupsQuery),
         getGroupMembers: query(vi.fn()),
       },
+      shopping: {
+        getLists: query(state.getListsQuery),
+        getList: query(vi.fn()),
+        getHistory: query(state.getHistoryQuery),
+        createList: mutation((...args) => state.createListMutate(...(args as []))),
+        updateList: mutation(),
+        deleteList: mutation(),
+        addItemToList: mutation(),
+        addNewItemToList: mutation(),
+        removeItemFromList: mutation(),
+        checkItem: mutation(),
+        finishShopping: mutation(),
+        revertHistory: mutation(),
+        deleteHistory: mutation(),
+      },
     },
   }
 })
@@ -70,6 +95,10 @@ import { useItems } from "../useItems"
 import { useTags } from "../useTags"
 import { useItemMutations } from "../useItemMutations"
 import { useGroups } from "../useGroups"
+import { useList, useLists, useListsWithItems } from "../useLists"
+import { useHistory } from "../useHistory"
+import { useListMutations } from "../useListMutations"
+import { useHistoryMutations } from "../useHistoryMutations"
 
 const USER = { id: "user-1", name: "U", email: "u@example.com" }
 let userDb: ShoppingMemosDB
@@ -197,17 +226,7 @@ describe("初回の同期が終わるまでの一覧", () => {
   })
 })
 
-describe("買い物の変更の後の同期（refreshCatalog）", () => {
-  it("ローカルファーストでリストに商品を入れると同期する", () => {
-    loginLocalFirst()
-    const { result } = renderHook(() => useCatalogSource())
-
-    result.current.refreshCatalog()
-
-    expect(state.sync).toHaveBeenCalledTimes(1)
-    expect(state.invalidateItems).not.toHaveBeenCalled()
-  })
-
+describe("サーバーファーストの買い物の変更の後のカタログ（refreshCatalog）", () => {
   it("サーバーファーストではカタログのキャッシュを無効にする", () => {
     state.user = USER
     state.isMergeCompleted = true
@@ -219,11 +238,155 @@ describe("買い物の変更の後の同期（refreshCatalog）", () => {
     expect(state.sync).not.toHaveBeenCalled()
   })
 
-  it("ゲストでは何もしない（一覧は端末の DB を追う）", () => {
-    const { result } = renderHook(() => useCatalogSource())
-    result.current.refreshCatalog()
+  it("ゲスト・ローカルファーストでは何もしない（一覧は端末の DB を追う）", () => {
+    const guest = renderHook(() => useCatalogSource())
+    guest.result.current.refreshCatalog()
+    loginLocalFirst()
+    const local = renderHook(() => useCatalogSource())
+    local.result.current.refreshCatalog()
+
     expect(state.invalidateItems).not.toHaveBeenCalled()
     expect(state.sync).not.toHaveBeenCalled()
+  })
+
+  it("ローカルファーストではリストに入れた商品が一覧からすぐに消える", async () => {
+    loginLocalFirst()
+    const { result } = renderHook(() => ({ items: useItems(), lists: useListMutations() }))
+    await act(async () => {
+      await userDb.items.add({ id: "i1", name: "牛乳", quantity: 1, tagIds: [], createdAt: new Date(), updatedAt: new Date() })
+    })
+    await waitFor(() => expect(result.current.items.items.map((i) => i.id)).toEqual(["i1"]))
+
+    await act(async () => {
+      await result.current.lists.createList({ name: "買い物", itemIds: ["i1"] })
+    })
+
+    await waitFor(() => expect(result.current.items.items).toEqual([]))
+    expect(state.sync).not.toHaveBeenCalled()
+  })
+})
+
+describe("買い物の読み書きの経路", () => {
+  it("フラグが true ならリストの作成はユーザー DB に書きキューに積む", async () => {
+    loginLocalFirst()
+    const { result } = renderHook(() => ({ lists: useLists(), mutations: useListMutations() }))
+
+    await act(async () => {
+      await result.current.mutations.createList({ name: "買い物" })
+    })
+
+    await waitFor(() => expect(result.current.lists.lists.map((l) => l.name)).toEqual(["買い物"]))
+    expect(await userDb.lists.count()).toBe(1)
+    expect((await userDb.syncQueue.toArray()).map((o) => [o.entity, o.type])).toEqual([["list", "create"]])
+    expect(state.requestSync).toHaveBeenCalledTimes(1)
+    expect(state.createListMutate).not.toHaveBeenCalled()
+    expect(state.getListsQuery).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ enabled: true }))
+  })
+
+  it("フラグが false ならリストの作成はサーバーに送る", async () => {
+    state.user = USER
+    state.isMergeCompleted = true
+    const { result } = renderHook(() => ({ lists: useLists(), mutations: useListMutations() }))
+
+    await act(async () => {
+      await result.current.mutations.createList({ name: "買い物" })
+    })
+
+    expect(state.createListMutate).toHaveBeenCalledWith(expect.objectContaining({ name: "買い物" }))
+    expect(state.getListsQuery).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ enabled: true }))
+    expect(await userDb.lists.count()).toBe(0)
+    expect(await guestDb.lists.count()).toBe(0)
+  })
+
+  it("ゲストのリストの作成はゲスト DB に書きキューに積まない", async () => {
+    const { result } = renderHook(() => ({ lists: useLists(), mutations: useListMutations() }))
+
+    await act(async () => {
+      await result.current.mutations.createList({ name: "買い物" })
+    })
+
+    await waitFor(() => expect(result.current.lists.lists.map((l) => l.name)).toEqual(["買い物"]))
+    expect(await guestDb.syncQueue.count()).toBe(0)
+    expect(state.createListMutate).not.toHaveBeenCalled()
+    expect(state.requestSync).not.toHaveBeenCalled()
+  })
+
+  it("ローカルファーストで初回の同期の前は買い物の一覧も読み込み中", async () => {
+    loginLocalFirst()
+    state.lastSyncAt = null
+    await userDb.lists.add({ id: "l1", name: "買い物", status: "in_progress", createdAt: new Date() })
+
+    const { result } = renderHook(() => ({ lists: useLists(), history: useHistory() }))
+
+    await waitFor(() => expect(result.current.lists.lists).toHaveLength(1))
+    expect(result.current.lists.isLoading).toBe(true)
+    expect(result.current.history.isLoading).toBe(true)
+  })
+})
+
+describe("買い物の hooks（端末の DB）", () => {
+  it("ローカルファーストで、リストの詳細と商品つきの一覧をユーザー DB から作成日時の古い順に出す", async () => {
+    loginLocalFirst()
+    await userDb.lists.add({ id: "l1", name: "買い物", status: "in_progress", createdAt: new Date(1) })
+    await userDb.listItems.add({ id: "b", listId: "l1", name: "卵", quantity: 1, tagIds: [], checked: false, createdAt: new Date(2) })
+    await userDb.listItems.add({ id: "a", listId: "l1", name: "牛乳", quantity: 1, tagIds: [], checked: false, createdAt: new Date(3) })
+
+    const { result } = renderHook(() => ({ detail: useList({ listId: "l1" }), withItems: useListsWithItems() }))
+
+    await waitFor(() => expect(result.current.detail.isLoading).toBe(false))
+    expect(result.current.detail.list?.name).toBe("買い物")
+    expect(result.current.detail.items.map((i) => i.id)).toEqual(["b", "a"])
+    await waitFor(() => expect(result.current.withItems.isLoading).toBe(false))
+    expect(result.current.withItems.lists.map((l) => l.id)).toEqual(["l1"])
+    expect(result.current.withItems.listItems.map((i) => i.id)).toEqual(["b", "a"])
+  })
+
+  it("ローカルファーストで、hooks から完了・取り消し・削除をすると複合操作と削除をキューに積み、同期を予約する", async () => {
+    loginLocalFirst()
+    const { result } = renderHook(() => ({ lists: useListMutations(), history: useHistoryMutations() }))
+    let listId = ""
+    await act(async () => {
+      listId = (await result.current.lists.createList({ name: "買い物" }))!.id
+      await result.current.lists.addNewItemToList({ listId, name: "牛乳" })
+      const [entry] = await userDb.listItems.toArray()
+      await result.current.lists.checkItem(entry.id, true)
+      await result.current.lists.updateList({ id: listId, name: "週末" })
+    })
+    await userDb.syncQueue.clear()
+
+    await act(async () => {
+      await result.current.lists.finishShopping(listId)
+      await result.current.history.revertHistory(listId)
+    })
+    expect((await userDb.syncQueue.orderBy("seq").toArray()).map((o) => o.type)).toEqual(["finishShopping", "revertHistory"])
+
+    const [entry] = await userDb.listItems.toArray()
+    await act(async () => {
+      await result.current.lists.checkItem(entry.id, true)
+      await result.current.lists.finishShopping(listId)
+      await result.current.history.deleteHistory(listId)
+    })
+    expect(await userDb.lists.count()).toBe(0)
+    expect(state.requestSync).toHaveBeenCalled()
+  })
+
+  it("ゲストの hooks の完了は今の規則（チェック 0 件はエラー）", async () => {
+    const { result } = renderHook(() => useListMutations())
+    let listId = ""
+    await act(async () => {
+      listId = (await result.current.createList({ name: "買い物" }))!.id
+      await result.current.addNewItemToList({ listId, name: "牛乳" })
+    })
+
+    await expect(result.current.finishShopping(listId)).rejects.toThrow("購入済みのアイテムがありません")
+
+    const [entry] = await guestDb.listItems.toArray()
+    await act(async () => {
+      await result.current.removeItemFromList(entry.id)
+      await result.current.deleteList(listId)
+    })
+    expect(await guestDb.lists.count()).toBe(0)
+    expect(await guestDb.syncQueue.count()).toBe(0)
   })
 })
 
