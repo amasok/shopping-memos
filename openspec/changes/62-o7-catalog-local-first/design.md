@@ -30,21 +30,23 @@
 | ログイン中・merge 済み・フラグ false | tRPC（今のまま） | tRPC |
 | ログイン中・merge 済み・フラグ true | ユーザー DB（`getUserDb(userId)`） | `LocalCatalogRepository`（`queue: true`、時計は `engine.getClock()`）→ `requestSync()` |
 
-- `useCatalogSource()` は `{ kind: "guest" \| "server" \| "local", store?: LocalStore, afterWrite: () => void, ready: boolean }` を返す。`local` で `engine` がまだない間は `ready: false`（一覧は読み込み中、書き込みは待たずにエラーにしない。ボタンは今の `isLoading` で押せない）
+- `useCatalogSource()` は `{ kind: "guest" \| "server" \| "local", store?: LocalStore, afterWrite: () => void, ready: boolean }` を返す。`local` で同期エンジン（`useSync().engine`）がまだない間（merge の直後の一瞬）は `ready: false` で、一覧は読み込み中にし、書き込みは受けずにエラー（「準備中です」）を返す（画面は一覧の `isLoading` の間ボタンを出さないので、通常は届かない）。エンジンができた後は、初回の同期の前でも書き込みを受けてキューに積む（pull は未送信の操作がある行を上書きしない）
+- ゲストの `LocalStore` の時計は補正なしの端末の時計（`createClock(0)`）。`createRecord` は `createdAt` を入れないので、`catalogRepository` が `createdAt` と `updatedAt` を入れる
 - `useDataSource()` は変えない（買い物の hooks が使う。O8 で同じ形にする）
 
 ### D2. `LocalCatalogRepository`（`src/infrastructure/local/catalogRepository.ts`）
 
 - `createItem` / `updateItem` / `deleteItem` / `createTag` / `updateTag` / `deleteTag` を `LocalStore` の上に置く。ID はクライアントで採番する（`crypto.randomUUID()`）
-- キューのパッチは sync.push の検証（`pushPatches.ts`）に合わせる: 商品の作成は `name・quantity・memo・tagIds・groupId`、更新は変えたフィールドだけ（`name・quantity・memo・tagIds・purchasedAt`。groupId は今の tRPC の更新と同じく変えない）、タグは `name`（作成は `groupId` も）。`purchasedAt` は ISO 文字列で送る
-- タグの削除は、`tags`・`items`・`syncQueue` の 1 トランザクションで、タグの削除（キューに `delete`）と、商品の `tagIds` からの外し（`updatedAt` を更新、キューには積まない）を行う。サーバーのタグの削除が `item_tags` を消し、商品の `updated_at` と `tagIds` の時刻を上げるので、pull で同じ結果が届く（`DrizzleTagRepository.softDelete`）
+- キューのパッチは sync.push の検証（`pushPatches.ts`）の範囲で、今の tRPC の mutation が送るものと同じにする（フラグの切り替えで振る舞いを変えない）: 商品の作成は `name・quantity・memo・tagIds・groupId`（memo・groupId は値があるときだけ）、更新は今の `catalog.updateItem` と同じ `name・quantity・tagIds` と、値があるときの `memo` だけ（メモの null は送らない＝今と同じく消せない。groupId と purchasedAt は送らない。カタログの hooks には購入状態を変える経路がない）、タグは `name`（作成は `groupId` も）。ユーザー DB の行も、パッチと同じフィールドだけを変える
+- タグの削除は、`tags`・`items`・`syncQueue` の 1 トランザクションで、タグの削除（キューに `delete`）と、外した商品ごとの `update {tagIds}`（キューに積む）を行う。積まないと、送る前のタグの create + delete が圧縮で両方消えたとき、送る前の商品の create / update のパッチに消えたタグが残り、サーバーで `invalid_reference` として拒否されて商品が届かない。積めば、pending の create / update にまとめられてパッチが正しくなる。サーバーのタグの削除（`DrizzleTagRepository.softDelete`）の後に届いた update は、tagIds の時刻がサーバーのほうが新しければ partial で捨てられるだけで害はない
 - 既存の `repository.ts` の関数を使う。Dexie は、外側のトランザクションのテーブルの一部を使う内側のトランザクションをそのまま使う
 
 ### D3. 端末の DB の読み取り（`src/hooks/data/catalogQueries.ts`）
 
 - `queryItems(db, options)` と `queryTags(db, options)` を、`useLiveQuery` から呼ぶ純粋でない（DB を読む）関数として切り出し、fake-indexeddb でテストする
 - 絞り込みは今のゲストの分岐と同じ（groupId・購入済み・タグの OR）。進行中のリストの除外は `excludeItemsInActiveLists`（#179）に、同じ groupId の進行中のリストの、リストに残っている商品の名前を渡す
-- 並び: `order: "server" \| "guest"`。ローカルファーストは `server`（商品は `createdAt` の昇順、タグは名前の順 `localeCompare(…, "ja")`）、ゲストは今のまま（商品は `createdAt` の降順、タグは並べ替えない）
+- 並び: `order: "server" \| "guest"`。ローカルファーストは `server`（商品は `createdAt` の昇順、タグは名前の文字コードの順 `a < b`）、ゲストは今のまま（商品は `createdAt` の降順、タグは並べ替えない）
+- タグの名前の順は、サーバー（`ORDER BY name`）と同じにできるとは限らない。サーバーの順は DB の照合順序で決まり、ローカルの postgres（en_US.utf8）と `localeCompare(…, "ja")` では結果が違った（reviewer の確認）。照合順序が C ならコードポイントの順で `a < b` と一致する。本番の Neon の照合順序は、本番 DB に触らない決まりのため実装の担当は確かめていない（リーダーに確認を頼む）。C でなければ、ローカルファーストに切り替えたときにタグの並びが変わりうる
 - ユーザー DB にはサーバーが返した行だけがある（自分の個人のデータと所属グループのデータ）ので、個人の一覧は `groupId` がないことだけで絞ってよい（サーバーの「自分の個人のもの」と同じになる）
 
 ### D4. 初回の同期が終わるまで
@@ -55,12 +57,13 @@
 ### D5. 買い物の変更の後（O8 までのつなぎ）
 
 - `useListMutations` / `useHistoryMutations` の `catalog.getItems.invalidate()` を `useCatalogSource().afterWrite` 相当の `refreshCatalog()` に置き換える: `server` なら今の invalidate、`local` なら `engine.sync()`（デバウンスなし。リストに入れた商品をすぐに一覧から外すため）、`guest` なら何もしない（`useLiveQuery` が追う）
+- `refreshCatalog()` は同期の完了を待たない（await しない）。画面は `addItemToList` をループで呼ぶ（`lists/detail` の `handleAddItems`）ので、待つと 1 件ごとに同期を待つことになる。続けて呼ばれたときは、`SyncEngine.sync()` の「実行中に呼ばれたら終わった後に 1 回流す」でまとまる
 - O8 で買い物もローカルファーストになれば、この同期は `requestSync()` だけになる
 
 ### D6. 所属グループのキャッシュ
 
 - `SyncEngine` の transport に任意の `getGroups(): Promise<GroupCacheRow[]>` を足す。`full` モードの pull が終わった後に呼び、`groups` を 1 トランザクションで上書き（`bulkPut` と、結果にない行の削除）する。失敗したらキャッシュは変えず、同期は成功として扱う（lastSyncAt を記録）
-- キャッシュの行: `id・name・inviteCode・inviteEnabled・createdAt・updatedAt・memberCount`。`getGroups` は `ownerId` を返さないので、`ownerId: ""` にする（キャッシュの行は表示だけに使い、権限の判定に使わない）
+- キャッシュの行: `id・name・inviteCode・inviteEnabled・createdAt・updatedAt・memberCount`。`getGroups` は `ownerId` を返さないので、`ownerId: ""` にする（キャッシュの行は表示だけに使い、権限の判定に使わない）。`getGroups` が返す `inviteCodeExpiresAt` は持たない（`useGroups` を使う画面は使っていない）
 - `useGroups()` は、`local` ならユーザー DB の `groups` を `createdAt` の順に読み、`refetch` は `engine.sync()` にする。`server`・ゲストは今のまま
 - `GroupContext` の「選んでいるグループが一覧にあるか」の確認は、今の tRPC のまま（オフラインのセッションは O9）
 - `groupMembers` のキャッシュ（メンバー一覧）は O9 に回す（グループの詳細の画面はオンラインの管理画面で、オフラインでの表示の要件がない）
@@ -95,6 +98,8 @@
 
 - [フラグが true のとき、買い物（tRPC）の変更が pull まで端末の DB に来ない] → D5 で変更の後にすぐ同期する。オフラインでは買い物の変更そのものができない（O8 まで）
 - [初回の同期が終わらないと読み込み中のまま] → D4。O9 の同期の状態の表示で扱う
+- [ローカルファーストで作った商品の `createdAt` は端末の時刻で、pull でサーバーの `createdAt`（`now()`）に置き換わる] → 古い順の並びで位置が少し動きうる（数秒の差なので、末尾に近い位置のまま）
+- [タグの名前の順がサーバーと違いうる] → D3。本番の照合順序の確認を残す
 - [グループのキャッシュの `ownerId` が空] → 表示にだけ使う。権限はサーバーが判定する
 - [フラグが true の E2E がない] → ユニットテスト（fake-indexeddb）で経路・リポジトリ・読み取り・エンジンを確かめる。E2E は O9 で足す。フラグが false の E2E（今の全件）で、本番の経路が変わらないことを確かめる
 

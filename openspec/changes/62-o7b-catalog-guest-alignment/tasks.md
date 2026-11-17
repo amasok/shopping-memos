@@ -4,7 +4,7 @@
 
 ## 1. 並び
 
-- [ ] 1.1 `catalogQueries.ts` のテストを先に直し（catalog「ゲストの商品の並びもサーバーと同じ作成日時の古い順」「ゲストのタグも名前の順に出す」）、`order` の分岐をなくす
+- [ ] 1.1 `catalogQueries.ts` のテストを先に直し（catalog「ゲストの商品の並びもサーバーと同じ作成日時の古い順」「ゲストのタグも名前の文字コードの順に出す」）、`order` の分岐をなくす
 - [ ] 1.2 並びに頼る E2E（`e2e/item-management.spec.ts`・`tag-management.spec.ts` など）を確かめ、期待値を直す
 
 ## 2. `/items/new`

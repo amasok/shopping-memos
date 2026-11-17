@@ -12,7 +12,7 @@
 
 ## Decisions
 
-- D1. `catalogQueries.ts` の `order` の引数をなくし、常にサーバーの並び（商品は `createdAt` の昇順、タグは名前の順）にする。タグの名前の比較は O7 と同じ `localeCompare(…, "ja")`
+- D1. `catalogQueries.ts` の `order` の引数をなくし、常に O7 のローカルファーストの並び（商品は `createdAt` の昇順、タグは名前の文字コードの順 `a < b`）にする。タグがサーバーと同じ順になるのは、本番の DB の照合順序が C のときだけ（O7 の design D3）
 - D2. `app/items/new/page.tsx` を消し、`src/lib/sw/config.ts` のプリキャッシュの一覧から `/items/new` を外す。消した後に `/items/new` を開くと Next.js の 404 になる（入り口がないので、ブックマークしている人だけ）。`lib/db/items.ts` の `createItem` と `lib/db/tags.ts` の `createTag` は、ほかから使われていなければ消す
 - 確認事項 2 が案 b（hooks 経由）なら、D2 の代わりに `useTags` と `useItemMutations` / `useTagMutations` を使う形に書き換え、specs に「`/items/new` で作った商品は選んでいるグループに入る」の Requirement を足す
 
