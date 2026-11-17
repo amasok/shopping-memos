@@ -2,7 +2,7 @@
 
 Issue: #191（https://github.com/amasok/shopping-memos/issues/191）
 
-**状態: 承認済み（承認: 2026-11-18、リーダー（ユーザーから委任））**。ユーザーは 2026-11-18 に「直す、仕様とかはそちらで決めていいよ」と答え、仕様の承認をリーダーに委ねた。
+**状態: 承認済み（承認: 2026-11-18、リーダー（ユーザーから委任））。実装済み（tester: E2E 全部 chromium 72・Mobile Chrome 72・chromium-auth 51・offline 13（4 skipped）で失敗 0、reviewer: LGTM）**。ユーザーは 2026-11-18 に「直す、仕様とかはそちらで決めていいよ」と答え、仕様の承認をリーダーに委ねた。
 
 ## Why
 

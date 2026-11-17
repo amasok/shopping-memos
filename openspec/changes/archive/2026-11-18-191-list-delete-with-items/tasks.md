@@ -15,4 +15,4 @@
 ## 3. 確認
 
 - [x] 3.1 `npm run lint`・`npm run test:run`・`npm run build` が通る
-- [ ] 3.2 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く
+- [x] 3.2 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く
