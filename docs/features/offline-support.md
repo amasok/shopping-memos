@@ -512,13 +512,14 @@ develop に PR をマージ
 3. **ユーザーが Preview で上のチェックリストを実施する。すべて OK になるまで main へは進まない**
 4. DB の変更を含むリリース（R2a、R2b）の前に、Neon で本番ブランチのバックアップを作る
 5. develop → main の PR を作り、CI（lint / test / build / E2E）が通ることを確認してマージする。**DB の変更を含むリリース（R2a、R2b）では、マージの前に本番 DB への migrate を手動で流す**（「デプロイとマイグレーションの順序」参照。#164）
-   1. develop への新しいマージを止める（PR の head と、migrate する develop をそろえる）
+   1. develop への新しいマージを止める（PR の head と、migrate する develop をそろえる。migrate の後に develop に入った migration は、main への push の migrate で当たるので、Vercel の本番デプロイとまた競合する）
    2. `gh workflow run migrate-production.yml --ref develop -f confirm="migrate production"` を実行する（ユーザーの確認を取ってから）
-   3. 実行の結果を確かめる。dispatch の直後は前の実行を拾うことがあるので、数秒待ってから `gh run list --workflow=migrate-production.yml --event workflow_dispatch -L 1 --json databaseId,headSha,status,createdAt` で今の実行を探し、`headSha` が develop（PR の head。`git rev-parse origin/develop`）と同じことを確かめてから `gh run watch <run id>` で待つ。`Check request` は、ref が develop / main 以外、確認の入力の不一致、main にない migration に典型的な contract（テーブル・列の削除、名前の変更、型の変更）があるときに止まる。contract の migration は先に当てられないので、この手順を使わない（expand / contract を別のリリースに分ける）
+   3. 実行の結果を確かめる。dispatch の直後は前の実行を拾うことがあるので、数秒待ってから `gh run list --workflow=migrate-production.yml --event workflow_dispatch -L 1 --json databaseId,headSha,status,createdAt` で今の実行を探し、`headSha` が develop（PR の head。`git rev-parse origin/develop`）と同じことを確かめてから `gh run watch <run id>` で待つ。`Check request` は、ref が develop / main 以外、確認の入力の不一致、main にない migration に典型的な contract（テーブル・列・型・制約・インデックスの削除、名前の変更、型の変更、データの削除（DELETE・TRUNCATE））があるときに止まる。既存の列の DROP DEFAULT や SET NOT NULL、制約の追加（UNIQUE・CHECK・FK）などは見分けられないので、expand かどうかはレビューで確かめる。contract の migration は先に当てられないので、この手順を使わない（expand / contract を別のリリースに分ける）
    4. `Migrate Production DB` の成功を確かめてから、main への PR をマージする。失敗したらマージしない（`gh run rerun <run id> --failed` で再実行する）
    - main への push で動く CI の `migrate` ジョブはそのまま動く。適用済みの分は飛ばされるので、二重に流れても何も起きない。2 つは同じ concurrency group（`migrate-production`）で 1 本ずつ動く
    - develop → main の PR は merge commit でマージする（squash にすると develop と main の merge-base が古いまま残り、次のリリースで `Check request` が適用済みの migration を main にないものとして調べてしまう）
-   - ワークフローの ref・入力のチェックは誤操作を防ぐためのもので、守りの境界ではない（ブランチのワークフローのファイルを書き換えれば外せる）。本番 DB を守っているのはリポジトリの書き込み権限（2026-11-17 時点で amasok だけ）。この時点で Production 環境には保護ルール（Deployment branches・Required reviewers）がなく、`NEON_DATABASE_URL` はリポジトリの secret にもある（ci.yml の #139 のチェックが使う）。環境の保護を設定したら、ここを更新する
+   - ワークフローの ref・入力のチェックは誤操作を防ぐためのもので、守りの境界ではない（ブランチのワークフローのファイルを書き換えれば外せる）。守りは、リポジトリの書き込み権限（amasok だけ）と、Production 環境の Deployment branches
+   - 必要なリポジトリの設定: Production 環境の Deployment branches を `main` と `develop` に絞る（ほかのブランチの job は step の前に止まる。`main` だけにすると develop からの手動の migrate が動かない）。Required reviewers は付けない（ci.yml の main への push の migrate が毎回承認待ちで止まるため）。残る危険は「考慮事項」の「本番 DB の secret」
 6. CI の `migrate` ジョブの成功と、Vercel の本番デプロイの完了を確認する（DB の変更を含むリリースでは、5 の手動の migrate が先に成功していること）
 7. 本番で動作を確認し、家族に案内する（R1: 「圏外でも開けるようになりました」、R3: 「オフラインでも編集できるようになりました」）
 
@@ -636,6 +637,7 @@ develop に PR をマージ
 - **パフォーマンス**: 読み取りを Dexie に一本化することで、画面の表示はサーバーファーストより速くなる。pull はカーソルによる差分取得なので、通信量は小さい
 - **ADR の更新**: ADR-004 の「現在の実装状況：C: 現状維持」を「A: ローカルファースト移行」に、ADR-005 の `@serwist/next` を `@serwist/turbopack` に更新する（O10）
 - **本番で同期の不具合が出たとき**: (1) `NEXT_PUBLIC_LOCAL_FIRST=false` で前進デプロイし、サーバーファーストに戻す（未送信のキューは drain される）。(2) サーバーが不正な操作を受けている場合は、`MIN_CLIENT_RELEASE` を上げて古いクライアントを強制更新する。(3) SW が原因なら kill switch。(4) `sync_operations` の `rejected` / `conflict` の件数をログで確認し、原因を調べる
+- **本番 DB の secret（#164）**: 残る危険: `NEON_DATABASE_URL` はリポジトリの secret にもあり（ci.yml の #139 のガードが、develop 用の URL が本番を指していないかを比べるのに使う）、environment を使わない job からはどのブランチでも読める。書き込みできるのは amasok だけなので受け入れる（2026-11-17）。消すなら、#139 のガードを本番の URL のハッシュとの比較などに変えてから消す
 - **本番の既存データ**: O3 のマイグレーションは列の追加だけにし、既存のデータを保持する。R3 のリリース直後は、既存のログインユーザーのユーザー DB が空なので、初回の全件 pull が走る（「## 本番環境への影響とリリース手順」参照）
 
 ## 決定事項（2026-11-16 ユーザー承認）

@@ -55,8 +55,9 @@ jobs:
           persist-credentials: false
 
       # 本番のアプリ（main）が動いたまま当てるので、古いコードが壊れる変更（contract）は流さない。
-      # main にない migration から、典型的な contract（テーブル・列の削除、名前の変更、型の変更）を探して止める。
-      # SET NOT NULL など、ここで見つけられない変更もあるので、expand かどうかはレビューで確かめる
+      # main にない migration から、典型的な contract（テーブル・列・型・制約・インデックスの削除、名前の変更、型の変更、データの削除（DELETE・TRUNCATE））を探して止める。
+      # 既存の列の DROP DEFAULT や SET NOT NULL、制約の追加（UNIQUE・CHECK・FK）など、古いコードを壊しうるのに見分けられない変更もあるので、expand かどうかはレビューで確かめる
+      # （O3 の 0005 のように、足した列を埋めて既定値を付けてからの SET NOT NULL は expand なので通す）
       - name: Check migrations are expand-only
         env:
           BASE_REF: origin/main
@@ -69,12 +70,12 @@ jobs:
           fi
           echo "main にない migration:"
           echo "$files"
-          pattern='DROP[[:space:]]+(TABLE|COLUMN|SCHEMA|VIEW)|(^|[^[:alnum:]_"])RENAME([^[:alnum:]_"]|$)|SET[[:space:]]+DATA[[:space:]]+TYPE|ALTER[[:space:]]+COLUMN[[:space:]]+[^[:space:]]+[[:space:]]+TYPE'
+          pattern='DROP[[:space:]]+(TABLE|COLUMN|SCHEMA|VIEW|TYPE|CONSTRAINT|INDEX)|(^|[^[:alnum:]_"])(RENAME|TRUNCATE)([^[:alnum:]_"]|$)|DELETE[[:space:]]+FROM|SET[[:space:]]+DATA[[:space:]]+TYPE|ALTER[[:space:]]+COLUMN[[:space:]]+[^[:space:]]+[[:space:]]+TYPE'
           found=0
           while IFS= read -r f; do
             # 行頭の -- コメントは除く
             if hits="$(grep -vE '^[[:space:]]*--' "$f" | grep -iE "$pattern")"; then
-              echo "::error file=$f,title=Not an expand migration::$f に、動いている本番のコードを壊す変更（削除・名前の変更・型の変更）があります。先に当てずに、main への push の migrate で流してください（#164）"
+              echo "::error file=$f,title=Not an expand migration::$f に、動いている本番のコードを壊す変更（削除・名前の変更・型の変更・データの削除）があります。先に当てずに、main への push の migrate で流してください（#164）"
               echo "$hits"
               found=1
             fi
@@ -100,7 +101,7 @@ jobs:
           DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
         run: |
           if [ -z "$DATABASE_URL" ]; then
-            echo "::error title=NEON_DATABASE_URL is not set::secret の NEON_DATABASE_URL が空です。production 環境（またはリポジトリ）の secret に本番の接続文字列を登録してください（#164）"
+            echo "::error title=NEON_DATABASE_URL is not set::secret の NEON_DATABASE_URL が空です。production 環境の secret に本番の接続文字列を登録してください（#164）"
             exit 1
           fi
 

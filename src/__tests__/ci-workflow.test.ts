@@ -624,6 +624,11 @@ describe("本番 DB への手動 migrate（migrate-production.yml）(#164)", () 
       ["テーブルの名前の変更", 'ALTER TABLE "items" RENAME TO "products";'],
       ["drizzle の型の変更", 'ALTER TABLE "items" ALTER COLUMN "quantity" SET DATA TYPE integer;'],
       ["型の変更（TYPE）", 'ALTER TABLE "items" ALTER COLUMN "quantity" TYPE integer;'],
+      ["enum 型の削除", 'DROP TYPE "public"."status";'],
+      ["制約の削除", 'ALTER TABLE "items" DROP CONSTRAINT "items_user_id_users_id_fk";'],
+      ["インデックスの削除", 'DROP INDEX IF EXISTS "items_user_updated_idx";'],
+      ["行の削除", 'DELETE FROM "items" WHERE "deleted_at" IS NOT NULL;'],
+      ["TRUNCATE", 'TRUNCATE TABLE "items";'],
     ])("contract の変更（%s）があれば ::error で止まる", (_label, sql) => {
       const result = execWith({}, { "0006_contract.sql": `ALTER TABLE "items" ADD COLUMN "x" text;--> statement-breakpoint\n${sql}` })
       expect(result.status).toBe(1)
@@ -682,6 +687,10 @@ describe("本番 DB への手動 migrate（migrate-production.yml）(#164)", () 
     for (const doc of ["../../docs/features/offline-support.md", "../../.claude/rules/team-operation.md"]) {
       const text = readFileSync(path.resolve(__dirname, doc), "utf-8")
       expect(text).toContain("gh workflow run migrate-production.yml --ref develop")
+      // 守りにしている environment の設定と、残る危険（リポジトリの secret）を書いている
+      expect(text).toContain("Deployment branches を `main` と `develop` に絞る")
+      expect(text).toContain("Required reviewers は付けない")
+      expect(text).toContain("#139 のガードを本番の URL のハッシュとの比較などに変えてから消す")
     }
   })
 })
