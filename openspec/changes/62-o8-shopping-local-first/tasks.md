@@ -21,7 +21,7 @@
 ## 4. 確認
 
 - [x] 4.1 `npm run lint`・`npm run test:run`・`npm run test:coverage`（80% 以上）・`npm run build` が通る
-- [ ] 4.2 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く（フラグは false。ゲストの経路が変わるので、shopping・list-creation・history・user-journey とオフラインのリストの E2E が大事）
+- [x] 4.2 `npm run test:e2e:local` を全部流し、プロジェクトごとの件数を tester の報告に書く（フラグは false。ゲストの経路が変わるので、shopping・list-creation・history・user-journey とオフラインのリストの E2E が大事）
 
 ## Workflow follow-up
 
