@@ -240,6 +240,11 @@ describe("ItemForm: タグの追加", () => {
     fireEvent.keyDown(input, { key: "Enter" })
     await waitFor(() => expect(h.createTag).toHaveBeenCalledWith({ name: "新タグ", groupId: undefined }))
     await waitFor(() => expect(screen.queryByPlaceholderText("新しいタグ名")).not.toBeInTheDocument())
+    // 作ったタグが選択され、保存するアイテムに付く
+    type("item-name-input", "卵")
+    fireEvent.click(screen.getByTestId("item-submit"))
+    await waitFor(() => expect(h.createItem).toHaveBeenCalled())
+    expect(h.createItem.mock.calls[0][0].tagIds).toContain("new-tag")
   })
 
   it("同じ名前の既存タグがあれば作らずにそれを選択する", async () => {

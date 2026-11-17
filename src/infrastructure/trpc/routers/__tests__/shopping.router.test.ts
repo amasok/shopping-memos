@@ -96,21 +96,33 @@ describe("shopping.getLists", () => {
 })
 
 describe("shopping.getList / getListItems", () => {
-  it("getList: 権限なし FORBIDDEN、なければ NOT_FOUND、あれば返す", async () => {
-    sync.canAccessList.mockResolvedValueOnce(false)
+  it("getList: 権限なしは FORBIDDEN", async () => {
+    sync.canAccessList.mockResolvedValue(false)
     await expect(caller().getList({ id: ID })).rejects.toMatchObject({ code: "FORBIDDEN" })
-    sync.getList.mockResolvedValueOnce(null)
+  })
+
+  it("getList: なければ NOT_FOUND", async () => {
+    sync.getList.mockResolvedValue(null)
     await expect(caller().getList({ id: ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
-    sync.getList.mockResolvedValueOnce({ id: ID })
+  })
+
+  it("getList: あれば返す", async () => {
+    sync.getList.mockResolvedValue({ id: ID })
     expect(await caller().getList({ id: ID })).toEqual({ id: ID })
   })
 
-  it("getListItems: 権限なし FORBIDDEN、なければ NOT_FOUND、あればアイテムだけ返す", async () => {
-    sync.canAccessList.mockResolvedValueOnce(false)
+  it("getListItems: 権限なしは FORBIDDEN", async () => {
+    sync.canAccessList.mockResolvedValue(false)
     await expect(caller().getListItems({ listId: ID })).rejects.toMatchObject({ code: "FORBIDDEN" })
-    sync.getList.mockResolvedValueOnce(null)
+  })
+
+  it("getListItems: リストがなければ NOT_FOUND", async () => {
+    sync.getList.mockResolvedValue(null)
     await expect(caller().getListItems({ listId: ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
-    sync.getList.mockResolvedValueOnce({ id: ID, items: [{ id: "x" }] })
+  })
+
+  it("getListItems: あればアイテムだけ返す", async () => {
+    sync.getList.mockResolvedValue({ id: ID, items: [{ id: "x" }] })
     expect(await caller().getListItems({ listId: ID })).toEqual([{ id: "x" }])
   })
 })
@@ -158,17 +170,25 @@ describe("shopping.createList", () => {
 })
 
 describe("shopping.updateList / deleteList", () => {
-  it("updateList: 権限なしは FORBIDDEN、あれば更新", async () => {
-    sync.canAccessList.mockResolvedValueOnce(false)
+  it("updateList: 権限なしは FORBIDDEN", async () => {
+    sync.canAccessList.mockResolvedValue(false)
     await expect(caller().updateList({ id: ID, name: "x" })).rejects.toMatchObject({ code: "FORBIDDEN" })
+    expect(sync.updateList).not.toHaveBeenCalled()
+  })
+
+  it("updateList: 更新する", async () => {
     sync.updateList.mockResolvedValue({ id: ID })
     await caller().updateList({ id: ID, name: "新" })
     expect(sync.updateList).toHaveBeenCalledWith({ id: ID, name: "新" }, "user-1")
   })
 
-  it("deleteList: 権限なしは FORBIDDEN、あれば削除して success", async () => {
-    sync.canAccessList.mockResolvedValueOnce(false)
+  it("deleteList: 権限なしは FORBIDDEN", async () => {
+    sync.canAccessList.mockResolvedValue(false)
     await expect(caller().deleteList({ id: ID })).rejects.toMatchObject({ code: "FORBIDDEN" })
+    expect(sync.deleteList).not.toHaveBeenCalled()
+  })
+
+  it("deleteList: 削除して success", async () => {
     expect(await caller().deleteList({ id: ID })).toEqual({ success: true })
     expect(sync.deleteList).toHaveBeenCalledWith(ID, "user-1")
   })
@@ -219,12 +239,18 @@ describe("shopping.addNewItemToList", () => {
   const input = { listId: ID, name: "パン" }
   const list = { id: ID, status: "in_progress", groupId: null }
 
-  it("権限なし FORBIDDEN / リストなし NOT_FOUND / 完了済み BAD_REQUEST", async () => {
-    sync.canAccessList.mockResolvedValueOnce(false)
+  it("権限なしは FORBIDDEN", async () => {
+    sync.canAccessList.mockResolvedValue(false)
     await expect(caller().addNewItemToList(input)).rejects.toMatchObject({ code: "FORBIDDEN" })
-    sync.getList.mockResolvedValueOnce(null)
+  })
+
+  it("リストがなければ NOT_FOUND", async () => {
+    sync.getList.mockResolvedValue(null)
     await expect(caller().addNewItemToList(input)).rejects.toMatchObject({ code: "NOT_FOUND" })
-    sync.getList.mockResolvedValueOnce({ ...list, status: "completed" })
+  })
+
+  it("完了済みのリストには BAD_REQUEST", async () => {
+    sync.getList.mockResolvedValue({ ...list, status: "completed" })
     await expect(caller().addNewItemToList(input)).rejects.toMatchObject({ code: "BAD_REQUEST" })
   })
 
@@ -236,10 +262,19 @@ describe("shopping.addNewItemToList", () => {
     expect(sync.addItem).not.toHaveBeenCalled()
   })
 
+  it("グループのリストなら、タグの検証にそのグループのスコープを渡す", async () => {
+    sync.getList.mockResolvedValue({ ...list, groupId: GID })
+    sync.addItem.mockResolvedValue({ id: "li" })
+    await caller().addNewItemToList({ ...input, tagIds: [TAG] })
+    expect(areTagsInScope).toHaveBeenCalledWith([TAG], { userId: "user-1", groupId: GID })
+    expect(catalog.createItem).toHaveBeenCalledWith(expect.objectContaining({ groupId: GID }), "user-1")
+  })
+
   it("カタログとリストの両方にアイテムを作る（数量の既定は 1）", async () => {
     sync.getList.mockResolvedValue(list)
     sync.addItem.mockResolvedValue({ id: "li" })
     await caller().addNewItemToList(input)
+    expect(areTagsInScope).toHaveBeenCalledWith(undefined, { userId: "user-1", groupId: null })
     expect(catalog.createItem).toHaveBeenCalledWith(
       expect.objectContaining({ name: "パン", quantity: 1, userId: "user-1", groupId: undefined, tagIds: [] }),
       "user-1"
@@ -299,7 +334,7 @@ describe("shopping.finishShopping", () => {
     await expect(caller().finishShopping({ listId: ID })).rejects.toMatchObject({ code: "BAD_REQUEST", message: "チェック済みがありません" })
   })
 
-  it("それ以外のエラーは INTERNAL_SERVER_ERROR でメッセージを漏らさない", async () => {
+  it("それ以外のエラーは BAD_REQUEST にせず INTERNAL_SERVER_ERROR として投げ直す（文言の置き換えは errorFormatter の役目）", async () => {
     shopping.finishShopping.mockRejectedValue(new Error("connection refused 10.0.0.1"))
     const err = await caller().finishShopping({ listId: ID }).catch((e) => e)
     expect(err.code).toBe("INTERNAL_SERVER_ERROR")
@@ -313,28 +348,40 @@ describe("shopping.finishShopping", () => {
 })
 
 describe("shopping の履歴", () => {
-  it("getHistory: メンバーでないグループは FORBIDDEN、通れば取得する", async () => {
-    groupRepo.isMember.mockResolvedValueOnce(false)
+  it("getHistory: メンバーでないグループは FORBIDDEN", async () => {
+    groupRepo.isMember.mockResolvedValue(false)
     await expect(caller().getHistory({ groupId: GID })).rejects.toMatchObject({ code: "FORBIDDEN" })
+  })
+
+  it("getHistory: 通れば取得する", async () => {
     sync.getHistory.mockResolvedValue([])
     await caller().getHistory({})
     expect(sync.getHistory).toHaveBeenCalledWith(expect.objectContaining({ userId: "user-1", groupId: undefined }))
   })
 
-  it("getHistoryById: 権限なし FORBIDDEN、なければ NOT_FOUND、あれば返す", async () => {
-    sync.canAccessHistory.mockResolvedValueOnce(false)
+  it("getHistoryById: 権限なしは FORBIDDEN", async () => {
+    sync.canAccessHistory.mockResolvedValue(false)
     await expect(caller().getHistoryById({ id: ID })).rejects.toMatchObject({ code: "FORBIDDEN" })
-    sync.getHistoryById.mockResolvedValueOnce(null)
+  })
+
+  it("getHistoryById: なければ NOT_FOUND", async () => {
+    sync.getHistoryById.mockResolvedValue(null)
     await expect(caller().getHistoryById({ id: ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
-    sync.getHistoryById.mockResolvedValueOnce({ id: ID })
+  })
+
+  it("getHistoryById: あれば返す", async () => {
+    sync.getHistoryById.mockResolvedValue({ id: ID })
     expect(await caller().getHistoryById({ id: ID })).toEqual({ id: ID })
   })
 
   describe("revertHistory", () => {
-    it("権限なし FORBIDDEN、履歴なし NOT_FOUND", async () => {
-      sync.canAccessHistory.mockResolvedValueOnce(false)
+    it("権限なしは FORBIDDEN", async () => {
+      sync.canAccessHistory.mockResolvedValue(false)
       await expect(caller().revertHistory({ historyId: ID })).rejects.toMatchObject({ code: "FORBIDDEN" })
-      sync.getHistoryById.mockResolvedValueOnce(null)
+    })
+
+    it("履歴がなければ NOT_FOUND", async () => {
+      sync.getHistoryById.mockResolvedValue(null)
       await expect(caller().revertHistory({ historyId: ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
     })
 
@@ -362,10 +409,13 @@ describe("shopping の履歴", () => {
   })
 
   describe("deleteHistory", () => {
-    it("権限なし FORBIDDEN、履歴なし NOT_FOUND", async () => {
-      sync.canAccessHistory.mockResolvedValueOnce(false)
+    it("権限なしは FORBIDDEN", async () => {
+      sync.canAccessHistory.mockResolvedValue(false)
       await expect(caller().deleteHistory({ id: ID })).rejects.toMatchObject({ code: "FORBIDDEN" })
-      sync.getHistoryById.mockResolvedValueOnce(null)
+    })
+
+    it("履歴がなければ NOT_FOUND", async () => {
+      sync.getHistoryById.mockResolvedValue(null)
       await expect(caller().deleteHistory({ id: ID })).rejects.toMatchObject({ code: "NOT_FOUND" })
     })
 

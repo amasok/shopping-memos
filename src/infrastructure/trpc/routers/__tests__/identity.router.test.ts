@@ -11,6 +11,7 @@ vi.mock("@/infrastructure/auth", () => ({ auth: vi.fn() }))
 vi.mock("@/modules/identity/infrastructure/repositories/DrizzleGroupRepository", () => ({ groupRepository: repo }))
 
 import { identityRouter } from "../identity"
+import { INVITE_CODE_MAX_ATTEMPTS } from "@/modules/identity/domain/entities/InviteCode"
 
 const G = "22222222-2222-4222-8222-222222222222"
 const U = "11111111-1111-4111-8111-111111111111"
@@ -41,21 +42,27 @@ describe("identity: グループ", () => {
     expect(repo.createWithOwner).toHaveBeenCalledWith(expect.objectContaining({ name: "家族", ownerId: me }))
   })
 
-  it("updateGroup はオーナー以外 FORBIDDEN、オーナーなら更新する", async () => {
-    repo.isOwner.mockResolvedValueOnce(false)
+  it("updateGroup はオーナー以外 FORBIDDEN", async () => {
+    repo.isOwner.mockResolvedValue(false)
     await expect(caller().updateGroup({ id: G, name: "x" })).rejects.toMatchObject({ code: "FORBIDDEN" })
     expect(repo.update).not.toHaveBeenCalled()
-    repo.isOwner.mockResolvedValueOnce(true)
+  })
+
+  it("updateGroup はオーナーなら更新する", async () => {
+    repo.isOwner.mockResolvedValue(true)
     repo.update.mockResolvedValue({ id: G })
     await caller().updateGroup({ id: G, name: "新" })
     expect(repo.update).toHaveBeenCalledWith({ id: G, name: "新" })
   })
 
-  it("deleteGroup はオーナー以外 FORBIDDEN、オーナーなら削除する", async () => {
-    repo.isOwner.mockResolvedValueOnce(false)
+  it("deleteGroup はオーナー以外 FORBIDDEN", async () => {
+    repo.isOwner.mockResolvedValue(false)
     await expect(caller().deleteGroup({ id: G })).rejects.toMatchObject({ code: "FORBIDDEN" })
     expect(repo.delete).not.toHaveBeenCalled()
-    repo.isOwner.mockResolvedValueOnce(true)
+  })
+
+  it("deleteGroup はオーナーなら削除する", async () => {
+    repo.isOwner.mockResolvedValue(true)
     expect(await caller().deleteGroup({ id: G })).toEqual({ success: true })
     expect(repo.delete).toHaveBeenCalledWith(G)
   })
@@ -82,10 +89,14 @@ describe("identity: 招待コード", () => {
     expect(repo.regenerateInviteCode).toHaveBeenCalledWith(G)
   })
 
-  it("setInviteEnabled: オーナー以外は FORBIDDEN、オーナーなら切り替える", async () => {
-    repo.isOwner.mockResolvedValueOnce(false)
+  it("setInviteEnabled: オーナー以外は FORBIDDEN", async () => {
+    repo.isOwner.mockResolvedValue(false)
     await expect(caller().setInviteEnabled({ groupId: G, enabled: false })).rejects.toMatchObject({ code: "FORBIDDEN" })
-    repo.isOwner.mockResolvedValueOnce(true)
+    expect(repo.setInviteEnabled).not.toHaveBeenCalled()
+  })
+
+  it("setInviteEnabled: オーナーなら切り替える", async () => {
+    repo.isOwner.mockResolvedValue(true)
     repo.setInviteEnabled.mockResolvedValue({ id: G })
     await caller().setInviteEnabled({ groupId: G, enabled: false })
     expect(repo.setInviteEnabled).toHaveBeenCalledWith(G, false)
@@ -93,10 +104,14 @@ describe("identity: 招待コード", () => {
 })
 
 describe("identity: メンバー", () => {
-  it("getGroupMembers: メンバー以外は FORBIDDEN、メンバーなら一覧を返す", async () => {
-    repo.isMember.mockResolvedValueOnce(false)
+  it("getGroupMembers: メンバー以外は FORBIDDEN", async () => {
+    repo.isMember.mockResolvedValue(false)
     await expect(caller().getGroupMembers({ groupId: G })).rejects.toMatchObject({ code: "FORBIDDEN" })
-    repo.isMember.mockResolvedValueOnce(true)
+    expect(repo.findMembers).not.toHaveBeenCalled()
+  })
+
+  it("getGroupMembers: メンバーなら一覧を返す", async () => {
+    repo.isMember.mockResolvedValue(true)
     repo.findMembers.mockResolvedValue([{ userId: me }])
     expect(await caller().getGroupMembers({ groupId: G })).toEqual([{ userId: me }])
   })
@@ -123,6 +138,7 @@ describe("identity: メンバー", () => {
     repo.isOwner.mockResolvedValue(false)
     const self = identityRouter.createCaller({ userId: U } as never)
     expect(await self.removeMember({ groupId: G, userId: U })).toEqual({ success: true })
+    expect(repo.removeMember).toHaveBeenCalledWith(G, U)
   })
 })
 
@@ -209,8 +225,15 @@ describe("identity.acceptInvite", () => {
 describe("identity.joinByInviteCode", () => {
   const group = { id: G, inviteEnabled: true, inviteCodeExpiresAt: new Date(Date.now() + day) }
 
+  it("試行回数が上限ちょうどならまだ試せる", async () => {
+    repo.recordInviteCodeAttempt.mockResolvedValue(INVITE_CODE_MAX_ATTEMPTS)
+    repo.findByInviteCode.mockResolvedValue(null)
+    await expect(caller().joinByInviteCode({ inviteCode: "ABCDEFGH" })).rejects.toMatchObject({ code: "BAD_REQUEST" })
+    expect(repo.findByInviteCode).toHaveBeenCalled()
+  })
+
   it("試行回数が上限を超えたら TOO_MANY_REQUESTS でコードを調べない", async () => {
-    repo.recordInviteCodeAttempt.mockResolvedValue(11)
+    repo.recordInviteCodeAttempt.mockResolvedValue(INVITE_CODE_MAX_ATTEMPTS + 1)
     await expect(caller().joinByInviteCode({ inviteCode: "ABCDEFGH" })).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS" })
     expect(repo.findByInviteCode).not.toHaveBeenCalled()
   })

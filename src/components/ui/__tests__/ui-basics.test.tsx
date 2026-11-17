@@ -56,7 +56,7 @@ describe("Button", () => {
 })
 
 describe("Checkbox", () => {
-  it("checked のときチェックアイコンとテーマ色を出し、変更を通知する", () => {
+  it("checked のときチェックアイコンを出し、変更を通知する", () => {
     const onChange = vi.fn()
     const { container } = render(<Checkbox name="a" label="牛乳" checked onChange={onChange} />)
     expect(container.querySelector("svg")).toBeInTheDocument()
@@ -76,6 +76,7 @@ describe("Checkbox", () => {
 
   it("disabled のとき操作不可のスタイルになる", () => {
     const { container } = render(<Checkbox name="a" disabled checked={false} onChange={() => {}} />)
+    expect(screen.getByRole("checkbox")).toBeDisabled()
     expect(container.querySelector("label")?.className).toContain("cursor-not-allowed")
   })
 })

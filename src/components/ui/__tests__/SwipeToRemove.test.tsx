@@ -36,6 +36,36 @@ describe("SwipeToRemove", () => {
     expect(content.style.transform).toBe("translateX(-150px)")
   })
 
+  it("しきい値ちょうど（80px）では外れず、それを超えると外れる", () => {
+    const onRemove = vi.fn()
+    render(<SwipeToRemove onRemove={onRemove}><div>牛乳</div></SwipeToRemove>)
+    const content = screen.getByText("牛乳").parentElement as HTMLElement
+    swipe(content, 300, 220)
+    fireEvent.touchEnd(content)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(onRemove).not.toHaveBeenCalled()
+    swipe(content, 300, 219)
+    fireEvent.touchEnd(content)
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(onRemove).toHaveBeenCalledTimes(1)
+  })
+
+  it("threshold を指定するとそれが基準になる", () => {
+    const onRemove = vi.fn()
+    render(<SwipeToRemove onRemove={onRemove} threshold={30}><div>牛乳</div></SwipeToRemove>)
+    const content = screen.getByText("牛乳").parentElement as HTMLElement
+    swipe(content, 300, 260)
+    fireEvent.touchEnd(content)
+    act(() => {
+      vi.advanceTimersByTime(200)
+    })
+    expect(onRemove).toHaveBeenCalledTimes(1)
+  })
+
   it("しきい値に届かなければ onRemove を呼ばず元に戻る", () => {
     const onRemove = vi.fn()
     render(<SwipeToRemove onRemove={onRemove}><div>牛乳</div></SwipeToRemove>)
@@ -57,10 +87,12 @@ describe("SwipeToRemove", () => {
   })
 
   it("外すラベルを指定でき、引っ張ると表示される", () => {
-    render(<SwipeToRemove onRemove={() => {}} removeLabel="戻す"><div>牛乳</div></SwipeToRemove>)
-    expect(screen.getByText("戻す")).toBeInTheDocument()
+    const { container } = render(<SwipeToRemove onRemove={() => {}} removeLabel="戻す"><div>牛乳</div></SwipeToRemove>)
+    const action = container.querySelector(".bg-orange-500") as HTMLElement
+    expect(action).toHaveTextContent("戻す")
+    expect(action).toHaveClass("opacity-0")
     const content = screen.getByText("牛乳").parentElement as HTMLElement
     swipe(content, 300, 250)
-    expect(screen.getByText("戻す").closest("div")?.parentElement?.className).toContain("opacity-100")
+    expect(action).toHaveClass("opacity-100")
   })
 })

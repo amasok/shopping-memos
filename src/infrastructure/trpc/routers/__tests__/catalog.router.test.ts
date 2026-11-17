@@ -42,7 +42,7 @@ const IID = "33333333-3333-4333-8333-333333333333"
 const caller = (userId: string | null = "user-1") => catalogRouter.createCaller({ userId: userId ?? undefined } as never)
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
   activeRows.rows = []
   isMember.mockResolvedValue(true)
   areTagsInScope.mockResolvedValue(true)
@@ -108,6 +108,12 @@ describe("catalog.createItem", () => {
     expect(svc.createItem).not.toHaveBeenCalled()
   })
 
+  it("タグの検証には、ログインユーザーと入力の groupId のスコープを渡す", async () => {
+    svc.createItem.mockResolvedValue({ id: "new" })
+    await caller().createItem({ name: "牛乳", tagIds: [UID], groupId: GID })
+    expect(areTagsInScope).toHaveBeenCalledWith([UID], { userId: "user-1", groupId: GID })
+  })
+
   it("ユーザー ID と新しい ID を付けて作成し、同期ログ用に userId も渡す", async () => {
     svc.createItem.mockResolvedValue({ id: "new" })
     await caller().createItem({ name: "牛乳", quantity: 2, memo: "低脂肪" })
@@ -151,6 +157,7 @@ describe("catalog.updateItem", () => {
     findById.mockResolvedValue({ id: IID, userId: "user-1" })
     svc.updateItem.mockResolvedValue({ id: IID })
     await caller().updateItem({ id: IID, tagIds: [UID] })
+    expect(areTagsInScope).toHaveBeenCalledWith([UID], { id: IID, userId: "user-1" })
     expect(svc.updateItem).toHaveBeenCalledWith(expect.objectContaining({ tagIds: [UID] }), "user-1")
   })
 })
@@ -192,34 +199,52 @@ describe("catalog のタグ", () => {
     expect(svc.getTags).toHaveBeenCalledWith({ userId: "user-1", groupId: undefined })
   })
 
-  it("getTag: 権限なしは FORBIDDEN、存在しなければ NOT_FOUND、あれば返す", async () => {
-    svc.canAccessTag.mockResolvedValueOnce(false)
+  it("getTag: 権限がなければ FORBIDDEN", async () => {
+    svc.canAccessTag.mockResolvedValue(false)
     await expect(caller().getTag({ id: IID })).rejects.toMatchObject({ code: "FORBIDDEN" })
-    svc.getTag.mockResolvedValueOnce(null)
+  })
+
+  it("getTag: 存在しなければ NOT_FOUND", async () => {
+    svc.getTag.mockResolvedValue(null)
     await expect(caller().getTag({ id: IID })).rejects.toMatchObject({ code: "NOT_FOUND" })
-    svc.getTag.mockResolvedValueOnce({ id: IID })
+  })
+
+  it("getTag: あれば返す", async () => {
+    svc.getTag.mockResolvedValue({ id: IID })
     expect(await caller().getTag({ id: IID })).toEqual({ id: IID })
   })
 
-  it("createTag: メンバーでないグループは FORBIDDEN、通れば作成する", async () => {
-    isMember.mockResolvedValueOnce(false)
+  it("createTag: メンバーでないグループは FORBIDDEN", async () => {
+    isMember.mockResolvedValue(false)
     await expect(caller().createTag({ name: "x", groupId: GID })).rejects.toMatchObject({ code: "FORBIDDEN" })
+    expect(svc.createTag).not.toHaveBeenCalled()
+  })
+
+  it("createTag: 作成する", async () => {
     svc.createTag.mockResolvedValue({ id: "t" })
     await caller().createTag({ name: "食品" })
     expect(svc.createTag).toHaveBeenCalledWith(expect.objectContaining({ name: "食品", userId: "user-1" }), "user-1")
   })
 
-  it("updateTag: 権限なしは FORBIDDEN、あれば更新する", async () => {
-    svc.canAccessTag.mockResolvedValueOnce(false)
+  it("updateTag: 権限なしは FORBIDDEN", async () => {
+    svc.canAccessTag.mockResolvedValue(false)
     await expect(caller().updateTag({ id: IID, name: "x" })).rejects.toMatchObject({ code: "FORBIDDEN" })
+    expect(svc.updateTag).not.toHaveBeenCalled()
+  })
+
+  it("updateTag: 更新する", async () => {
     svc.updateTag.mockResolvedValue({ id: IID })
     await caller().updateTag({ id: IID, name: "新" })
     expect(svc.updateTag).toHaveBeenCalledWith({ id: IID, name: "新" }, "user-1")
   })
 
-  it("deleteTag: 権限なしは FORBIDDEN、あれば削除して success を返す", async () => {
-    svc.canAccessTag.mockResolvedValueOnce(false)
+  it("deleteTag: 権限なしは FORBIDDEN", async () => {
+    svc.canAccessTag.mockResolvedValue(false)
     await expect(caller().deleteTag({ id: IID })).rejects.toMatchObject({ code: "FORBIDDEN" })
+    expect(svc.deleteTag).not.toHaveBeenCalled()
+  })
+
+  it("deleteTag: 削除して success を返す", async () => {
     expect(await caller().deleteTag({ id: IID })).toEqual({ success: true })
     expect(svc.deleteTag).toHaveBeenCalledWith(IID, "user-1")
   })

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import "fake-indexeddb/auto"
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { db } from "../index"
 import {
   DEFAULT_TAG_NAMES,
@@ -15,6 +15,10 @@ import {
 } from "../tags"
 
 const NOW = new Date("2026-03-01T09:00:00Z")
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 beforeEach(async () => {
   await Promise.all(db.tables.map((t) => t.clear()))
@@ -52,8 +56,10 @@ describe("ゲストのタグ（Dexie）", () => {
   })
 
   it("名前を更新すると updatedAt も進む", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(new Date("2026-03-01T09:00:00Z"))
     const tag = await createTag("旧")
-    await new Promise((r) => setTimeout(r, 5))
+    vi.setSystemTime(new Date("2026-03-01T09:00:05Z"))
     await updateTag(tag.id, "新")
     const after = await getTagById(tag.id)
     expect(after?.name).toBe("新")
