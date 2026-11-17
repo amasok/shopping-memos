@@ -45,7 +45,10 @@ async function seedEveryTable() {
   await db.listItems.add({ id: "li1", listId: "l1", name: "牛乳", quantity: 1, tagIds: [], checked: false, createdAt: NOW } as never)
   await db.groups.add({ id: "g1", name: "家族", ownerId: "u1", inviteCode: "ABC", createdAt: NOW } as never)
   await db.groupMembers.add({ id: "gm1", groupId: "g1", userId: "u1" } as never)
-  await db.syncQueue.add({ id: "q1", entity: "item", entityId: "i1", operation: "create", payload: {}, createdAt: NOW, retryCount: 0 } as never)
+  await db.syncQueue.add({
+    id: "q1", seq: 1, entity: "item", entityId: "i1", type: "create", patch: {}, clientTime: NOW.toISOString(), retryCount: 0, status: "pending",
+  })
+  await db.meta.add({ key: "cursor", value: "c1" })
   await db.pendingMerge.add({
     key: "user-x:items:p1",
     entity: "items",

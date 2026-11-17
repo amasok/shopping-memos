@@ -1,4 +1,6 @@
 import Dexie, { type EntityTable } from "dexie"
+import type { SyncPushEntity, SyncPushOperationType } from "@/shared/schemas/sync"
+import { attachVersionHandlers } from "./versionEvents"
 
 // エンティティ型定義
 export interface Tag {
@@ -30,6 +32,7 @@ export interface ShoppingList {
   completedAt?: Date
   purchasedAt?: Date  // 購入日時（購入履歴として表示）
   location?: string   // 購入場所
+  updatedAt?: Date    // v10 で追加（それより前のレコードは createdAt で埋める）
 }
 
 export interface ListItem {
@@ -42,6 +45,7 @@ export interface ListItem {
   groupId?: string  // グループに紐付け（任意）
   checked: boolean
   createdAt: Date
+  updatedAt?: Date  // v10 で追加（それより前のレコードは createdAt で埋める）
 }
 
 // PurchaseHistory は廃止
@@ -67,15 +71,31 @@ export interface GroupMember {
   joinedAt: Date
 }
 
-// 同期キュー（バックグラウンド同期用）
+/**
+ * 同期キュー（v10。#62 O6）。ログイン中のユーザー DB だけで使う（ゲストでは積まない）
+ * - id は opId（sync.push の冪等キー）。seq は積んだ順（送る順）
+ * - pending: 未送信 / inflight: 送信中（圧縮の対象から外す）/ failed: サーバーが拒否した
+ */
 export interface SyncQueueItem {
   id: string
-  entity: "item" | "tag" | "list" | "listItem" | "history"
+  seq: number
+  entity: SyncPushEntity
   entityId: string
-  operation: "create" | "update" | "delete"
-  payload: string // JSON文字列
-  createdAt: Date
+  type: SyncPushOperationType
+  patch?: Record<string, unknown>
+  /** patch の各フィールドの操作時刻（補正済み ISO） */
+  fieldTimes?: Record<string, string>
+  /** 操作全体の時刻（補正済み ISO） */
+  clientTime: string
   retryCount: number
+  status: "pending" | "inflight" | "failed"
+  lastError?: string
+}
+
+/** 同期の状態（v10。ユーザー DB で使う）。値の型は meta.ts の MetaValues */
+export interface MetaRecord {
+  key: string
+  value: unknown
 }
 
 /**
@@ -93,8 +113,11 @@ export interface PendingMergeRecord {
   createdAt: Date
 }
 
+/** ゲストの DB の名前（ログイン中はユーザーごとの DB。userDb.ts） */
+export const GUEST_DB_NAME = "ShoppingMemosDB"
+
 // Dexie データベースクラス
-class ShoppingMemosDB extends Dexie {
+export class ShoppingMemosDB extends Dexie {
   tags!: EntityTable<Tag, "id">
   items!: EntityTable<ShoppingItem, "id">
   lists!: EntityTable<ShoppingList, "id">
@@ -103,9 +126,10 @@ class ShoppingMemosDB extends Dexie {
   groupMembers!: EntityTable<GroupMember, "id">
   syncQueue!: EntityTable<SyncQueueItem, "id">
   pendingMerge!: EntityTable<PendingMergeRecord, "key">
+  meta!: EntityTable<MetaRecord, "key">
 
-  constructor() {
-    super("ShoppingMemosDB")
+  constructor(name: string = GUEST_DB_NAME) {
+    super(name)
 
     this.version(1).stores({
       tags: "id, name, createdAt",
@@ -224,10 +248,33 @@ class ShoppingMemosDB extends Dexie {
       syncQueue: "id, entity, createdAt, retryCount",
       pendingMerge: "key, userId",
     })
+
+    // v10: 同期エンジン（#62 O6）。キューを新しい形にし（以前の形のキューは使っていなかったので捨てる）、
+    // 同期の状態の meta を足し、リストとリストのアイテムに updatedAt を入れる
+    this.version(10).stores({
+      tags: "id, name, groupId, createdAt",
+      items: "id, name, groupId, createdAt, purchasedAt, *tagIds",
+      lists: "id, status, groupId, createdAt, purchasedAt",
+      listItems: "id, listId, groupId, checked, *tagIds",
+      groups: "id, ownerId, inviteCode, createdAt",
+      groupMembers: "id, groupId, userId",
+      syncQueue: "id, seq, entityId, status",
+      pendingMerge: "key, userId",
+      meta: "key",
+    }).upgrade(async (tx) => {
+      await tx.table("syncQueue").clear()
+      const fillUpdatedAt = (row: { createdAt?: Date; updatedAt?: Date }) => {
+        if (!row.updatedAt) row.updatedAt = row.createdAt ?? new Date()
+      }
+      await tx.table("lists").toCollection().modify(fillUpdatedAt)
+      await tx.table("listItems").toCollection().modify(fillUpdatedAt)
+    })
+
+    attachVersionHandlers(this)
   }
 }
 
-// シングルトンインスタンス
+// シングルトンインスタンス（ゲストの DB）
 export const db = new ShoppingMemosDB()
 
 // ID生成ユーティリティ
