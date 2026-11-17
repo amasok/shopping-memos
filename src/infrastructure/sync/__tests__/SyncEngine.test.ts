@@ -210,6 +210,68 @@ describe("SyncEngine.push", () => {
     expect(await queue()).toEqual([])
   })
 
+  it("ネットワークエラーの後に積んだ update は、送った操作にまとめず別の操作として送る", async () => {
+    const { enqueue } = await import("@/infrastructure/local/syncQueue")
+    await enqueue(database, { entity: "tag", entityId: uuid(1001), type: "update", patch: { name: "A" }, clientTime: SERVER_TIME })
+    const push = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch")).mockImplementation(applyAll)
+    const { instance } = engine({ transport: { push, pull: vi.fn(async () => pullPage()) }, mode: "drain" })
+    await instance.sync()
+    await enqueue(database, { entity: "tag", entityId: uuid(1001), type: "update", patch: { name: "B" }, clientTime: SERVER_TIME })
+    expect((await queue()).map((q) => q.patch)).toEqual([{ name: "A" }, { name: "B" }])
+    await instance.sync()
+    expect(push.mock.calls.slice(1).map((c) => c[0].operations.map((o: { patch: unknown }) => o.patch))).toEqual([
+      [{ name: "A" }, { name: "B" }],
+    ])
+  })
+
+  it("結果が返らなかった create の後の delete は、create を消さずに積む", async () => {
+    const { enqueue } = await import("@/infrastructure/local/syncQueue")
+    await enqueue(database, { entity: "tag", entityId: uuid(1001), type: "create", patch: { name: "A" }, clientTime: SERVER_TIME })
+    const push = vi.fn(async () => ({ serverTime: SERVER_TIME, results: [] }))
+    const { instance } = engine({ transport: { push, pull: vi.fn(async () => pullPage()) }, mode: "drain" })
+    await instance.sync()
+    await enqueue(database, { entity: "tag", entityId: uuid(1001), type: "delete", clientTime: SERVER_TIME })
+    expect((await queue()).map((q) => q.type)).toEqual(["create", "delete"])
+  })
+
+  it("入力ごと拒否されたら半分ずつに分けて送り直し、拒否された 1 件だけを failed にする", async () => {
+    await database.syncQueue.bulkAdd([op(1), op(2), op(3), op(4), op(5)])
+    vi.spyOn(console, "error").mockImplementation(() => {})
+    const push = vi.fn(async (input: SyncPushInput) => {
+      if (input.operations.some((o) => o.opId === uuid(3))) throw trpcError("BAD_REQUEST", 400, "invalid")
+      return applyAll(input)
+    })
+    const { instance } = engine({ transport: { push, pull: vi.fn(async () => pullPage()) }, mode: "drain" })
+    await instance.sync()
+    expect((await queue()).map((q) => [q.id, q.status, q.lastError])).toEqual([[uuid(3), "failed", "invalid"]])
+    expect(push.mock.calls.map((c) => c[0].operations.length)).toEqual([5, 3, 2, 2, 1, 2])
+  })
+
+  it("tRPC の形でない 4xx（413 など）も、入力ごとの拒否として扱う", () => {
+    const tooLarge = Object.assign(new Error("Payload Too Large"), { meta: { response: { status: 413 } } })
+    expect(classifySyncError(tooLarge)).toBe("client")
+    expect(classifySyncError(Object.assign(new Error("x"), { meta: { response: { status: 502 } } }))).toBe("retry")
+  })
+
+  it("再送（duplicate）と拒否（rejected）の後は、カーソルを捨てて次の pull を最初から取る（pull が失敗しても残る）", async () => {
+    for (const result of [
+      { status: "duplicate" as const, reason: "applied" },
+      { status: "rejected" as const, reason: "not_found" },
+    ]) {
+      await setMeta(database, "cursor", "old")
+      await database.syncQueue.add(op(1))
+      const push = vi.fn(async () => ({ serverTime: SERVER_TIME, results: [{ opId: uuid(1), ...result }] }))
+      const pull = vi.fn<(input: SyncPullInput) => Promise<SyncPullOutput>>().mockRejectedValueOnce(new TypeError("offline"))
+      pull.mockResolvedValue(pullPage())
+      const { instance } = engine({ transport: { push, pull } })
+      await instance.sync()
+      expect(await getMeta(database, "cursor")).toBeUndefined()
+      await instance.sync()
+      expect(pull.mock.calls.map((c) => c[0].cursor)).toEqual([undefined, undefined])
+      await database.syncQueue.clear()
+    }
+  })
+
   it("前の実行で送信中のまま残った操作も送る", async () => {
     await database.syncQueue.add(op(1, { status: "inflight" }))
     const { instance, transport } = engine()

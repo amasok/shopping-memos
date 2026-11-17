@@ -68,12 +68,15 @@ export const PUSH_DEBOUNCE_MS = 2_000
 type ErrorKind = "retry" | "auth" | "tooOld" | "client"
 
 export function classifySyncError(error: unknown): ErrorKind {
-  const data = (error as { data?: { code?: string; httpStatus?: number } } | null)?.data
-  // data がないのは、レスポンスが届かなかった（ネットワークエラー）とき
-  if (!data) return "retry"
-  if (data.code === "UNAUTHORIZED" || data.httpStatus === 401) return "auth"
-  if (data.code === "PRECONDITION_FAILED" && error instanceof Error && error.message.includes(CLIENT_TOO_OLD)) return "tooOld"
-  if ((data.httpStatus ?? 500) >= 500 || data.httpStatus === 429) return "retry"
+  const e = error as { data?: { code?: string; httpStatus?: number }; meta?: { response?: { status?: number } } } | null
+  const data = e?.data
+  // tRPC の形でないエラーのレスポンス（request-limits.ts の 413 / 400 など）は data がないので、HTTP の状態で分ける
+  const status = data?.httpStatus ?? e?.meta?.response?.status
+  // どちらもないのは、レスポンスが届かなかった（ネットワークエラー）とき
+  if (!data && status === undefined) return "retry"
+  if (data?.code === "UNAUTHORIZED" || status === 401) return "auth"
+  if (data?.code === "PRECONDITION_FAILED" && error instanceof Error && error.message.includes(CLIENT_TOO_OLD)) return "tooOld"
+  if ((status ?? 500) >= 500 || status === 429) return "retry"
   return "client"
 }
 
@@ -101,8 +104,6 @@ export class SyncEngine {
   private attempt = 0
   private retryTimer: unknown = null
   private debounceTimer: unknown = null
-  /** push の duplicate（partial / conflict）で、最新の行をカーソルなしで取り直す */
-  private needsFullPull = false
 
   constructor(private readonly options: SyncEngineOptions) {
     this.clock = options.clock ?? createClock()
@@ -224,6 +225,8 @@ export class SyncEngine {
     const { db } = this.options
     // 前の実行が途中で止まって送信中のまま残った操作を戻す（ロックの中なので、ほかに送信中のものはない）
     await db.syncQueue.where("status").equals("inflight").modify({ status: "pending" })
+    // 入力ごと拒否されたら、半分ずつに分けて送り直し、1 件で拒否されたものだけを failed にする
+    let limit: number = REQUEST_LIMITS.pushOperations
     for (;;) {
       if (this.stopped) return
       // 取り出しと inflight への変更は 1 つのトランザクションにする（間に積まれた操作が、送る前の pending の操作に
@@ -232,7 +235,7 @@ export class SyncEngine {
         const pending = await db.syncQueue
           .orderBy("seq")
           .filter((op) => op.status === "pending")
-          .limit(REQUEST_LIMITS.pushOperations)
+          .limit(limit)
           .toArray()
         // attempted: 送った印。レスポンスが届かずに pending に戻しても、圧縮の対象にしない（サーバーで処理済みかもしれない）
         await db.syncQueue.bulkPut(pending.map((op) => ({ ...op, status: "inflight" as const, attempted: true })))
@@ -250,16 +253,23 @@ export class SyncEngine {
         })
       } catch (error) {
         const kind = classifySyncError(error)
-        // サーバーが入力ごと拒否した操作は、送り直しても通らない。failed にしてキューを止めない
-        const failed = kind === "client"
-        await db.syncQueue
-          .where("id")
-          .anyOf(ids)
-          .modify((op) => {
-            op.status = failed ? "failed" : "pending"
-            if (failed) op.lastError = error instanceof Error ? error.message : String(error)
-            else op.retryCount += 1
-          })
+        if (kind === "client" && batch.length > 1) {
+          await db.syncQueue.where("id").anyOf(ids).modify({ status: "pending" })
+          limit = Math.ceil(batch.length / 2)
+          continue
+        }
+        if (kind === "client") {
+          // 1 件だけで入力ごと拒否された操作は、送り直しても通らない。failed にして、残りを続けて送る
+          console.error("Sync push rejected:", error)
+          await db.syncQueue.update(ids[0], { status: "failed", lastError: error instanceof Error ? error.message : String(error) })
+          await deleteMeta(db, "cursor")
+          limit = REQUEST_LIMITS.pushOperations
+          continue
+        }
+        await db.syncQueue.where("id").anyOf(ids).modify((op) => {
+          op.status = "pending"
+          op.retryCount += 1
+        })
         throw new SyncStop(kind, error)
       }
       this.updateOffset(output.serverTime, sentAt)
@@ -279,6 +289,7 @@ export class SyncEngine {
     const done: string[] = []
     const rows: SyncPushResult[] = []
     let retried = 0
+    let refetch = false
     await db.transaction("rw", [db.syncQueue, db.tags, db.items, db.lists, db.listItems], async () => {
       for (const op of batch) {
         const result = byOpId.get(op.id)
@@ -287,10 +298,11 @@ export class SyncEngine {
           retried += 1
           await db.syncQueue.update(op.id, { status: "pending" })
         } else if (outcome === "failed") {
+          refetch = true
           await db.syncQueue.update(op.id, { status: "failed", lastError: result?.reason ?? result?.status })
         } else {
           done.push(op.id)
-          if (outcome === "refetch") this.needsFullPull = true
+          if (result?.status === "duplicate") refetch = true
           if (result?.serverRow && (result.status === "partial" || result.status === "conflict")) rows.push(result)
         }
       }
@@ -301,6 +313,10 @@ export class SyncEngine {
         await applyServerChanges(db, { [TABLE_OF[op.entity]]: [result.serverRow!] })
       }
     })
+    // 再送（duplicate）と拒否（failed）のときは、カーソルを捨てて次の pull を最初から取る。
+    // 未送信の間に pull が飛ばした行（applyServerRows）は、push が applied なら updated_at が上がって次の差分で届くが、
+    // 再送・拒否ではサーバーの行が変わらず、カーソルの後ろに残ったままになるため（どちらもまれ）
+    if (refetch) await deleteMeta(db, "cursor")
     for (const result of rows) if (result.status === "conflict") this.options.onConflict?.(result)
     return batch.length - retried
   }
@@ -310,8 +326,7 @@ export class SyncEngine {
   private async pull(): Promise<void> {
     const { db } = this.options
     const previousGroups = await getMeta(db, "groupIds")
-    let cursor = this.needsFullPull ? undefined : await getMeta(db, "cursor")
-    this.needsFullPull = false
+    let cursor = await getMeta(db, "cursor")
     let firstPage = true
     for (;;) {
       if (this.stopped) return
@@ -333,9 +348,10 @@ export class SyncEngine {
         const changed = removed.length > 0 || current.size !== previousGroups.length
         await removeGroupData(db, removed)
         if (changed && cursor !== undefined) {
-          // グループの削除で FK が SET NULL になった行は updated_at が変わらないので、カーソルなしで取り直す（O5）
-          await setMeta(db, "groupIds", page.memberships.groupIds)
+          // グループの削除で FK が SET NULL になった行は updated_at が変わらないので、カーソルなしで取り直す（O5）。
+          // 先にカーソルを捨てる（groupIds だけ保存されて止まると、次の pull が古いカーソルの差分だけを取る）
           await deleteMeta(db, "cursor")
+          await setMeta(db, "groupIds", page.memberships.groupIds)
           cursor = undefined
           continue
         }
