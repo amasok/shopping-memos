@@ -100,6 +100,17 @@ describe("LocalCatalogRepository（ローカルファースト）", () => {
     expectValidPatch(op)
   })
 
+  it("変えるフィールドがない更新（メモの null だけ）は、行もキューも変えない", async () => {
+    const item = await createItem(store(true), { name: "牛乳", quantity: 1, memo: "前", tagIds: [] })
+    await database.syncQueue.clear()
+    const before = await database.items.get(item.id)
+
+    await updateItem(store(true), { id: item.id, memo: null })
+
+    expect(await database.items.get(item.id)).toEqual(before)
+    expect(await database.syncQueue.count()).toBe(0)
+  })
+
   it("商品を消すとキューに削除の操作が積まれる", async () => {
     const item = await createItem(store(true), { name: "牛乳", quantity: 1, tagIds: [] })
     // 送信済みにする（create を消して、削除が単独で積まれる状態）

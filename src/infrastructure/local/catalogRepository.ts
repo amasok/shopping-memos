@@ -66,6 +66,8 @@ export async function createItem(store: LocalStore, input: CreateItemInput): Pro
 export async function updateItem(store: LocalStore, input: UpdateItemInput): Promise<void> {
   const { id, ...fields } = input
   const patch = present({ name: fields.name, quantity: fields.quantity, memo: fields.memo, tagIds: fields.tagIds })
+  // ローカルファーストで変えるフィールドがなければ（メモの null だけなど）、行もキューも変えない
+  if (store.queue && Object.keys(patch).length === 0) return
   const changes = store.queue
     ? (patch as Partial<ShoppingItem>)
     : ({ ...fields, memo: fields.memo ?? undefined, groupId: fields.groupId ?? undefined } as Partial<ShoppingItem>)
