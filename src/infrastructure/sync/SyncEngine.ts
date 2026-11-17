@@ -234,7 +234,8 @@ export class SyncEngine {
           .filter((op) => op.status === "pending")
           .limit(REQUEST_LIMITS.pushOperations)
           .toArray()
-        await db.syncQueue.bulkPut(pending.map((op) => ({ ...op, status: "inflight" as const })))
+        // attempted: 送った印。レスポンスが届かずに pending に戻しても、圧縮の対象にしない（サーバーで処理済みかもしれない）
+        await db.syncQueue.bulkPut(pending.map((op) => ({ ...op, status: "inflight" as const, attempted: true })))
         return pending
       })
       if (batch.length === 0) return

@@ -223,7 +223,7 @@ describe("SyncEngine.push", () => {
     const push = vi.fn().mockRejectedValue(new TypeError("Failed to fetch"))
     const { instance } = engine({ transport: { push, pull: vi.fn(async () => pullPage()) } })
     await instance.sync()
-    expect((await queue())[0]).toMatchObject({ status: "pending", retryCount: 1 })
+    expect((await queue())[0]).toMatchObject({ status: "pending", retryCount: 1, attempted: true })
     expect(instance.getState().isOnline).toBe(false)
     timers[0].callback()
     await vi.waitFor(() => expect(timers).toHaveLength(2))
