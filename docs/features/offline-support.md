@@ -391,6 +391,14 @@ output: {
 - `pull()`: `hasMore` が false になるまでカーソルで取得 → `bulkPut` / tombstone の削除 → メンバーシップの差分を処理。**ローカルに未送信の操作があるエンティティは上書きしない**（push が先、pull が後の順番を守る）
 - 同時実行の防止: 同期処理は 1 本だけにする（タブ間は Web Locks API の `navigator.locks.request("sync")`）
 - `SyncProvider` を providers に組み込む（`Auth > DataMerge > Sync > Group > DB`）。`useSync()` で `isOnline`, `isSyncing`, `pendingCount`, `failedCount`, `lastSyncAt`, `sessionExpired` を公開する
+- **O6 での細部（2026-11-17）**（`src/infrastructure/sync/SyncEngine.ts`、`applyServerRows.ts`、`src/contexts/SyncContext.tsx`）:
+  - push の取り出しと `inflight` への変更は 1 つのトランザクションで行う（取り出した後に積まれた変更が、送る前の操作にまとめられて消えないように）。前の実行で `inflight` のまま残った操作は、ロックの中で `pending` に戻してから送る
+  - 結果が返らなかった操作は `pending` に戻す。1 件も返らなければバックオフする。`partial` / `conflict` の `serverRow` は、同じエンティティに未送信の操作が残っていなければローカルに反映する。push で `duplicate`（再送）か `rejected`（`failed`）が返ったら、カーソルを消して次の pull を最初から取る（`meta` から消すので、pull が失敗しても残る）。未送信の間に pull が飛ばした行は、push が `applied` なら `updated_at` が上がって次の差分で届くが、再送・拒否ではサーバーの行が変わらずカーソルの後ろに残るため（どちらもまれなので、全件の取り直しを受け入れる）
+  - push が入力の中身で拒否された（400 BAD_REQUEST・413。tRPC の形でない 413 / 400 も HTTP の状態で判断する）ときは、半分ずつに分けて送り直し、1 件で拒否された操作だけを `failed` にして残りを送り続ける（1 件の不正で、ほかの操作を `failed` にしない）。429 と、そのほかの 4xx（WAF の 403、デプロイの切り替わりの 404・405 など、どの操作が悪いのかに関係なく全体が拒否されるもの）は、5xx と同じく `failed` にせずバックオフで再試行する（1 件ずつ `failed` にすると、カーソルが消え、pull がユーザーの未送信の変更をまとめてサーバーの値に戻すため）。`CLIENT_TOO_OLD` は `clientTooOld` にして止める（強制更新は O1b の仕組みで扱う）
+  - pull で上書きしないのは、`pending` / `inflight` の操作があるエンティティ。`failed` のものはサーバーの値で上書きする。壊れたカーソル（BAD_REQUEST）は捨てる
+  - 所属グループが変わったら、抜けたグループのローカルデータを消し、カーソルなしで取り直す（前回の一覧がない最初の pull では比べない）。保存は、カーソルを消してから一覧を書く順にする（一覧だけ保存して止まると、次の pull が古いカーソルの差分だけを取る）
+  - drain モードでは pull しない。エンジンは、ログイン中で merge が終わってから作る（`isMergeCompleted`）。`useSync()` は `engine`（O7 でリポジトリが時計と DB を使う）と `requestSync()`（書き込みの後の 2 秒のデバウンス）も返す
+  - `groups` / `groupMembers` のキャッシュ（`identity.getGroups` での上書き）と、ログアウト時のユーザー DB の削除は、まだ行わない（O7 / O9）
 
 **オフライン時のセッション（#61 に依存）**
 
