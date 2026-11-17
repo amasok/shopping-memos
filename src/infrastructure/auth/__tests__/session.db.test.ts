@@ -110,7 +110,7 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
     const contextWith = (cookie: string) =>
       createContext({ req: new Request(`${origin}/api/trpc/x`, { headers: { cookie } }) })
 
-    return { call, login, contextWith, email }
+    return { call, login, contextWith, email, route }
   }
 
   it("許可したパスは動く（送信 → ログイン → セッションの取得 → ログアウト）", async () => {
@@ -184,6 +184,19 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
 
     const [row] = await db.select().from(schema.authSessions).where(drizzle.eq(schema.authSessions.userId, userId))
     expect(Math.round((row.expiresAt.getTime() - Date.now()) / day)).toBe(30)
+  })
+
+  it("セッションの取得は rate limit をかけない（IP のヘッダがない画面のリクエストが共有の枠を使い切らない）", async () => {
+    const t = setup()
+    const { cookie } = await t.login()
+    const statuses = new Set<number>()
+    for (let i = 0; i < 120; i++) {
+      const res = await t.route(
+        new Request("http://localhost:3000/api/auth/get-session", { headers: { cookie } })
+      )
+      statuses.add(res.status)
+    }
+    expect([...statuses]).toEqual([200])
   })
 
   it("セッションは 30 日で失効する", async () => {

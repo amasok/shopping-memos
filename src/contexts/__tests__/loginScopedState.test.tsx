@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@/infrastructure/auth/client", () => ({
   authClient: {
-    useSession: () => ({ data: { user: { id: "user-1", name: "A", email: "a@example.com" } }, isPending: false }),
+    useSession: () => ({ data: { user: { id: "user-1", name: "A", email: "a@example.com" } }, isPending: false, error: null }),
     signOut: state.signOut,
   },
 }))

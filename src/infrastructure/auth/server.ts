@@ -229,6 +229,9 @@ export function createAuth(deps: AuthDeps) {
       customRules: {
         [SEND_OTP_PATH]: { window: 60, max: IP_LIMITS.sendPerMinute },
         [SIGN_IN_OTP_PATH]: { window: 60, max: IP_LIMITS.verifyPerMinute },
+        // セッションの取得は Cookie を読むだけ（トークンは推測できない長さ）なので数えない。
+        // 画面はフォーカスのたびなどに呼ぶので、IP が取れないとき（共有のキー）に枠を使い切ると、ログインしていない扱いになる
+        "/get-session": false,
       },
     },
     disabledPaths: DISABLED_PATHS,

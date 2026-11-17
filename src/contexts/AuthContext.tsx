@@ -32,7 +32,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
  * Better Auth のクライアントの useSession を包む。tRPC の Context と useAuth() の使い方は変えない
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { data, isPending } = authClient.useSession()
+  const { data, isPending, error } = authClient.useSession()
 
   const user: User | null = data?.user
     ? {
@@ -42,7 +42,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         avatarUrl: data.user.image ?? undefined,
       }
     : null
-  const status: AuthStatus = isPending ? "loading" : user ? "authenticated" : "unauthenticated"
+  // 401 以外のエラー（通信のエラー・ページを離れるときに切れた通信・サーバーのエラー）でセッションがわからないときは、
+  // ゲストにしない。ゲストにすると、GroupContext と DataMergeContext がログイン中だけの状態（選んでいたグループ・
+  // merge 済みの印）を消してしまう。ログイン中の取り直しのエラーでは、Better Auth が前のセッションを残すので authenticated のまま
+  const sessionUnknown = !user && !!error && (error as { status?: number }).status !== 401
+  const status: AuthStatus = isPending || sessionUnknown ? "loading" : user ? "authenticated" : "unauthenticated"
 
   const login = useCallback(async () => {
     window.location.assign(loginUrl(`${window.location.pathname}${window.location.search}`))
