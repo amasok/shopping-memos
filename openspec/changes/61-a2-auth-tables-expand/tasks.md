@@ -13,4 +13,4 @@
 
 - [x] 3.1 `npm run test:db` が通る
 - [x] 3.2 `npm run lint`・`npm run test:run`・`npm run build` が通る
-- [ ] 3.3 tester に `npm run test:e2e:local` を全部流してもらう（expand を当てた DB で旧コードが動く）
+- [x] 3.3 tester に `npm run test:e2e:local` を全部流してもらう（expand を当てた DB で旧コードが動く）
