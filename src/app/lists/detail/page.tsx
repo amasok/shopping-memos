@@ -44,7 +44,10 @@ function ShoppingListContent() {
   const [editName, setEditName] = useState("")
   const [showMenu, setShowMenu] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  // メニューの「リストを削除」のダイアログ（#191）。開くたびに「リストだけ消す」に戻す
   const [deleteItemHandling, setDeleteItemHandling] = useState<"return" | "delete">("return")
+  const [isDeletingList, setIsDeletingList] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [showEmptyListConfirm, setShowEmptyListConfirm] = useState(false)
   // チェック 0 件で完了を押したときの確認ダイアログ（179b）
   const [showNoCheckedConfirm, setShowNoCheckedConfirm] = useState(false)
@@ -133,9 +136,24 @@ function ShoppingListContent() {
     setIsEditingName(false)
   }
 
+  const openDeleteConfirm = () => {
+    setDeleteItemHandling("return")
+    setDeleteError(null)
+    setShowDeleteConfirm(true)
+  }
+
+  // メニューからの削除: 「リストの商品ごと消す」ならリストと同じ名前の未購入の商品も消す（#191）
   const handleDeleteList = async () => {
-    await deleteList(listId)
-    router.push("/lists")
+    setIsDeletingList(true)
+    setDeleteError(null)
+    try {
+      await deleteList(listId, { deleteCatalogItems: deleteItemHandling === "delete" })
+      router.push("/lists")
+    } catch (error) {
+      console.error("Failed to delete list:", error)
+      setDeleteError("リストを削除できませんでした。もう一度お試しください")
+      setIsDeletingList(false)
+    }
   }
 
   const handleDeleteEmptyList = async () => {
@@ -303,7 +321,7 @@ function ShoppingListContent() {
                     type="button"
                     onClick={() => {
                       setShowMenu(false)
-                      setShowDeleteConfirm(true)
+                      openDeleteConfirm()
                     }}
                     className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50"
                     data-testid="list-delete-menu"
@@ -527,13 +545,15 @@ function ShoppingListContent() {
         />
       </BottomSheet>
 
-      {/* リスト削除確認ダイアログ */}
+      {/* リスト削除確認ダイアログ（#191。言葉は 179b のチェック 0 件のダイアログにそろえる） */}
       <BottomSheet
         isOpen={showDeleteConfirm}
-        onClose={() => setShowDeleteConfirm(false)}
+        onClose={() => {
+          if (!isDeletingList) setShowDeleteConfirm(false)
+        }}
         title="リストを削除"
       >
-        <div className="space-y-4">
+        <div className="space-y-4" data-testid="list-delete-dialog">
           <p className="text-gray-600">
             このリストを削除しますか？
           </p>
@@ -541,7 +561,7 @@ function ShoppingListContent() {
           {(listItems?.length ?? 0) > 0 && (
             <div className="space-y-2">
               <p className="text-sm font-medium text-gray-900">
-                リスト内のアイテム（{listItems?.length}件）の扱い
+                リストの商品（{listItems?.length}件）はどうしますか？
               </p>
               <div className="space-y-2">
                 <label className="flex items-center gap-2 rounded-lg border-2 p-3 cursor-pointer hover:bg-gray-50">
@@ -551,11 +571,13 @@ function ShoppingListContent() {
                     value="return"
                     checked={deleteItemHandling === "return"}
                     onChange={() => setDeleteItemHandling("return")}
+                    disabled={isDeletingList}
                     className="h-4 w-4 text-blue-600"
+                    data-testid="list-delete-option-list-only"
                   />
                   <div>
-                    <span className="font-medium text-gray-900">買いたいものに戻す</span>
-                    <p className="text-xs text-gray-500">アイテムは削除されません</p>
+                    <span className="font-medium text-gray-900">リストだけ消して商品は元に戻す</span>
+                    <p className="text-xs text-gray-500">買いたいものの一覧に戻ります</p>
                   </div>
                 </label>
                 <label className="flex items-center gap-2 rounded-lg border-2 p-3 cursor-pointer hover:bg-gray-50">
@@ -565,15 +587,23 @@ function ShoppingListContent() {
                     value="delete"
                     checked={deleteItemHandling === "delete"}
                     onChange={() => setDeleteItemHandling("delete")}
+                    disabled={isDeletingList}
                     className="h-4 w-4 text-blue-600"
+                    data-testid="list-delete-option-with-items"
                   />
                   <div>
-                    <span className="font-medium text-gray-900">完全に削除する</span>
-                    <p className="text-xs text-gray-500">アイテムも削除されます</p>
+                    <span className="font-medium text-gray-900">リストの商品ごと消す</span>
+                    <p className="text-xs text-gray-500">同じ名前のまだ買っていない商品も消します。買った商品と履歴は残ります</p>
                   </div>
                 </label>
               </div>
             </div>
+          )}
+
+          {deleteError && (
+            <p role="alert" className="text-sm text-red-700" data-testid="list-delete-error">
+              {deleteError}
+            </p>
           )}
 
           <div className="flex gap-2 pt-2">
@@ -581,6 +611,8 @@ function ShoppingListContent() {
               variant="ghost"
               className="flex-1"
               onClick={() => setShowDeleteConfirm(false)}
+              disabled={isDeletingList}
+              data-testid="list-delete-cancel"
             >
               キャンセル
             </Button>
@@ -588,6 +620,7 @@ function ShoppingListContent() {
               variant="danger"
               className="flex-1"
               onClick={handleDeleteList}
+              disabled={isDeletingList}
               data-testid="list-delete-confirm"
             >
               削除する
