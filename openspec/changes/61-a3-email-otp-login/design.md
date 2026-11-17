@@ -27,7 +27,7 @@
 - **版**: `better-auth@1.7.25`・`@better-auth/passkey@1.7.25`（どちらも latest）。next ^16・react ^19・drizzle-orm ^0.45.2 と合う。zod は ^4.5.4 に依存し、今の 4.6.7 に 1 つにまとまる（二重に入らない）。版は `^` を付けずに固定する
 - **入れるときのぶつかり（要対応）**: 普通の `npm install` は ERESOLVE で失敗する。(a) better-auth の任意の peer（@sveltejs/kit 3 など）が vite 8 を求め、今の vite 7.3.1（vitest 4.0.18・@vitejs/plugin-react 5.1.2）とぶつかる。(b) next-auth・@auth/core の peer が @simplewebauthn ^9 で、passkey の 13.3.x と合わない。`--legacy-peer-deps` なら入り、tsc と build も通るが、自動で入っていた peer が lock から 79 個消え、CI の `npm ci` も `--legacy-peer-deps` が要るようになる
   - 方針: `legacy-peer-deps` は使わない。(b) は A3 で next-auth と @auth/drizzle-adapter を同じコミットで消せば消える。(a) は、A3 の前に別の PR で vitest 4.1・@vitejs/plugin-react 5.2・vite 8 に上げる（今の lock のまま上げると npm 10 のエラー `Cannot read properties of null (reading 'edgesOut')` で止まるので、lock の作り直しも含む）。それでも残るときは、package.json の `overrides` で個別に合わせる
-- **emailOTP**: `otpLength` 6・`expiresIn` 300・`allowedAttempts` 3 は既定のまま。`storeOTP` の既定は平文なので必ず指定する。`"hashed"` は塩なしの SHA-256 で、DB が漏れると 6 桁のコードはすぐ割り出せるので、`storeOTP: { hash }` で HMAC-SHA256（鍵は `BETTER_AUTH_SECRET` から作る）にする。照合は定数時間（`constantTimeEqual`）で、原子的な consume の中で行う。再送すると新しい行ができ、照合には最新の行だけを使う（古いコードは 400）。成功すると行は消える。3 回まちがえると 403 `TOO_MANY_ATTEMPTS`。**再送すると回数は 0 に戻る**ので、累積ロックは `otp_events` で自前に持つ（D4）。`disableSignUp` は既定 false で、未登録のアドレスはサインインのときに作られる（name `""`・emailVerified true）
+- **emailOTP**: `otpLength` 6・`expiresIn` 300・`allowedAttempts` 3 は既定のまま。`storeOTP` の既定は平文なので必ず指定する。`"hashed"` は塩なしの SHA-256 で、DB が漏れると 6 桁のコードはすぐ割り出せるので、`storeOTP: { hash }` で HMAC-SHA256 にする。鍵は `BETTER_AUTH_SECRET` をそのまま使わず、用途のラベル（例: `otp-hash`）を付けて HKDF で導出する。照合は定数時間（`constantTimeEqual`）で、原子的な consume の中で行う。再送すると新しい行ができ、照合には最新の行だけを使う（古いコードは 400）。成功すると行は消える。3 回まちがえると 403 `TOO_MANY_ATTEMPTS`。**再送すると回数は 0 に戻る**ので、累積ロックは `otp_events` で自前に持つ（D4）。`disableSignUp` は既定 false で、未登録のアドレスはサインインのときに作られる（name `""`・emailVerified true）
 - **rateLimit**: `storage: "database"`・`customRules`（ワイルドカード・関数も可。プラグインの既定（OTP のパスは 60 秒に 3 回）より優先）・`rateLimit.modelName`・`advanced.ipAddress.ipAddressHeaders`。キーは `IP|パス`。`x-forwarded-for` を変えても `x-real-ip` のキーのままで、4 回目が 429 になることを確かめた。`rate_limits.key` には unique が要る
 - **hooks**: `hooks.before` で `ctx.path` を見て `APIError` を投げると、その応答（429 など）を返せる。`hooks.after` では `ctx.context.newSession` でサインインの成功がわかる
 - **セッション**: `session.cookieCache`・`freshAge`・`/revoke-sessions`（クライアントは `revokeSessions()`）がある。cookieCache を有効にすると、`getSession` が Cookie を先に読むので、失効の後も最大 maxAge の間ログインしたままに見える（D5 で使わないことにした）
@@ -64,6 +64,7 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 - **IP ごとの上限**（送信 3 通/分・20 通/24 時間、照合 10 回/分）は、Better Auth の `rateLimit`（`storage: "database"`、`customRules`）でかける。IP は `advanced.ipAddress.ipAddressHeaders` で、Vercel が付けるヘッダ（`x-real-ip` など）だけから取る。IPv6 は /64 にまとめる（Better Auth に設定があれば使い、なければ自前で丸める）。Vercel がクライアントの値を上書きするかは、実装の前に Vercel のドキュメントで確かめ、ここに書き足す。IP が取れないとき（ローカル）は固定のキー `'unknown'` にまとめる（制限を外さない）。Better Auth の rate limit は同時のリクエストで数件はみ出すことがありうるが、IP の上限は枠の目安なので受け入れる
 - **アドレスに結びつく上限**（再送の間隔・「アドレス × IP」の 5 通・累積ロック・1 つのコードの 3 回・チャレンジの段階）は、`hooks.before`（送信・照合のパス）で `otpAbusePolicy` を呼んで決める。解除は `hooks.after`（照合の成功）
 - **同時のリクエストでも数えもれがないようにする（レビュー H1）**: 送信・照合の判定は、1 つのトランザクションの中で `pg_advisory_xact_lock`（キーはアドレスの HMAC）を取ってから「記録を INSERT → 数える → 判定」の順に行う。同じアドレスへのリクエストは直列になり、判定は自分の分を含めた数で行う。照合は、照合に進む前に `attempted` を記録する（成功しても記録は残し、成功の後に `unlocked` を記録して、それより前の分を数えない）。数え方:
+  - `sent` は実際にメールを送ったとき（新しいコードができたとき）だけ記録する。黙って見送った送信では記録しない（記録すると、コードが変わらないまま回数が 0 に戻るため）
   - 1 つのコードの照合: そのアドレスの最後の `sent` の後の `attempted` が 3 件を超えたら、Better Auth の照合に進まず期限切れと同じ応答にする（Better Auth の `allowedAttempts: 3` も重ねてかける）
   - 累積ロック: 同じ「アドレス × IP」の、直近 24 時間かつ最後の `unlocked` より後の `attempted` が 10 件に達したら `locked` を記録する。`locked` から 24 時間は、その「アドレス × IP」の照合を断る
   - チャレンジ: アドレスの直近 24 時間の `sent` が 20 件、または最後の `unlocked` より後の `attempted` が 30 件に達したら、チャレンジの段階にする
@@ -135,4 +136,4 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 ## Open Questions
 
 - Vercel が `x-real-ip` などをクライアントの値で上書きさせないか（実装の前に Vercel のドキュメントで確かめる。D4）
-- vite 8 への更新を A3 の前の別の PR にする件は、リーダーが担当を決める（D1）
+- vite 8 への更新は shopping-memos-vite8 が受け持つ（リーダーの判断、2026-11-18）。dev 依存の更新の PR（chore/dev-deps-audit。vite 7.3.8・vitest 4.1.12）と #193 の後に行い、A3 はその後に始める
