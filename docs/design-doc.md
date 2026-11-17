@@ -6,7 +6,7 @@
 
 - システム全体の今の構成と、これから目指す構造・リファクタの段取りをまとめる。新しく入った人（人もエージェントも）が全体を掴むための文書
 - 機能ごとの振る舞いの正は `openspec/specs/`、進行中の変更は `openspec/changes/`（`.claude/rules/feature-design.md`）。タスクの正は GitHub Issues
-- 同期（#62）の詳しい設計・実装ステップ・リリース手順は `docs/features/offline-support.md`（#62 が終わるまで更新する。O7 以降の振る舞いの仕様は各 change の specs が正）。offline-support.md と実装のずれは 7.9、ADR（`docs/adr/`）とのずれは「9. ADR との関係」
+- 同期（#62）の詳しい設計・実装ステップ・リリース手順は `docs/features/offline-support.md`。#62 が終わる（O11）までは #62 の設計の正として更新し続け、O7〜O9 の change は proposal / design でそこを参照し、振る舞いは change の specs に書く。#62 が終わったら同期の振る舞いを `openspec/specs/` に移し、offline-support.md は経緯の資料にする。offline-support.md と実装のずれは 7.9、ADR（`docs/adr/`）とのずれは「9. ADR との関係」
 - コードと食い違ったらコードが正。気づいたらこの文書を直す（行番号は 392dbed 時点）
 
 ## 2. システムの全体像
@@ -366,7 +366,7 @@ ADR はその時点の決定の記録として残し、直しは別の PR（下�
 | `AGENTS.md` | エージェント向けのプロジェクトガイド（コマンド・ディレクトリ） |
 | `.claude/rules/*.md` | 運用ルール（Issues・OpenSpec・テスト・Git・チーム） |
 | `openspec/config.yaml` | OpenSpec の成果物を書くときの前提と規則 |
-| `docs/features/offline-support.md` | #62 オフライン対応の設計・リリース手順（参照用） |
+| `docs/features/offline-support.md` | #62 オフライン対応の設計・リリース手順（#62 が終わるまで正。その後は経緯の資料） |
 | `docs/features/passkey-email-auth.md` | #61 認証の変更の設計（参照用） |
 | `docs/adr/001〜005` | 決定の記録 |
 | `docs/ARCHITECTURE.md`・`docs/sync-implementation-status.md` | 以前の設計（2025-01）・同期の調査。今の実装と違う箇所があるので、この文書を優先する |

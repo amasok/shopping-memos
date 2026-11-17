@@ -136,7 +136,7 @@ src/
 e2e/                        # Playwright（fixtures/, auth/ はログイン必須のグループ系テスト）
 docs/design-doc.md          # 全体の設計書（構成・コンテキスト・同期・現状の課題と目指す構造）
 docs/adr/                   # ADR 001〜005（実装とのずれは design-doc.md に記載）
-docs/features/              # 以前の機能設計書（新しくは作らない。offline-support.md は #62 が終わるまで更新、ほかは参照用）
+docs/features/              # 以前の機能設計書（新しくは作らない。offline-support.md は #62 が終わるまで #62 の設計の正として更新、ほかは参照用）
 openspec/                   # OpenSpec。specs/ は今の振る舞いの正、changes/ は進行中の変更（feature-design.md）
 .agents/skills/openspec-*   # OpenSpec のスキル（.claude/skills/openspec-* はそこへのリンク）
 ```

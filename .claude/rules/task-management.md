@@ -109,7 +109,7 @@ Issue本文の先頭に依存関係セクションを追加:
 
 5. 実装 & コミット（change があれば tasks.md の順に）
 
-6. PR作成（Issueを紐付け。change があれば、マージ前に同じ PR で archive する）
+6. PR作成（Issueを紐付け。change があれば、LGTM の後に同じブランチで archive してから）
    gh pr create --title "feat: ..." --body "Closes #<番号>"
    # change があれば本文に change のパス（archive 後は openspec/changes/archive/YYYY-MM-DD-<番号>-<説明>/）も書く
 

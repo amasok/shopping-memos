@@ -148,7 +148,7 @@ npm run lint
 4. コミット
    - Conventional Commits 形式
    - 適切な粒度で分割
-   - change があれば、tester に渡す前に archive してコミットする（feature-design.md）
+   - change があれば、tester の結果と LGTM がそろった後に archive してコミットする（feature-design.md の「archive の手順」）
 ```
 
 チームでの受け渡し（tester → reviewer → リーダー）は team-operation.md を参照。

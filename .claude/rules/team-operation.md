@@ -18,8 +18,8 @@
 - 振る舞いが変わる Issue は、仕様（OpenSpec の change の proposal・specs）→ ユーザーの承認 → 実装 → tester → reviewer の順に進める（`feature-design.md`）
 - change は設計・実装の担当が作り、リーダーがユーザーに承認を取る。承認の前にコードを書かない
 - tester は、specs の Scenario ごとに対応するテストがあり、通っていることを確かめ、テストのない Scenario を報告に書く
-- reviewer は、実装が specs と合っているか、tasks.md のチェックと archive の要否を確かめる
-- archive（`openspec archive <change> -y`）は、実装の担当が tester に渡す前に同じブランチで行ってコミットする。手順は `feature-design.md` のフロー 4。tester・reviewer は archive の後の HEAD を確かめる
+- reviewer は、実装が specs と合っているか、tasks.md のチェックがそろっているかを確かめる
+- archive は、tester の結果と reviewer の LGTM がそろった後、実装の担当が同じブランチで流してコミットする（未完了のタスクがあれば止める。手順は `feature-design.md` の「archive の手順」）。reviewer がその archive のコミット（specs/ への取り込み）を確かめてから、実装の担当がリーダーに報告する
 
 ## push・PR・マージ
 - チームメイトは push や PR 作成をしない。ローカルブランチにコミットしたら、tester → reviewer（ローカル差分でレビュー）の順に受け渡す

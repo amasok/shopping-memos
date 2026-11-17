@@ -28,7 +28,7 @@ rules:
   tasks:
     - 1 つの change の実装手順のチェックリストとしてだけ使う（タスク管理は Issues）
     - テストを先に書く順に並べ（RED → GREEN → REFACTOR）、各 Scenario のテストをどのタスクで書くか分かるようにする
-    - 最後に lint・test:run・build・test:e2e:local の確認を置く。archive はタスクにしない（.claude/rules/feature-design.md のフロー 4 で行う。タスクにすると未完了が必ず残り、archive -y の確認が意味をなくす）
+    - 最後に lint・test:run・build・test:e2e:local の確認を置く。archive はタスクにしない（LGTM の後に .claude/rules/feature-design.md の「archive の手順」で行う。タスクにすると未完了が必ず残り、未完了の確認が働かなくなる）
 
 operations:
   apply:
@@ -36,6 +36,6 @@ operations:
       - tasks.md の順に進め、Scenario ごとのテストが通ったらチェックを付ける
   archive:
     guidance:
-      - archive は実装の担当が tester に渡す前に行い、同じブランチにコミットする（openspec archive <change> -y）
-      - archive の前に openspec list で、その change のタスクがすべて完了していることを確かめる（-y は未完了のタスクがあっても警告だけで続く）
+      - archive は tester の結果と reviewer の LGTM がそろった後に、実装の担当が同じブランチで行ってコミットする。手順は .claude/rules/feature-design.md の「archive の手順」
+      - 未完了のタスクがあれば archive しない。openspec list --json で確かめてから openspec archive <change> -y を流す（-y は未完了があっても警告だけで続き、-y なしは端末で答えられないと失敗する）
       - archive の前に develop を取り込む。同じ capability を別の change が先に変えていると、MODIFIED が Requirement ごと置き換えて先の変更を消すことがあるので、specs/ への取り込み結果を差分で確かめる
