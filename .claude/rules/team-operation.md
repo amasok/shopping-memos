@@ -25,6 +25,12 @@
 - CI の E2E は、main へのリリース（main への PR と main への push）のときの最後の確認
 - `npx playwright test` を直接流すときは、`E2E_PORT` を指定する。既定の 3000 で別の worktree の dev サーバーが動いていると、そのサーバーのコードに当たる
 
+## DB の変更を含むリリース（#164）
+- Vercel の本番デプロイと CI の本番 migrate（main への push）は互いを待たない。新しい列を参照するコードが先に出ると、migrate が終わるまで「column does not exist」で失敗する
+- そのため、DB の変更を含む develop → main のリリースでは、**main への PR をマージする前に本番 migrate を手動で流す**。develop への新しいマージを止めてから、ユーザーの確認を取って `gh workflow run migrate-production.yml --ref develop -f confirm="migrate production"` を実行し、`Migrate Production DB` の成功を確かめてからマージする。失敗したらマージしない
+- 先に当てられるのは expand（足すだけ。古いコードがそのまま動く）だけ。`Check request` は main にない migration に典型的な contract（削除・名前の変更・型の変更）があると止まるが、すべては見つけられないので、expand かどうかはレビューで確かめる。contract は別のリリースに分け、main への push の migrate で流す
+- main への push の migrate は残っている。適用済みの分は飛ばされるので二重に流れても問題ない。手順は docs/features/offline-support.md の「各リリースの共通手順」
+
 ## 報告
 - リーダーに報告するのは、(1) 作業が終わったとき（テストが全部通り、レビューが LGTM で、push・マージできる状態）と、(2) リーダーかユーザーの判断が必要なときだけ。途中経過や「待機します」の連絡はしない（トークン節約。2026-11-17 ユーザーの指示）
 - 実装担当は、tester の結果と reviewer の LGTM がそろってから、まとめてリーダーに報告する

@@ -438,7 +438,7 @@ output: {
 | ゲスト利用者 | R1 からオフラインで起動できるようになる。データの扱いは変わらない |
 | DB | `updated_at` / `deleted_at` / インデックスの追加（列の追加のみ）。削除が論理削除になる |
 | API | `sync.push` / `sync.pull` の仕様が変わる。現在の呼び出し元は `DataMergeContext`（`sync.merge`）だけで、push / pull は未使用なので、既存の端末への影響はない。R3 以降の変更は `protocolVersion` で後方互換を 30 日間保つ |
-| デプロイとマイグレーションの順序 | Vercel のデプロイと CI の `migrate` ジョブ（main への push 時）は互いを待たない。そのため、**マイグレーションは必ず先に単独でリリースする**（列を足すだけで、古いコードはそのまま動く）。その後で、新しい列を使うコードをリリースする。ただし R2a のコードも、`schema.ts` に列を足すので、新しい列を select / returning で参照する（Vercel が先に終わると、migrate が終わるまで items / tags / lists / list_items の読み書きが「column does not exist」で失敗する）。そのため、**DB の変更を含むリリースは、本番 DB への migrate をアプリのデプロイより先に当てる**（expand なので古いコードはそのまま動く）。その仕組みは別の PR（別 Issue）で用意する |
+| デプロイとマイグレーションの順序 | Vercel のデプロイと CI の `migrate` ジョブ（main への push 時）は互いを待たない。そのため、**マイグレーションは必ず先に単独でリリースする**（列を足すだけで、古いコードはそのまま動く）。その後で、新しい列を使うコードをリリースする。ただし R2a のコードも、`schema.ts` に列を足すので、新しい列を select / returning で参照する（Vercel が先に終わると、migrate が終わるまで items / tags / lists / list_items の読み書きが「column does not exist」で失敗する）。そのため、**DB の変更を含むリリースは、本番 DB への migrate をアプリのデプロイより先に当てる**（expand なので古いコードはそのまま動く）。手動実行のワークフロー `migrate-production.yml` で、develop → main の PR をマージする前に本番 DB へ migrate する（#164。「各リリースの共通手順」の 5） |
 | Vercel Preview | develop にマージすると Preview に SW 入りでデプロイされる。Preview は本番と別のドメイン・別の DB なので、SW・キャッシュ・データは本番に影響しない。ユーザーの確認には develop ブランチの固定 URL を使う |
 
 ### リリース手順（develop → main）
@@ -449,7 +449,8 @@ output: {
 develop に PR をマージ
   → Vercel が Preview に自動デプロイ ＋ CI が Preview の DB にマイグレーション（#61 の A2 で追加するジョブ）
   → ユーザーが Preview で「確認チェックリスト」を実施（実機を含む）
-  → OK → develop → main の PR をマージ → 本番デプロイ ＋ 本番 DB にマイグレーション
+  → OK →（DB の変更を含むリリースでは、本番 DB に手動でマイグレーション。#164）
+  → develop → main の PR をマージ → 本番デプロイ ＋ 本番 DB にマイグレーション（適用済みなら何もしない）
   → NG → develop で修正して、Preview の確認からやり直す
 ```
 
@@ -510,8 +511,13 @@ develop に PR をマージ
 2. develop への PR をマージし、Preview の自動デプロイと、Preview の DB へのマイグレーション（R2a 以降）の完了を確認する
 3. **ユーザーが Preview で上のチェックリストを実施する。すべて OK になるまで main へは進まない**
 4. DB の変更を含むリリース（R2a、R2b）の前に、Neon で本番ブランチのバックアップを作る
-5. develop → main の PR を作り、CI（lint / test / build / E2E）が通ることを確認してマージする。**DB の変更を含むリリース（R2a、R2b）では、本番 DB への migrate を本番デプロイより先に当てる**（「デプロイとマイグレーションの順序」参照。仕組みは別 PR）
-6. CI の `migrate` ジョブの成功と、Vercel の本番デプロイの完了を確認する（DB の変更を含むリリースでは、migrate が先に成功していること）
+5. develop → main の PR を作り、CI（lint / test / build / E2E）が通ることを確認してマージする。**DB の変更を含むリリース（R2a、R2b）では、マージの前に本番 DB への migrate を手動で流す**（「デプロイとマイグレーションの順序」参照。#164）
+   1. develop への新しいマージを止める（PR の head と、migrate する develop をそろえる）
+   2. `gh workflow run migrate-production.yml --ref develop -f confirm="migrate production"` を実行する（ユーザーの確認を取ってから）
+   3. 実行の結果を確かめる（`gh run list --workflow=migrate-production.yml -L 1` → `gh run watch <run id>`）。`Check request` は、ref が develop / main 以外、確認の入力の不一致、main にない migration に典型的な contract（テーブル・列の削除、名前の変更、型の変更）があるときに止まる。contract の migration は先に当てられないので、この手順を使わない（expand / contract を別のリリースに分ける）
+   4. `Migrate Production DB` の成功を確かめてから、main への PR をマージする。失敗したらマージしない（`gh run rerun <run id> --failed` で再実行する）
+   - main への push で動く CI の `migrate` ジョブはそのまま動く。適用済みの分は飛ばされるので、二重に流れても何も起きない。2 つは同じ concurrency group（`migrate-production`）で 1 本ずつ動く
+6. CI の `migrate` ジョブの成功と、Vercel の本番デプロイの完了を確認する（DB の変更を含むリリースでは、5 の手動の migrate が先に成功していること）
 7. 本番で動作を確認し、家族に案内する（R1: 「圏外でも開けるようになりました」、R3: 「オフラインでも編集できるようになりました」）
 
 ### ロールバック
