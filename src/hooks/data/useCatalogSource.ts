@@ -10,6 +10,7 @@ import { createClock } from "@/infrastructure/local/clock"
 import type { LocalStore } from "@/infrastructure/local/repository"
 import { db as guestDb } from "@/lib/db"
 import { getUserDb } from "@/lib/db/userDb"
+import { useDB } from "@/lib/db/provider"
 import { isLocalFirstEnabled } from "@/lib/featureFlags"
 
 /**
@@ -32,7 +33,10 @@ const guestStore: LocalStore = { db: guestDb, clock: guestClock, queue: false }
 
 export interface CatalogSource {
   mode: CatalogMode
-  /** 端末の DB に読み書きするときの store（server では null。local で同期エンジンがまだないときも null） */
+  /**
+   * 端末の DB に読み書きするときの store（server では null。local で同期エンジンがまだないとき、
+   * guest でゲストの DB の準備（移行と初期タグ）が終わる前も null）
+   */
   store: LocalStore | null
   /** local で、ユーザー DB の初回の同期が一度も終わっていない（一覧は読み込み中にする） */
   awaitingFirstSync: boolean
@@ -54,15 +58,18 @@ export function useCatalogSource(): CatalogSource {
   const { isMergeCompleted } = useDataMerge()
   const { engine, requestSync, lastSyncAt } = useSync()
   const utils = trpc.useUtils()
+  // ゲストの DB の準備（移行と初期タグの作成。DBProvider）が終わるまで、ゲストの DB を読み書きしない（#183）。
+  // Dexie の liveQuery は最初の読み込みの途中の書き込みを拾わないので、移行と重なると古いデータが画面に残る
+  const { isReady: guestDbReady } = useDB()
 
   const mode = resolveCatalogMode({ isLoggedIn: !!user, isMergeCompleted, localFirst: isLocalFirstEnabled() })
   const userId = user?.id
 
   const store = useMemo<LocalStore | null>(() => {
-    if (mode === "guest") return guestStore
+    if (mode === "guest") return guestDbReady ? guestStore : null
     if (mode === "local" && engine && userId) return { db: getUserDb(userId), clock: engine.getClock(), queue: true }
     return null
-  }, [mode, engine, userId])
+  }, [mode, engine, userId, guestDbReady])
 
   const afterWrite = useCallback(() => {
     if (mode === "local") requestSync()
