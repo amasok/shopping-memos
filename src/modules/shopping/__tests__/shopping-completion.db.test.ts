@@ -148,7 +148,7 @@ describe.skipIf(!TEST_DB_URL)("買い物の規則（tRPC・実 DB）", () => {
       expect((await rawItem(egg)).purchasedAt).toBeNull()
     })
 
-    it("同じ名前の購入済みの商品も購入日時を完了の時刻にする", async () => {
+    it("同じ名前の購入済みの商品の購入日時は変えない", async () => {
       const name = `再購入-${crypto.randomUUID()}`
       const fresh = await newItem({ name })
       const old = await newItem({ name, purchasedAt: BEFORE })
@@ -158,7 +158,7 @@ describe.skipIf(!TEST_DB_URL)("買い物の規則（tRPC・実 DB）", () => {
 
       const at = (await rawList(list.id)).purchasedAt?.getTime()
       expect((await rawItem(fresh)).purchasedAt?.getTime()).toBe(at)
-      expect((await rawItem(old)).purchasedAt?.getTime()).toBe(at)
+      expect((await rawItem(old)).purchasedAt?.getTime()).toBe(BEFORE.getTime())
     })
 
     it("記録する商品の ID は、実際に更新したものだけ（別スコープ・削除済みを含めない）", async () => {
@@ -172,24 +172,28 @@ describe.skipIf(!TEST_DB_URL)("買い物の規則（tRPC・実 DB）", () => {
 
       await shoppingAs(owner).finishShopping({ listId: list.id })
 
-      expect(await itemOps([mine, minePurchased, others, groups, deleted])).toEqual([mine, minePurchased].sort())
+      expect(await itemOps([mine, minePurchased, others, groups, deleted])).toEqual([mine])
       expect((await rawItem(others)).purchasedAt).toBeNull()
       expect((await rawItem(groups)).purchasedAt).toBeNull()
       expect((await rawItem(deleted)).purchasedAt).toBeNull()
     })
 
-    it("チェック 0 件のリストも完了でき空の購入履歴になる", async () => {
+    it("tRPC にチェック 0 件の完了が届くと断る", async () => {
       const name = `空-${crypto.randomUUID()}`
       const item = await newItem({ name })
       const list = await newList([{ name }])
 
-      await shoppingAs(owner).finishShopping({ listId: list.id })
+      await expect(shoppingAs(owner).finishShopping({ listId: list.id })).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+        message: "カゴに入れた商品がありません",
+      })
 
-      expect((await rawList(list.id)).status).toBe("completed")
-      expect((await rawEntries(list.id)).every((e) => e.deletedAt !== null)).toBe(true)
+      const after = await rawList(list.id)
+      expect(after.status).toBe("in_progress")
+      expect(after.purchasedAt).toBeNull()
+      expect((await rawEntries(list.id)).every((e) => e.deletedAt === null)).toBe(true)
       expect((await rawItem(item)).purchasedAt).toBeNull()
-      const history = await shoppingAs(owner).getHistory({})
-      expect(history.find((h) => h.id === list.id)?.items).toEqual([])
+      expect(await itemOps([item])).toEqual([])
     })
 
     it("未チェックの商品をリストから外す", async () => {
@@ -253,6 +257,121 @@ describe.skipIf(!TEST_DB_URL)("買い物の規則（tRPC・実 DB）", () => {
       await expect(ctx.service.finishShopping(list.id, owner)).rejects.toThrow("リストが見つかりません")
       expect((await rawList(list.id)).status).toBe("in_progress")
       expect((await rawItem(item)).purchasedAt).toBeNull()
+    })
+  })
+
+  describe("リストと同じ名前の未購入の商品も消すリストの削除（179b）", () => {
+    /** 同期ログに残ったリストの削除（その ID の分だけ） */
+    async function listDeleteOps(listId: string) {
+      const { db, schema, drizzle } = ctx
+      return db
+        .select({ entityId: schema.syncOperations.entityId })
+        .from(schema.syncOperations)
+        .where(
+          drizzle.and(
+            drizzle.eq(schema.syncOperations.entity, "list"),
+            drizzle.eq(schema.syncOperations.operation, "delete"),
+            drizzle.eq(schema.syncOperations.entityId, listId)
+          )
+        )
+    }
+
+    it("指定するとリストと同じ名前の未購入の商品を論理削除する", async () => {
+      const { db, schema, drizzle } = ctx
+      const milkName = `牛乳-${crypto.randomUUID()}`
+      const eggName = `卵-${crypto.randomUUID()}`
+      const milk = await newItem({ name: milkName })
+      const egg = await newItem({ name: eggName })
+      const tagId = crypto.randomUUID()
+      await db.insert(schema.tags).values({ id: tagId, name: "食品", userId: owner })
+      await db.insert(schema.itemTags).values({ itemId: milk, tagId })
+      const list = await newList([{ name: milkName }, { name: eggName }])
+
+      await shoppingAs(owner).deleteList({ id: list.id, deleteCatalogItems: true })
+
+      expect((await rawList(list.id)).deletedAt).not.toBeNull()
+      expect((await rawEntries(list.id)).every((e) => e.deletedAt !== null)).toBe(true)
+      expect((await rawItem(milk)).deletedAt).not.toBeNull()
+      expect((await rawItem(egg)).deletedAt).not.toBeNull()
+      expect(await db.select().from(schema.itemTags).where(drizzle.eq(schema.itemTags.itemId, milk))).toEqual([])
+      expect(await itemOps([milk, egg])).toEqual([milk, egg].sort())
+      expect(await listDeleteOps(list.id)).toHaveLength(1)
+      await db.delete(schema.tags).where(drizzle.eq(schema.tags.id, tagId))
+    })
+
+    it("ほかのスコープ・購入済み・削除済みの同じ名前の商品は消さない", async () => {
+      const name = `範囲-${crypto.randomUUID()}`
+      const target = await newItem({ name, groupId: group })
+      const otherGroupItem = await newItem({ name, userId: stranger, groupId: otherGroup })
+      const personal = await newItem({ name })
+      const purchased = await newItem({ name, groupId: group, purchasedAt: BEFORE })
+      const deleted = await newItem({ name, groupId: group, deletedAt: BEFORE })
+      const list = await newList([{ name }], { groupId: group })
+
+      await shoppingAs(owner).deleteList({ id: list.id, deleteCatalogItems: true })
+
+      expect((await rawItem(target)).deletedAt).not.toBeNull()
+      expect((await rawItem(otherGroupItem)).deletedAt).toBeNull()
+      expect((await rawItem(personal)).deletedAt).toBeNull()
+      expect((await rawItem(purchased)).deletedAt).toBeNull()
+      expect((await rawItem(purchased)).purchasedAt?.getTime()).toBe(BEFORE.getTime())
+      expect((await rawItem(deleted)).deletedAt?.getTime()).toBe(BEFORE.getTime())
+      expect(await itemOps([target, otherGroupItem, personal, purchased, deleted])).toEqual([target])
+    })
+
+    it("指定しないとリストだけを消す", async () => {
+      const name = `だけ-${crypto.randomUUID()}`
+      const item = await newItem({ name })
+      const list = await newList([{ name }])
+
+      await shoppingAs(owner).deleteList({ id: list.id })
+
+      expect((await rawList(list.id)).deletedAt).not.toBeNull()
+      expect((await rawEntries(list.id)).every((e) => e.deletedAt !== null)).toBe(true)
+      expect((await rawItem(item)).deletedAt).toBeNull()
+      expect(await itemOps([item])).toEqual([])
+    })
+
+    it("使えないリストは商品ごと消せない", async () => {
+      const name = `他人-${crypto.randomUUID()}`
+      const othersItem = await newItem({ name, userId: stranger })
+      const othersList = await newList([{ name }], { userId: stranger })
+      const groupItem = await newItem({ name, userId: stranger, groupId: otherGroup })
+      const otherGroupList = await newList([{ name }], { userId: stranger, groupId: otherGroup })
+
+      for (const list of [othersList, otherGroupList]) {
+        await expect(shoppingAs(owner).deleteList({ id: list.id, deleteCatalogItems: true })).rejects.toMatchObject({
+          code: "FORBIDDEN",
+        })
+        expect((await rawList(list.id)).deletedAt).toBeNull()
+      }
+      expect((await rawItem(othersItem)).deletedAt).toBeNull()
+      expect((await rawItem(groupItem)).deletedAt).toBeNull()
+    })
+
+    it("途中で失敗したら何も消さない", async () => {
+      const { db, drizzle } = ctx
+      const name = `失敗-${crypto.randomUUID()}`
+      const item = await newItem({ name })
+      const list = await newList([{ name }])
+      // カタログの商品を消した後の、リストの削除（UPDATE）を失敗させる（このリストだけ）
+      const fn = `fail_${list.id.replace(/-/g, "")}`
+      await db.execute(
+        drizzle.sql.raw(
+          `CREATE FUNCTION ${fn}() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'fail'; END $$ LANGUAGE plpgsql;
+           CREATE TRIGGER ${fn} BEFORE UPDATE ON shopping_lists FOR EACH ROW WHEN (OLD.id = '${list.id}') EXECUTE FUNCTION ${fn}();`
+        )
+      )
+      try {
+        await expect(shoppingAs(owner).deleteList({ id: list.id, deleteCatalogItems: true })).rejects.toBeDefined()
+      } finally {
+        await db.execute(drizzle.sql.raw(`DROP TRIGGER ${fn} ON shopping_lists; DROP FUNCTION ${fn}();`))
+      }
+
+      expect((await rawItem(item)).deletedAt).toBeNull()
+      expect((await rawList(list.id)).deletedAt).toBeNull()
+      expect((await rawEntries(list.id)).every((e) => e.deletedAt === null)).toBe(true)
+      expect(await itemOps([item])).toEqual([])
     })
   })
 

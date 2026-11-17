@@ -183,12 +183,46 @@ describe("リストと商品の書き込み", () => {
     expect((await queue()).filter((o) => o.entity === "list" || o.entity === "listItem")).toEqual([])
   })
 
+  it("ローカルファーストでは端末の DB で消してキューに削除を積む", async () => {
+    const milk = await catalog("牛乳", { groupId: GROUP })
+    const purchased = await catalog("牛乳", { groupId: GROUP, purchasedAt: BEFORE })
+    const otherGroup = await catalog("牛乳")
+    const list = await createList(local(), { name: "買い物", groupId: GROUP, itemIds: [milk.id] })
+    const [entry] = await database.listItems.toArray()
+    await sent()
+
+    await deleteList(local(), list.id, { deleteCatalogItems: true })
+
+    expect(await database.lists.count()).toBe(0)
+    expect(await database.listItems.count()).toBe(0)
+    expect(await database.items.get(milk.id)).toBeUndefined()
+    expect(await database.items.get(purchased.id)).toBeDefined()
+    expect(await database.items.get(otherGroup.id)).toBeDefined()
+    expect(await ops()).toEqual([
+      ["item", "delete", milk.id],
+      ["listItem", "delete", entry.id],
+      ["list", "delete", list.id],
+    ])
+  })
+
+  it("指定しないとリストだけを消す（端末の DB）", async () => {
+    const milk = await catalog("牛乳")
+    const list = await createList(local(), { name: "買い物", itemIds: [milk.id] })
+    await sent()
+
+    await deleteList(local(), list.id, { deleteCatalogItems: false })
+
+    expect(await database.lists.count()).toBe(0)
+    expect(await database.items.get(milk.id)).toBeDefined()
+    expect((await ops()).some(([e]) => e === "item")).toBe(false)
+  })
+
   it("完了したリストには商品を入れられない", async () => {
     const milk = await catalog("牛乳")
     const list = await createList(local(), { name: "買い物", itemIds: [milk.id] })
     const [entry] = await database.listItems.toArray()
     await checkItem(local(), entry.id, true)
-    await finishShopping(local(), list.id, undefined, "server")
+    await finishShopping(local(), list.id, undefined)
     const before = await queue()
 
     await expect(addItemToList(local(), { listId: list.id, itemId: milk.id })).rejects.toThrow("完了したリスト")
@@ -214,7 +248,7 @@ describe("完了・取り消し・削除（ローカルファースト）", () =
   it("ローカルファーストの完了は端末の DB を更新し複合操作を 1 つ積む", async () => {
     const list = await shoppingList([{ name: "牛乳", checked: true }, { name: "卵", checked: false }], GROUP)
 
-    await finishShopping(local(), list.id, "スーパー", "server")
+    await finishShopping(local(), list.id, "スーパー")
 
     const at = new Date(NOW)
     expect((await database.items.filter((i) => i.name === "牛乳").first())?.purchasedAt).toEqual(at)
@@ -226,40 +260,41 @@ describe("完了・取り消し・削除（ローカルファースト）", () =
     expectValidPatches(q)
   })
 
-  it("ローカルファーストの完了は同じ名前の購入済みの商品も更新する", async () => {
+  it("ローカルファーストの完了は同じ名前の購入済みの商品の購入日時を変えない", async () => {
     const list = await shoppingList([{ name: "牛乳", checked: true }])
     const old = await catalog("牛乳", { purchasedAt: BEFORE })
 
-    await finishShopping(local(), list.id, undefined, "server")
+    await finishShopping(local(), list.id, undefined)
 
-    const milks = await database.items.filter((i) => i.name === "牛乳").toArray()
-    expect(milks).toHaveLength(2)
-    expect(milks.every((m) => m.purchasedAt?.getTime() === NOW)).toBe(true)
-    expect((await database.items.get(old.id))?.purchasedAt).toEqual(new Date(NOW))
+    const fresh = await database.items.filter((i) => i.name === "牛乳" && i.id !== old.id).first()
+    expect(fresh?.purchasedAt).toEqual(new Date(NOW))
+    expect((await database.items.get(old.id))?.purchasedAt).toEqual(BEFORE)
   })
 
-  it("ローカルファーストではチェック 0 件でも完了できる", async () => {
+  it("ローカルファーストではチェック 0 件で完了するとエラーになる", async () => {
     const list = await shoppingList([{ name: "牛乳", checked: false }])
+    const before = await database.items.toArray()
 
-    await finishShopping(local(), list.id, undefined, "server")
+    await expect(finishShopping(local(), list.id, undefined)).rejects.toThrow("購入済みのアイテムがありません")
 
-    expect((await database.lists.get(list.id))?.status).toBe("completed")
-    expect(await database.listItems.where("listId").equals(list.id).count()).toBe(0)
-    expect(await ops()).toEqual([["list", "finishShopping", list.id]])
+    expect((await database.lists.get(list.id))?.status).toBe("in_progress")
+    expect(await database.listItems.where("listId").equals(list.id).count()).toBe(1)
+    expect(await database.items.toArray()).toEqual(before)
+    expect(await queue()).toEqual([])
   })
 
   it("完了済みのリストは端末の DB でも完了できない", async () => {
     const list = await shoppingList([{ name: "牛乳", checked: true }])
-    await finishShopping(local(), list.id, undefined, "server")
+    await finishShopping(local(), list.id, undefined)
     await sent()
 
-    await expect(finishShopping(local(), list.id, undefined, "server")).rejects.toThrow("このリストは既に完了しています")
+    await expect(finishShopping(local(), list.id, undefined)).rejects.toThrow("このリストは既に完了しています")
     expect(await queue()).toEqual([])
   })
 
   it("ローカルファーストの取り消しは端末の DB を戻し複合操作を 1 つ積む", async () => {
     const list = await shoppingList([{ name: "牛乳", checked: true }], GROUP)
-    await finishShopping(local(), list.id, "店", "server")
+    await finishShopping(local(), list.id, "店")
     await sent()
 
     const result = await revertHistory(local(), list.id)
@@ -286,7 +321,7 @@ describe("完了・取り消し・削除（ローカルファースト）", () =
 
   it("履歴を削除すると同じ名前のカタログの商品も消す", async () => {
     const list = await shoppingList([{ name: "牛乳", checked: true }], GROUP)
-    await finishShopping(local(), list.id, undefined, "server")
+    await finishShopping(local(), list.id, undefined)
     const otherGroupMilk = await catalog("牛乳")
     const entries = await database.listItems.where("listId").equals(list.id).toArray()
     const milk = await database.items.filter((i) => i.name === "牛乳" && i.groupId === GROUP).first()
@@ -329,16 +364,41 @@ describe("ゲスト（キューに積まない・今と同じ結果）", () => {
   it("ゲストはチェック 0 件で完了するとエラーになる", async () => {
     const list = await guestList([{ name: "牛乳", checked: false }])
 
-    await expect(finishShopping(guest(), list.id, undefined, "guest")).rejects.toThrow("購入済みのアイテムがありません")
+    await expect(finishShopping(guest(), list.id, undefined)).rejects.toThrow("購入済みのアイテムがありません")
     expect((await database.lists.get(list.id))?.status).toBe("in_progress")
     expect(await database.listItems.where("listId").equals(list.id).count()).toBe(1)
+  })
+
+  it("ゲストでは同じ groupId の未購入の商品を消す", async () => {
+    // リストの groupId と同じ商品だけを消す（ゲストのリストの商品の groupId は使わない）
+    const list = await createList(guest(), { name: "買い物", groupId: GROUP })
+    const milk = await catalog("牛乳", { groupId: GROUP })
+    const egg = await catalog("卵", { groupId: GROUP })
+    const personal = await catalog("牛乳")
+    const purchased = await catalog("牛乳", { groupId: GROUP, purchasedAt: BEFORE })
+    const other = await catalog("パン", { groupId: GROUP })
+    await addItemToList(guest(), { listId: list.id, itemId: milk.id })
+    await addItemToList(guest(), { listId: list.id, itemId: egg.id })
+    // リストの商品の groupId がリストと違っても、リストの groupId で照合する
+    await database.listItems.toCollection().modify({ groupId: undefined })
+
+    await deleteList(guest(), list.id, { deleteCatalogItems: true })
+
+    expect(await database.lists.get(list.id)).toBeUndefined()
+    expect(await database.listItems.where("listId").equals(list.id).count()).toBe(0)
+    expect(await database.items.get(milk.id)).toBeUndefined()
+    expect(await database.items.get(egg.id)).toBeUndefined()
+    expect(await database.items.get(personal.id)).toBeDefined()
+    expect(await database.items.get(purchased.id)).toBeDefined()
+    expect(await database.items.get(other.id)).toBeDefined()
+    expect(await database.syncQueue.count()).toBe(0)
   })
 
   it("ゲストの完了は同じ名前の未購入の商品だけを購入済みにする", async () => {
     const list = await guestList([{ name: "牛乳", checked: true }, { name: "卵", checked: false }])
     const old = await catalog("牛乳", { purchasedAt: BEFORE })
 
-    await finishShopping(guest(), list.id, undefined, "guest")
+    await finishShopping(guest(), list.id, undefined)
 
     const fresh = await database.items.filter((i) => i.name === "牛乳" && i.id !== old.id).first()
     expect(fresh?.purchasedAt).toEqual(new Date(NOW))
@@ -350,7 +410,7 @@ describe("ゲスト（キューに積まない・今と同じ結果）", () => {
 
   it("ゲストの取り消し・履歴の削除は名前で照合し、端末から消し、キューは空のまま", async () => {
     const list = await guestList([{ name: "牛乳", checked: true }])
-    await finishShopping(guest(), list.id, undefined, "guest")
+    await finishShopping(guest(), list.id, undefined)
 
     await revertHistory(guest(), list.id)
     const milk = await database.items.filter((i) => i.name === "牛乳").first()
@@ -359,7 +419,7 @@ describe("ゲスト（キューに積まない・今と同じ結果）", () => {
 
     const entries = await database.listItems.where("listId").equals(list.id).toArray()
     await checkItem(guest(), entries[0].id, true)
-    await finishShopping(guest(), list.id, undefined, "guest")
+    await finishShopping(guest(), list.id, undefined)
     await deleteHistory(guest(), list.id)
     expect(await database.lists.count()).toBe(0)
     expect(await database.listItems.count()).toBe(0)

@@ -558,7 +558,7 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
       expect(await push1(owner, revert(listId, T2))).toMatchObject({ status: "conflict", reason: "not_completed" })
     })
 
-    it("同期で届いたチェック 0 件の完了も完了でき空の購入履歴になる（今のサーバーの振る舞い）", async () => {
+    it("同期で届いたチェック 0 件の完了は conflict にする", async () => {
       const name = `空-${crypto.randomUUID()}`
       const catalogItem = await createItem(owner, { name })
       const list = op({ entity: "list", type: "create", patch: { name: "買い物" } })
@@ -566,14 +566,20 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
       const entry = op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name } })
       await push1(owner, entry)
 
-      expect(await push1(owner, finish(list.entityId, T2))).toMatchObject({ status: "applied" })
+      expect(await push1(owner, finish(list.entityId, T2))).toMatchObject({
+        status: "conflict",
+        reason: "no_checked_items",
+        serverRow: { id: list.entityId, status: "in_progress" },
+      })
 
-      expect((await rawList(list.entityId)).status).toBe("completed")
-      expect((await rawListItem(entry.entityId)).deletedAt).not.toBeNull()
+      const after = await rawList(list.entityId)
+      expect(after.status).toBe("in_progress")
+      expect(after.purchasedAt).toBeNull()
+      expect((await rawListItem(entry.entityId)).deletedAt).toBeNull()
       expect((await rawItem(catalogItem)).purchasedAt).toBeNull()
     })
 
-    it("同期で届いた完了は同じ名前の購入済みの商品も購入日時を操作の時刻にする", async () => {
+    it("同期で届いた完了は同じ名前の購入済みの商品の購入日時を変えない", async () => {
       const { listId, catalogMilk } = await shoppingSetup()
       // 前に買った同じ名前の商品（購入日時は操作より前）
       const oldMilk = await createItem(owner, { name: "牛乳", purchasedAt: T1 }, T1)
@@ -581,7 +587,7 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
       expect(await push1(owner, finish(listId, T2))).toMatchObject({ status: "applied" })
 
       expect((await rawItem(catalogMilk)).purchasedAt?.toISOString()).toBe(T2)
-      expect((await rawItem(oldMilk)).purchasedAt?.toISOString()).toBe(T2)
+      expect((await rawItem(oldMilk)).purchasedAt?.toISOString()).toBe(T1)
     })
 
     it("同期で届いた使えないリストの取り消しは rejected にする", async () => {

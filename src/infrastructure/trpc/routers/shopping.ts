@@ -13,6 +13,7 @@ import {
   deleteHistorySchema,
   updateListSchema,
   deleteListSchema,
+  getListSchema,
   removeListItemSchema,
 } from "@/shared/schemas"
 import { db } from "@/infrastructure/db/drizzle/client"
@@ -83,7 +84,7 @@ export const shoppingRouter = router({
 
   /** 買い物リストを取得 */
   getList: protectedProcedure
-    .input(deleteListSchema) // idのみ
+    .input(getListSchema)
     .query(async ({ input, ctx }) => {
       // アクセス権確認
       const canAccess = await shoppingSyncService.canAccessList(input.id, ctx.userId)
@@ -230,7 +231,10 @@ export const shoppingRouter = router({
         })
       }
 
-      await shoppingSyncService.deleteList(input.id, ctx.userId)
+      // 指定があれば、リストの商品と同じ名前・同じスコープの未購入のカタログの商品も同じトランザクションで消す（179b）
+      await shoppingSyncService.deleteList(input.id, ctx.userId, {
+        deleteCatalogItems: input.deleteCatalogItems ?? false,
+      })
       return { success: true }
     }),
 

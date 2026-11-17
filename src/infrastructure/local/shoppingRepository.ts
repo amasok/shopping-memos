@@ -4,9 +4,14 @@ import { createRecord, deleteRecord, updateRecord, type LocalStore } from "./rep
 import { createItem } from "./catalogRepository"
 import { planFinishShopping } from "@/modules/shopping/domain/services/finishShopping"
 import { planRevertHistory } from "@/modules/shopping/domain/services/revertHistory"
-import { selectItemsToPurchase, selectItemsToUnpurchase, type CatalogCandidate } from "@/modules/shopping/domain/services/catalogMatch"
+import {
+  selectItemsToDeleteWithList,
+  selectItemsToPurchase,
+  selectItemsToUnpurchase,
+  type CatalogCandidate,
+} from "@/modules/shopping/domain/services/catalogMatch"
 import { snapshotListItem } from "@/modules/shopping/domain/services/snapshot"
-import type { ListStateValues } from "@/modules/shopping/domain/services/listState"
+import { uniqueNames, type ListStateValues } from "@/modules/shopping/domain/services/listState"
 
 /**
  * 買い物（リスト・リストの商品・履歴）の端末の DB のリポジトリ（#62 O8。openspec の shopping の「端末の DB の…」）
@@ -14,9 +19,6 @@ import type { ListStateValues } from "@/modules/shopping/domain/services/listSta
  * ゲスト（queue: false）とローカルファースト（queue: true）の両方がここを通る。どの操作も lists・listItems・items・syncQueue の
  * 1 トランザクションで行う。完了と取り消しは #179 の domain の関数で端末の DB を更新し、キューには複合操作だけを積む（design.md D3）
  */
-
-/** 完了の規則。ゲストは 179b が決まるまで今の振る舞いを残す（design.md D4） */
-export type FinishRules = "server" | "guest"
 
 /**
  * 端末の DB の照合で、候補とリストの両方に入れる固定の所有者（design.md D3）。
@@ -124,16 +126,27 @@ export async function updateList(store: LocalStore, input: { id: string; name: s
   await updateRecord<ShoppingList>(store, "lists", input.id, { name: input.name }, { name: input.name })
 }
 
+export interface DeleteListOptions {
+  /** リストの商品と同じ名前の、リストと同じ groupId の未購入のカタログの商品も消す（179b） */
+  deleteCatalogItems?: boolean
+}
+
 /**
  * リストを消す（リストの商品も消す）
  * 進行中のリストなら、リストの商品ごとの delete も積む（送る前の create を圧縮で一緒に消すため）。
  * 完了したリストでは積まない（サーバーが list_completed で断るため。リストの delete がまとめて消す。design.md D2）
+ * deleteCatalogItems なら、同じトランザクションで、リストと同じ名前の未購入のカタログの商品を先に消す
+ * （shopping「リストと同じ名前の未購入の商品も消すリストの削除」。照合はリストの groupId。リストの商品の groupId は使わない）
  */
-export async function deleteList(store: LocalStore, listId: string): Promise<void> {
+export async function deleteList(store: LocalStore, listId: string, options: DeleteListOptions = {}): Promise<void> {
   await store.db.transaction("rw", tables(store), async () => {
     const list = await store.db.lists.get(listId)
     if (!list) return
     const entries = await store.db.listItems.where("listId").equals(listId).toArray()
+    if (options.deleteCatalogItems) {
+      const ids = selectItemsToDeleteWithList(uniqueNames(entries), await candidatesFor(store, list), listScope(list))
+      for (const id of ids) await deleteRecord(store, "items", id)
+    }
     if (list.status === "in_progress") {
       for (const entry of entries) await deleteRecord(store, "listItems", entry.id)
     } else {
@@ -210,27 +223,25 @@ async function writeListState(store: LocalStore, listId: string, state: ListStat
 }
 
 /**
- * 買い物を完了する（shopping「端末の DB の買い物の完了」「ゲストの買い物の完了」）
- * - server（ローカルファースト）: サーバーと同じ規則。キューに finishShopping（場所だけ）を 1 つ積む
- * - guest: 今の振る舞いを残す（チェック 0 件はエラー、照合は未購入だけ。179b で決める）
+ * 買い物を完了する（shopping「ローカルファーストの買い物の完了」「ゲストの買い物の完了」）
+ * ゲストもローカルファーストも、サーバーと同じ規則（チェック 0 件はエラー、照合は未購入だけ。179b）。
+ * ローカルファーストはキューに finishShopping（場所だけ）を 1 つ積む
  */
 export async function finishShopping(
   store: LocalStore,
   listId: string,
-  location: string | null | undefined,
-  rules: FinishRules
+  location: string | null | undefined
 ): Promise<{ historyId: string }> {
   await store.db.transaction("rw", tables(store), async () => {
     const list = await getList(store, listId)
     const entries = await store.db.listItems.where("listId").equals(listId).toArray()
     const at = store.clock.now()
     const plan = planFinishShopping({ status: list.status, entries, at, location })
-    if (!plan.ok) throw new Error("このリストは既に完了しています")
-    if (rules === "guest" && plan.purchaseNames.length === 0) throw new Error("購入済みのアイテムがありません")
+    if (!plan.ok) {
+      throw new Error(plan.reason === "no_checked_items" ? "購入済みのアイテムがありません" : "このリストは既に完了しています")
+    }
 
-    let candidates = await candidatesFor(store, list)
-    if (rules === "guest") candidates = candidates.filter((c) => !c.purchasedAt)
-    const ids = selectItemsToPurchase(plan.purchaseNames, candidates, listScope(list))
+    const ids = selectItemsToPurchase(plan.purchaseNames, await candidatesFor(store, list), listScope(list))
     for (const id of ids) await store.db.items.update(id, { purchasedAt: at, updatedAt: at })
 
     await store.db.listItems.bulkDelete(plan.removeEntryIds)

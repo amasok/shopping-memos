@@ -39,10 +39,10 @@ export class ShoppingService {
   ) {}
 
   /**
-   * 買い物を完了する（specs/shopping「買い物の完了」）
+   * 買い物を完了する（specs/shopping「チェック済みの商品がある買い物の完了」「チェック 0 件の完了」）
    *
-   * 1 つのトランザクションで、リストの行をロックしてからリストの商品を読み、
-   * チェック済みの商品と同じ名前・同じスコープのカタログの商品を購入済みに、未チェックの商品を論理削除し、
+   * 1 つのトランザクションで、リストの行をロックしてからリストの商品を読み、チェック 0 件なら断る（179b）。
+   * チェック済みの商品と同じ名前・同じスコープの未購入のカタログの商品を購入済みに、未チェックの商品を論理削除し、
    * リストを完了にする。リストは操作したユーザーが使える、削除されていないものに限る（#73-1）
    */
   async finishShopping(
@@ -61,7 +61,9 @@ export class ShoppingService {
       const entries = await readListEntries(tx, listId)
       const plan = planFinishShopping({ status: list.status, entries, at: now, location })
       if (!plan.ok) {
-        throw new ShoppingDomainError("このリストは既に完了しています")
+        throw new ShoppingDomainError(
+          plan.reason === "no_checked_items" ? "カゴに入れた商品がありません" : "このリストは既に完了しています"
+        )
       }
 
       const applied = await applyFinishPlan(tx, list, plan, { actorUserId: userId })

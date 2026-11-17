@@ -79,9 +79,16 @@ export const updateListSchema = z.object({
 
 export type UpdateListInput = z.infer<typeof updateListSchema>
 
+// リストの取得（id だけ）
+export const getListSchema = z.object({
+  id: z.string().uuid(),
+})
+
 // リスト削除
 export const deleteListSchema = z.object({
   id: z.string().uuid(),
+  /** リストの商品と同じ名前・同じスコープの未購入のカタログの商品も消す（省略可。既定は消さない。179b） */
+  deleteCatalogItems: z.boolean().optional(),
 })
 
 export type DeleteListInput = z.infer<typeof deleteListSchema>
