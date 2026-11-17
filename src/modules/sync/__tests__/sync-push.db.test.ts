@@ -355,6 +355,38 @@ describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
       expect(await liveListItems(listId)).toEqual([])
     })
 
+    it("リストの削除（リスト → アイテムの順にロック）と、アイテムの更新が同時に走ってもデッドロックしない", async () => {
+      const listId = await newList()
+      const li = op({ entity: "listItem", type: "create", patch: { listId, name: "チェック" } })
+      await push1(owner, li)
+
+      const holder = postgres(TEST_DB_URL!, { max: 1, onnotice: () => {} })
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => (release = resolve))
+      let markLocked!: () => void
+      const locked = new Promise<void>((resolve) => (markLocked = resolve))
+      // リストの削除と同じ順: 先にリストをロックし、後でリストのアイテムを更新する
+      const deleting = holder.begin(async (tx) => {
+        await tx.unsafe("UPDATE shopping_lists SET deleted_at = now(), updated_at = now() WHERE id = $1", [listId])
+        markLocked()
+        await gate
+        await tx.unsafe(
+          "UPDATE list_items SET deleted_at = now(), updated_at = now() WHERE list_id = $1 AND deleted_at IS NULL",
+          [listId]
+        )
+      })
+      await locked
+
+      const checking = push1(owner, op({ entity: "listItem", type: "update", entityId: li.entityId, patch: { checked: true } }))
+      // push がリストのロックを待っている間に、リストのアイテムの更新に進む（push がアイテムを先にロックしていればデッドロック）
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      release()
+      await deleting
+      await holder.end()
+
+      expect(await checking).toMatchObject({ status: "conflict", reason: "deleted" })
+    })
+
     it("親のリストが削除済みの、生きているリストのアイテムは、削除済みと同じに扱う（キューを止めない）", async () => {
       const listId = await newList()
       const li = op({ entity: "listItem", type: "create", patch: { listId, name: "取り残し" } })

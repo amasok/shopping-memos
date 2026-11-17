@@ -205,9 +205,18 @@ export class SyncPushService {
   }
 
   private async apply(tx: DbExecutor, userId: string, op: SyncPushOperation, serverMs: number): Promise<Outcome> {
+    // リストのアイテムは親のリストで判定する。親が削除済みなら、アイテムも削除済みと同じに扱う。
+    // ロックは「親のリスト → リストのアイテム」の順に取る（リストの削除・完了と同じ順。逆だとデッドロックになる）。
+    // そのため、親のリストの ID だけを先にロックなしで読む（list_id は変わらない）
+    let parent: ParentList | undefined
+    if (op.entity === "listItem") {
+      const [ref] = await tx
+        .select({ listId: listItems.listId })
+        .from(listItems)
+        .where(eq(listItems.id, op.entityId))
+      parent = ref ? await lockParentList(tx, ref.listId) : undefined
+    }
     const row = await lockRow(tx, op.entity, op.entityId)
-    // リストのアイテムは親のリストで判定する。親が削除済みなら、アイテムも削除済みと同じに扱う
-    const parent = op.entity === "listItem" && row ? await lockParentList(tx, row.listId as string) : undefined
     const scope: OwnerScope | null = !row ? null : op.entity === "listItem" ? (parent ?? null) : row
     // 使えない行は、ないのと同じに扱う（存在の有無を漏らさない）
     const usable = scope !== null && (await canAccessScope(tx, scope, userId))

@@ -324,7 +324,7 @@ output: {
   - 認可と参照: グループへの作成はメンバーだけ（`forbidden`）。タグは同じスコープのものだけ（`invalid_reference`）。リストのアイテムは、使える進行中のリストにだけ作り、`group_id` はリストの値にする（#68）。完了したリストのアイテムの作成・チェック・削除は `rejected`（`list_completed`。tRPC と同じ）
   - 時刻: フィールドの時刻は `fieldTimes[f]`、なければ `clientTime`。`serverTime`（DB の `now()`）より未来なら `serverTime` に丸め、UTC・ミリ秒の ISO で保存する。create は、書き込んだすべてのフィールドに操作の時刻を入れる
   - 再送: `duplicate` の `reason` に、最初に処理したときの結果（`applied` / `partial` / `conflict:deleted` / `rejected:not_found` など）を入れる。クライアント（O6）は、`reason` が `applied` ならキューから消し、`partial` / `conflict` ならキューから消して pull で最新の行を取り直し、`rejected` なら `failed` にする（レスポンスが失われて再送したとき、拒否された操作を適用済みと取り違えない）
-  - リストのアイテム: 作成・チェック・削除の間は、親のリストに共有ロック（`FOR SHARE`）を取り、リストの削除・完了と同時に走っても、削除済み・完了済みのリストの下に生きたアイテムができないようにする。親のリストが削除済みのアイテムは、削除済みと同じに扱う（update は `conflict`、delete は `applied`）
+  - リストのアイテム: 作成・チェック・削除の間は、親のリストに共有ロック（`FOR SHARE`）を取り（ロックはリストの削除・完了と同じく「親のリスト → リストのアイテム」の順に取る。逆だとデッドロックになる）、リストの削除・完了と同時に走っても、削除済み・完了済みのリストの下に生きたアイテムができないようにする。親のリストが削除済みのアイテムは、削除済みと同じに扱う（update は `conflict`、delete は `applied`）
   - リポジトリの「対象なし」（`RowNotFoundError`）は、その操作だけ `rejected`（`not_found`）にする（決まって失敗する操作で、キュー全体を止めない）
   - `purchasedAt` の値も、未来なら `serverTime` に丸める。返す `serverTime` は処理の後の時刻（丸めにはリクエストの開始時刻を使う）。`fieldTimes` のキーは 20 個まで
   - 予期しないエラー（DB の障害など）は、リクエスト全体を 500 にする（クライアントがまとめて再送する。適用済みの操作は `duplicate` になる）。1 操作 1 トランザクションで、`statement_timeout` は 30 秒
