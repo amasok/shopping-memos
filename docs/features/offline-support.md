@@ -137,7 +137,7 @@
 | 対象 | 戦略 | 理由 |
 |------|------|------|
 | `/_next/static/**`（ハッシュ付き JS/CSS） | Precache（ビルドのマニフェスト）+ CacheFirst | URL がビルドごとに変わるため |
-| アプリシェル（`/`, `/lists`, `/lists/new`, `/lists/detail`, `/items/new`, `/history`, `/tags`, `/settings`, `/groups`, `/login`, `/~offline`） | `additionalPrecacheEntries`（revision = ビルド ID） | 全ページが `"use client"` で、HTML にユーザー固有のデータが入らないことを確認済み（サーバーで `auth()` を呼ぶのは tRPC の context だけ） |
+| アプリシェル（`/`, `/lists`, `/lists/new`, `/lists/detail`, `/history`, `/tags`, `/settings`, `/groups`, `/login`, `/~offline`） | `additionalPrecacheEntries`（revision = ビルド ID） | 全ページが `"use client"` で、HTML にユーザー固有のデータが入らないことを確認済み（サーバーで `auth()` を呼ぶのは tRPC の context だけ） |
 | ページのナビゲーション（document） | NetworkFirst（タイムアウト 3 秒）→ キャッシュ → `/~offline` | オンラインなら最新、圏外ならすぐキャッシュで開く |
 | RSC リクエスト（`RSC: 1` ヘッダ） | NetworkFirst（3 秒）→ キャッシュ | Serwist の `defaultCache` の matcher を流用する |
 | 画像・フォント | StaleWhileRevalidate / CacheFirst（`defaultCache` に準拠） | |

@@ -15,7 +15,6 @@ export const APP_SHELL_URLS = [
   "/lists",
   "/lists/new",
   "/lists/detail",
-  "/items/new",
   "/history",
   "/tags",
   "/settings",

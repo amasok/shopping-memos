@@ -1,8 +1,19 @@
+import { existsSync } from "node:fs"
+import { join } from "node:path"
 import { describe, it, expect } from "vitest"
-import { CACHE_NAMES, CACHE_PREFIX, isStaleAppCache } from "../config"
+import { APP_SHELL_URLS, CACHE_NAMES, CACHE_PREFIX, isStaleAppCache } from "../config"
 import { isApiRequest, runtimeCaching } from "../runtime-caching"
 
 describe("SW のキャッシュ設定", () => {
+  it("プリキャッシュするアプリシェルはどれもページがある（消したページが残ると SW のインストールが 404 で失敗する）", () => {
+    const appDir = join(process.cwd(), "src/app")
+    for (const url of APP_SHELL_URLS) {
+      expect(existsSync(join(appDir, url, "page.tsx")), url).toBe(true)
+    }
+    // #62 o7b で消したページ
+    expect(APP_SHELL_URLS).not.toContain("/items/new")
+  })
+
   it("ランタイムキャッシュ名に CACHE_VERSION の接頭辞が付く", () => {
     for (const name of Object.values(CACHE_NAMES)) {
       expect(name.startsWith(CACHE_PREFIX)).toBe(true)

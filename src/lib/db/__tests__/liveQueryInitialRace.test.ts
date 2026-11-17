@@ -113,7 +113,7 @@ describe("liveQuery の最初の読み込みと重なった書き込み（#185�
 
     const pending = waitForResult(
       async () => {
-        const items = await queryItems(db, { groupId: undefined, order: "server" })
+        const items = await queryItems(db, { groupId: undefined })
         await gate.pauseOnce()
         return items.map((i) => i.name)
       },

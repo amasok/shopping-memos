@@ -2,7 +2,7 @@
 
 Issue: #62（https://github.com/amasok/shopping-memos/issues/62）の O7 から分けたもの
 
-**状態: 保留（ユーザーの確認待ち）**。ユーザーの不在中に、判断が要る部分を `62-o7-catalog-local-first` から分けた（リーダーの指示、2026-11-17）。下の「ユーザーに確認すること」の答えが出るまで実装しない。`62-o7-catalog-local-first` が archive されてから実装する（この change の specs は、それが作る `openspec/specs/catalog` の Requirement を変える）。
+**状態: 承認済み（2026-11-18、ユーザーが提案どおりで承認）**。ユーザーの不在中に、判断が要る部分を `62-o7-catalog-local-first` から分けた（リーダーの指示、2026-11-17）。下の「ユーザーに確認すること」は、すべて提案どおり（並びはログイン中に合わせる・`/items/new` は案 a で消す）。この change の specs は、`62-o7-catalog-local-first`（archive 済み）が作った `openspec/specs/catalog` の Requirement を変える。
 
 ## Why
 
@@ -45,7 +45,7 @@ O7 で、ゲストとローカルファーストのカタログの読み取り�
 
 ## ユーザーに確認すること
 
-specs と design は、各項目の「提案」で書いている。違う答えなら specs を直す。
+承認済み（2026-11-18、ユーザーが提案どおりで承認）。specs と design は、各項目の「提案」で書いている。
 
 1. **ゲストの一覧の並び**: 今は、ゲストとログイン中で並びが違う
    - 商品: ゲストは新しい順、ログイン中は古い順
