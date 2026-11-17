@@ -9,9 +9,9 @@
 
 ## 0. 準備
 
-- [ ] 0.1 Vercel が `x-real-ip`・`x-vercel-forwarded-for` をクライアントの値で上書きさせないかを Vercel のドキュメントで確かめ、使うヘッダを design の D4 に書き足す（使えるヘッダがなければ、ここで止めてリーダーに知らせる）
-- [ ] 0.2 `better-auth@1.7.25` を版を固定して入れる。`next-auth`・`@auth/drizzle-adapter` は置き換えが終わる 5.5 まで残す（並べて入れる）。`@better-auth/passkey` は A5 で入れる（入れると next-auth の @simplewebauthn ^9 とぶつかるため。D1）。`--legacy-peer-deps` は使わない。ぶつかりが残るときは `overrides` で合わせる。`disabledPaths` の名前と、IPv6 を /64 にまとめる設定の有無を確かめ、design の D1 に書き足す
-- [ ] 0.3 環境変数の確認（Zod）に `BETTER_AUTH_SECRET`・`BETTER_AUTH_URL`・`BETTER_AUTH_TRUSTED_ORIGINS`・`OTP_EVENT_HMAC_KEY`・`TURNSTILE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY` を足す（本番で欠けたら起動時にエラー）。`.env.example` と CI の build・E2E にダミーやテスト用の値を渡す
+- [x] 0.1 Vercel が `x-real-ip`・`x-vercel-forwarded-for` をクライアントの値で上書きさせないかを Vercel のドキュメントで確かめ、使うヘッダを design の D4 に書き足す（使えるヘッダがなければ、ここで止めてリーダーに知らせる）
+- [x] 0.2 `better-auth@1.7.25` を版を固定して入れる。`next-auth`・`@auth/drizzle-adapter` は置き換えが終わる 5.5 まで残す（並べて入れる）。`@better-auth/passkey` は A5 で入れる（入れると next-auth の @simplewebauthn ^9 とぶつかるため。D1）。`--legacy-peer-deps` は使わない。ぶつかりが残るときは `overrides` で合わせる。`disabledPaths` の名前と、IPv6 を /64 にまとめる設定の有無を確かめ、design の D1 に書き足す
+- [x] 0.3 環境変数の確認（Zod）に `BETTER_AUTH_SECRET`・`BETTER_AUTH_URL`・`BETTER_AUTH_TRUSTED_ORIGINS`・`OTP_EVENT_HMAC_KEY`・`TURNSTILE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY` を足す（本番で欠けたら起動時にエラー）。`.env.example` と CI の build・E2E にダミーやテスト用の値を渡す
 
 ## 1. domain とリポジトリ
 
@@ -53,4 +53,4 @@
 
 - [ ] 6.1 `npm run lint`・`npm run test:run`・`npm run test:db`・`npm run build`・`npm run test:e2e:local` が通る
 - [ ] 6.2 ブラウザで Report-Only の CSP の違反が出ないことを確かめる（ログイン画面と Turnstile）
-- [ ] 6.3 リリースに要る外の作業を書き出す（レビュー M3）: Vercel の Production・Preview に入れる環境変数の一覧（`BETTER_AUTH_SECRET`・`BETTER_AUTH_URL`・`BETTER_AUTH_TRUSTED_ORIGINS`（Preview）・`OTP_EVENT_HMAC_KEY`・`TURNSTILE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY`・`RESEND_API_KEY`・`EMAIL_FROM`・`EMAIL_RECIPIENT_ALLOWLIST`（Preview））と、ユーザーの作業（Turnstile のウィジェットを本番と Preview のホストで作る、Resend の `mail.counoco.net` の検証、Preview の Deployment Protection）を `docs/INFRASTRUCTURE.md` に足す。設計書の「Preview での確認チェックリスト」の R1b の項目を、AR1b の PR の本文に写せる形で用意する
+- [ ] 6.3 リリースに要る外の作業を書き出す（レビュー M3）: Vercel の Production・Preview に入れる環境変数の一覧（`BETTER_AUTH_SECRET`・`BETTER_AUTH_URL`・`BETTER_AUTH_TRUSTED_ORIGINS`（Preview）・`OTP_EVENT_HMAC_KEY`・`TURNSTILE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY`・`RESEND_API_KEY`・`EMAIL_FROM`・`EMAIL_RECIPIENT_ALLOWLIST`（Preview））と、ユーザーの作業（Turnstile のウィジェットを本番と Preview のホストで作る、Resend の `mail.counoco.net` の検証、Preview の Deployment Protection）を `docs/INFRASTRUCTURE.md` に足す。設計書の「Preview での確認チェックリスト」の R1b の項目を、AR1b の PR の本文に写せる形で用意する。確認項目に「偽の `x-real-ip`・`x-forwarded-for` を付けた送信で、記録される IP（`otp_events.ip`・`rate_limits.key`）がクライアントの値にならないこと」を入れる（D4。一時的なルートは作らず、既存の送信の記録で確かめる）

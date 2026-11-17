@@ -35,7 +35,11 @@
 - **スキーマの生成**: `@better-auth/cli` は deprecated。`npx auth@1.7.25 generate --config <file> --output <file> -y` を使い、出力は schema.ts に手で写す（A2）
 - **build**: `BETTER_AUTH_SECRET` がないと build のログに BetterAuthError（既定の secret）が出る（終了コードは 0）。CI の build にはダミーの値を渡す
 - **A5（パスキー）への申し送り**: `rpID`・`origin`・`authenticatorSelection` は渡せ、SimpleWebAuthn は server 13.3.3・browser 13.3.0。登録の 2 つの API は fresh session を求めるが、**`/passkey/delete-passkey` は求めない**ので、`hooks.before` で `getSessionFromCtx` のセッションの `createdAt` を自前で確かめる。`freshAge` は全体の設定で、600 にするとほかのアカウント系の API も 10 分以内のログインを求めるようになるので、A5 の design で決める
-- 確かめていないこと: `disabledPaths` の名前（D4 の許可リストが主なので、なくても困らない）、IPv6 を /64 にまとめる設定の有無、`waitUntil`（Next.js の `after()` を使う）
+- 確かめていないこと: `waitUntil`（Next.js の `after()` を使う）
+- **入れた結果（0.2。2026-11-18）**: vite 8 の後の develop で、`npm install --save-exact better-auth@1.7.25` が `--legacy-peer-deps` なしで通った（17 パッケージを追加）。`npm audit` の件数は入れる前と同じ（増えていない）。next-auth と並べて入れている
+- **`disabledPaths`**: 全体の設定の `disabledPaths?: string[]`。一致したパスは Better Auth が 404 を返す
+- **IPv6**: `advanced.ipAddress.ipv6Subnet`（既定 64）で、rate limit のキーを /64 にまとめる。`@better-auth/core` の `normalizeIP(ip, { ipv6Subnet })` で同じ丸め方を自前のキー（1.2）にも使える。`trustedProxies` を設定しないときは、カンマ区切りでない 1 つの値のヘッダだけを信頼する（複数の値なら IP なし）
+- **環境変数の確認（0.3）**: `src/infrastructure/auth/env.ts` の `resolveAuthEnv`。本番・Vercel・`NODE_ENV=production` では `BETTER_AUTH_SECRET`（32 文字以上）・`BETTER_AUTH_URL`（オリジン）・`OTP_EVENT_HMAC_KEY`（32 文字以上、secret と別の値）・`TURNSTILE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY` が必須。本番（`VERCEL_ENV=production`）では Turnstile のテスト用のキーを拒否する。ローカルの開発では開発用の値とテスト用のキーで埋める。サーバーの起動時（`src/instrumentation.ts` の `register`）に、A1 のメールの設定とあわせて確かめる。`next build` では呼ばれないので、CI の build に要るダミーは `NEXT_PUBLIC_TURNSTILE_SITE_KEY` だけ。E2E（ci.yml・sw-e2e.yml・e2e-local.sh）には E2E 専用の値を渡し、`BETTER_AUTH_URL` は playwright.config.ts が webServer ごとに渡す。Better Auth の本体は、モジュールの読み込みではなく最初に使うときに作る（2.1。A1 の申し送り）
 
 ### D2. 置き場所と依存の向き
 
@@ -62,6 +66,10 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 ### D4. 送信と照合の上限（論点 c）
 
 - **IP ごとの上限**（送信 3 通/分・20 通/24 時間、照合 10 回/分）は、Better Auth の `rateLimit`（`storage: "database"`、`customRules`）でかける。IP は `advanced.ipAddress.ipAddressHeaders` で、Vercel が付けるヘッダ（`x-real-ip` など）だけから取る。IPv6 は /64 にまとめる（Better Auth に設定があれば使い、なければ自前で丸める）。Vercel がクライアントの値を上書きするかは、実装の前に Vercel のドキュメントで確かめ、ここに書き足す。IP が取れないとき（ローカル）は固定のキー `'unknown'` にまとめる（制限を外さない）。Better Auth の rate limit は同時のリクエストで数件はみ出すことがありうるが、IP の上限は枠の目安なので受け入れる
+- **使う IP のヘッダ（0.1 で確かめた。2026-11-18、リーダーの判断で案 A）**: `x-real-ip` だけを使う（`ipAddressHeaders: ["x-real-ip"]`）。`x-forwarded-for`・`x-vercel-forwarded-for` は使わない
+  - 根拠（vercel.com/docs/headers/request-headers）: `x-forwarded-for` は "we currently overwrite the X-Forwarded-For header and do not forward external IPs. This restriction is in place to prevent IP spoofing."。`x-real-ip` は "This header is identical to the x-forwarded-for header."。Vercel 公式の `@vercel/functions` の `ipAddress()` も `x-real-ip` だけを読む（ソースのコメントは "Client IP as calculated by Vercel Proxy."）
+  - `x-real-ip` を上書きすると明記した公式の記述はない（間接の根拠）。そのため、本番の前に Preview で、偽の `x-real-ip`・`x-forwarded-for` を付けた送信で `otp_events.ip` などに記録される IP がクライアントの値にならないことを確かめる（6.3 の確認項目。一時的なルートは作らない）。Vercel のサポートへの問い合わせはしない
+  - 偽装した `x-forwarded-for` でキーが変わらないことは、ユニットテストで確かめる（1.2・2.3）
 - **アドレスに結びつく上限**（再送の間隔・「アドレス × IP」の 5 通・累積ロック・1 つのコードの 3 回・チャレンジの段階）は、`hooks.before`（送信・照合のパス）で `otpAbusePolicy` を呼んで決める。解除は `hooks.after`（照合の成功）
 - **同時のリクエストでも数えもれがないようにする（レビュー H1）**: 送信・照合の判定は、1 つのトランザクションの中で `pg_advisory_xact_lock`（キーはアドレスの HMAC）を取ってから「記録を INSERT → 数える → 判定」の順に行う。同じアドレスへのリクエストは直列になり、判定は自分の分を含めた数で行う。照合は、照合に進む前に `attempted` を記録する（成功しても記録は残し、成功の後に `unlocked` を記録して、それより前の分を数えない）。数え方:
   - `sent` は実際にメールを送ったとき（新しいコードができたとき）だけ記録する。黙って見送った送信では記録しない（記録すると、コードが変わらないまま回数が 0 に戻るため）
@@ -136,5 +144,5 @@ domain は Better Auth・Drizzle を import しない。`src/infrastructure/auth
 
 ## Open Questions
 
-- Vercel が `x-real-ip` などをクライアントの値で上書きさせないか（実装の前に Vercel のドキュメントで確かめる。D4）
+- （解決）Vercel の IP のヘッダ: `x-real-ip` だけを使う。公式の明記はないので、Preview で確かめる（D4・6.3）
 - vite 8 への更新は shopping-memos-vite8 が受け持つ（リーダーの判断、2026-11-18）。dev 依存の更新の PR（chore/dev-deps-audit。vite 7.3.8・vitest 4.1.12）と #193 の後に行い、A3 はその後に始める

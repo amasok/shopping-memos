@@ -45,6 +45,9 @@ describe("playwright.config.ts のポート (#142)", () => {
     expect(offline.command).toContain("-p 43124")
     expect(main.url).toBe("http://localhost:43123")
     expect(main.command).toContain("-p 43123")
+    // Better Auth のオリジン（#61 A3a）は、サーバーごとに自分のオリジンにする
+    expect(offline.command).toContain("BETTER_AUTH_URL=http://localhost:43124 ")
+    expect(main.command).toContain("BETTER_AUTH_URL=http://localhost:43123 ")
   })
 
   it.each([["abc"], ["80"], ["70000"], ["3000.5"]])("不正な E2E_PORT（%s）は読み込み時にエラーにする", async (port) => {
@@ -58,21 +61,21 @@ describe("playwright.config.ts のサーバーの起動方法 (#142)", () => {
   it("手元の既定は dev サーバーで、既存のサーバーを使い回す", async () => {
     const server = mainServer(await loadConfig({}))
 
-    expect(server.command).toBe("E2E_BUILD=true E2E_TEST=true npm run dev -- -p 3000")
+    expect(server.command).toBe("BETTER_AUTH_URL=http://localhost:3000 E2E_BUILD=true E2E_TEST=true npm run dev -- -p 3000")
     expect(server.reuseExistingServer).toBe(true)
   })
 
   it("CI は本番ビルド（npm run start）で、使い回さない", async () => {
     const server = mainServer(await loadConfig({ CI: "true" }))
 
-    expect(server.command).toBe("E2E_TEST=true npm run start -- -p 3000")
+    expect(server.command).toBe("BETTER_AUTH_URL=http://localhost:3000 E2E_TEST=true npm run start -- -p 3000")
     expect(server.reuseExistingServer).toBe(false)
   })
 
   it("scripts/e2e-local.sh の設定（E2E_START=true・E2E_REUSE_SERVER=false）では、本番ビルドを使い、ほかのサーバーを使い回さない", async () => {
     const config = await loadConfig({ E2E_START: "true", E2E_REUSE_SERVER: "false", E2E_PORT: "43123", E2E_OFFLINE: "true" })
 
-    expect(mainServer(config).command).toBe("E2E_TEST=true npm run start -- -p 43123")
+    expect(mainServer(config).command).toBe("BETTER_AUTH_URL=http://localhost:43123 E2E_TEST=true npm run start -- -p 43123")
     for (const server of config.webServer) expect(server.reuseExistingServer).toBe(false)
   })
 })

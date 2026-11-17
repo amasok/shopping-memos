@@ -40,6 +40,14 @@ jobs:
       DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
       AUTH_SECRET: "e2e-ci-only-secret-not-for-production"
       AUTH_TRUST_HOST: "true"
+      # Better Auth（#61 A3a）。next start（NODE_ENV=production）は起動時に認証とメールの環境変数を確かめるので、E2E専用のダミー値を渡す。
+      # BETTER_AUTH_URL は playwright.config.ts が webServer ごとに渡す。この E2E はログインせず、メールも送らない
+      BETTER_AUTH_SECRET: "e2e-ci-only-better-auth-secret-not-for-production"
+      OTP_EVENT_HMAC_KEY: "e2e-ci-only-otp-event-hmac-key-not-for-production"
+      TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA"
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"
+      RESEND_API_KEY: "re_e2e_ci_dummy_not_used"
+      EMAIL_FROM: "noreply@example.com"
 
     steps:
       - name: Checkout

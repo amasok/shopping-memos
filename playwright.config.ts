@@ -74,7 +74,7 @@ export default defineConfig({
     ...(process.env.E2E_OFFLINE
       ? [
           {
-            command: `AUTH_TRUST_HOST=true E2E_TEST=true npx next start -p ${E2E_OFFLINE_PORT}`,
+            command: `AUTH_TRUST_HOST=true BETTER_AUTH_URL=${E2E_OFFLINE_ORIGIN} E2E_TEST=true npx next start -p ${E2E_OFFLINE_PORT}`,
             url: E2E_OFFLINE_ORIGIN,
             reuseExistingServer,
             timeout: 120 * 1000,
@@ -85,8 +85,8 @@ export default defineConfig({
     // CI は事前に E2E_BUILD=true npm run build 済みの本番ビルドで起動する（dev の初回コンパイル待ちによるタイムアウトを避ける）
     // E2E 専用ルートは E2E_BUILD=true のビルド（dev ではサーバー起動時）にだけ含まれる（#70）
     command: useBuild
-      ? `E2E_TEST=true npm run start -- -p ${E2E_PORT}`
-      : `E2E_BUILD=true E2E_TEST=true npm run dev -- -p ${E2E_PORT}`,
+      ? `BETTER_AUTH_URL=${E2E_ORIGIN} E2E_TEST=true npm run start -- -p ${E2E_PORT}`
+      : `BETTER_AUTH_URL=${E2E_ORIGIN} E2E_BUILD=true E2E_TEST=true npm run dev -- -p ${E2E_PORT}`,
     url: E2E_ORIGIN,
     reuseExistingServer,
     timeout: 120 * 1000,
