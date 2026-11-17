@@ -10,6 +10,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
  */
 const TEST_DB_URL = process.env.OWNERSHIP_DB_TEST_URL
 
+// テストはデータを作って消すので、ローカルの DB 以外では流さない
+if (TEST_DB_URL && !["localhost", "127.0.0.1"].includes(new URL(TEST_DB_URL).hostname)) {
+  throw new Error("OWNERSHIP_DB_TEST_URL は localhost / 127.0.0.1 の DB だけ指定できます")
+}
+
 describe.skipIf(!TEST_DB_URL)("canAccess（実 DB）", () => {
   const run = Math.random().toString(36).slice(2, 10)
   const id = (name: string) => `own-${run}-${name}`
@@ -26,6 +31,8 @@ describe.skipIf(!TEST_DB_URL)("canAccess（実 DB）", () => {
   const owner = id("owner")
   const member = id("member")
   const stranger = id("stranger")
+  // 作成者だが、グループのメンバーではない（グループを抜けた）
+  const leaver = id("leaver")
   const group = id("group")
 
   beforeAll(async () => {
@@ -45,7 +52,7 @@ describe.skipIf(!TEST_DB_URL)("canAccess（実 DB）", () => {
     ctx = { db, schema, itemRepository, tagRepository, listRepository: shoppingListRepository }
 
     await db.insert(schema.users).values(
-      [owner, member, stranger].map((u) => ({ id: u, email: `${u}@example.com` }))
+      [owner, member, stranger, leaver].map((u) => ({ id: u, email: `${u}@example.com` }))
     )
     await db
       .insert(schema.groups)
@@ -59,16 +66,19 @@ describe.skipIf(!TEST_DB_URL)("canAccess（実 DB）", () => {
     await db.insert(items).values([
       { id: id("item-personal"), name: "牛乳", userId: owner, groupId: null },
       { id: id("item-group"), name: "卵", userId: owner, groupId: group },
+      { id: id("item-left"), name: "米", userId: leaver, groupId: group },
       { id: id("item-orphan"), name: "パン", userId: null, groupId: null },
     ])
     await db.insert(tags).values([
       { id: id("tag-personal"), name: "食品", userId: owner, groupId: null },
       { id: id("tag-group"), name: "共有", userId: owner, groupId: group },
+      { id: id("tag-left"), name: "抜けた", userId: leaver, groupId: group },
       { id: id("tag-orphan"), name: "孤児", userId: null, groupId: null },
     ])
     await db.insert(shoppingLists).values([
       { id: id("list-personal"), name: "個人", userId: owner, groupId: null },
       { id: id("list-group"), name: "共有", userId: owner, groupId: group },
+      { id: id("list-left"), name: "抜けた", userId: leaver, groupId: group },
       { id: id("list-orphan"), name: "孤児", userId: null, groupId: null },
     ])
   })
@@ -81,17 +91,19 @@ describe.skipIf(!TEST_DB_URL)("canAccess（実 DB）", () => {
     await db.delete(schema.items).where(inArray(schema.items.id, [id("item-orphan")]))
     await db.delete(schema.tags).where(inArray(schema.tags.id, [id("tag-orphan")]))
     await db.delete(schema.shoppingLists).where(inArray(schema.shoppingLists.id, [id("list-orphan")]))
-    await db.delete(schema.users).where(inArray(schema.users.id, [owner, member, stranger]))
+    await db.delete(schema.users).where(inArray(schema.users.id, [owner, member, stranger, leaver]))
     await db.delete(schema.groups).where(inArray(schema.groups.id, [group]))
   })
 
-  const cases: Array<[string, "personal" | "group" | "orphan", string, boolean]> = [
+  const cases: Array<[string, "personal" | "group" | "left" | "orphan", string, boolean]> = [
     ["作成者は個人データを使える", "personal", "owner", true],
     ["グループのメンバーは個人データを使えない", "personal", "member", false],
     ["他人は個人データを使えない", "personal", "stranger", false],
     ["作成者（メンバー）はグループのデータを使える", "group", "owner", true],
     ["グループのメンバーはグループのデータを使える", "group", "member", true],
     ["グループ外の人はグループのデータを使えない", "group", "stranger", false],
+    ["グループを抜けた作成者は、グループのデータを使えない", "left", "leaver", false],
+    ["グループのメンバーは、抜けた人が作ったグループのデータを使える", "left", "member", true],
     ["所有者が分からないデータはだれも使えない（作成者でも）", "orphan", "owner", false],
     ["所有者が分からないデータは他人も使えない", "orphan", "stranger", false],
   ]
@@ -102,7 +114,7 @@ describe.skipIf(!TEST_DB_URL)("canAccess（実 DB）", () => {
     ["ShoppingList", "list", (c: Ctx) => c.listRepository],
   ] as const)("%s", (_label, prefix, repo) => {
     it.each(cases)("%s", async (_name, kind, who, expected) => {
-      const user = { owner, member, stranger }[who as "owner" | "member" | "stranger"]
+      const user = { owner, member, stranger, leaver }[who as "owner" | "member" | "stranger" | "leaver"]
       const ok = await repo(ctx).canAccess(id(`${prefix}-${kind}`), user)
       expect(ok).toBe(expected)
     })

@@ -36,6 +36,6 @@
 
 ## 実 DB のテスト（#151）
 
-- `npm run test:db` で `src/**/*.db.test.ts` を流す。docker の postgres に一時 DB を作り、migrate して、終わったら消す。CI では流さない（通常の `test:run` ではスキップされる）
+- `npm run test:db` で `src/**/*.db.test.ts` を全部流す。docker の postgres に一時 DB を作り、migrate して、終わったら消す。CI では流さない（通常の `test:run` ではスキップされる）
 
 コード例・モックの書き方は `testing-patterns` スキル、TDD の進め方は `tdd-guide` エージェントを参照。
