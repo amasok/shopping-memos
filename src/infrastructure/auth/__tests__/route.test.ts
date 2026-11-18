@@ -27,6 +27,7 @@ describe("認証の route（#61 A3a 3.2）", () => {
     "/email-otp/verify-email",
     "/forget-password/email-otp",
     "/email-otp/reset-password",
+    "/update-user",
   ])("許可していないパスは 404 になる（%s。Better Auth に渡さない）", async (path) => {
     const { handle, route } = setup()
     const res = await route(post(path, { email: "a@example.com", password: "x", otp: "123456" }))
@@ -75,18 +76,26 @@ describe("認証の route（#61 A3a 3.2）", () => {
     expect((await route(post("/email-otp/send-verification-otp", { email: "a@example.com", type: "sign-in" }))).status).toBe(200)
     expect((await route(post("/sign-in/email-otp", { email: "a@example.com", otp: "123456" }))).status).toBe(200)
     expect((await route(post("/sign-out"))).status).toBe(200)
+    expect((await route(post("/revoke-sessions"))).status).toBe(200)
     expect((await route(new Request(`${ORIGIN}/api/auth/get-session`))).status).toBe(200)
-    expect(handle).toHaveBeenCalledTimes(4)
+    expect(handle).toHaveBeenCalledTimes(5)
     // 送信の本文は Better Auth にそのまま渡る（clone して読んでいる）
     const sent = handle.mock.calls[0] as unknown as [Request]
     expect(await sent[0].json()).toEqual({ email: "a@example.com", type: "sign-in" })
   })
 
-  it("許可リストは送信・照合・セッション・ログアウトだけ", () => {
+  it("許可リストは送信・照合・セッション・ログアウト・すべての端末からログアウトだけ", () => {
     expect(ALLOWED_AUTH_PATHS).toEqual({
       GET: ["/get-session"],
-      POST: ["/email-otp/send-verification-otp", "/sign-in/email-otp", "/sign-out"],
+      POST: ["/email-otp/send-verification-otp", "/sign-in/email-otp", "/sign-out", "/revoke-sessions"],
     })
+  })
+
+  it("すべての端末からログアウトの API は別のオリジンからは 403 になる", async () => {
+    const { handle, route } = setup()
+    const res = await route(post("/revoke-sessions", {}, { origin: "https://evil.example.com", cookie: "better-auth.session_token=tok" }))
+    expect(res.status).toBe(403)
+    expect(handle).not.toHaveBeenCalled()
   })
 
   it("別のオリジンからのログインは 403 になる", async () => {

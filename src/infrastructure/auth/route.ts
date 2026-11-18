@@ -7,14 +7,15 @@ import { SEND_OTP_PATH, SIGN_IN_OTP_PATH } from "./server"
  * - 許可リストにあるパスとメソッドだけを Better Auth に渡し、ほかは 404（ライブラリが新しいパスを足しても自動では開かない）
  * - POST は、別のオリジンからなら 403（Cookie の有無にかかわらず。ログインの CSRF を防ぐ）
  * - コードの送信は、種類が sign-in 以外なら 400（hooks でも重ねて断る）
- * A4・A5 は、それぞれの change で許可リストに足す
+ * A5（パスキー）は、その change で許可リストに足す
  */
 
 export const AUTH_BASE_PATH = "/api/auth"
 
 export const ALLOWED_AUTH_PATHS: Readonly<Record<string, readonly string[]>> = {
   GET: ["/get-session"],
-  POST: [SEND_OTP_PATH, SIGN_IN_OTP_PATH, "/sign-out"],
+  // すべての端末からログアウト（#61 A4。有効なセッションが要る。ユーザーの更新の /update-user は開かない）
+  POST: [SEND_OTP_PATH, SIGN_IN_OTP_PATH, "/sign-out", "/revoke-sessions"],
 }
 
 function jsonResponse(status: number, body: unknown): Response {
