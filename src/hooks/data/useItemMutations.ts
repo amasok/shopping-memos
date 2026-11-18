@@ -1,9 +1,9 @@
 "use client"
 
 import { useCallback } from "react"
-import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
-import { useDataSource } from "./useDataSource"
+import * as catalogRepository from "@/infrastructure/local/catalogRepository"
+import { requireStore, useCatalogSource } from "./useCatalogSource"
 
 type CreateItemInput = {
   name: string
@@ -15,12 +15,13 @@ type CreateItemInput = {
 type UpdateItemInput = Partial<CreateItemInput> & { id: string }
 
 /**
- * アイテムのCRUD操作フック
- * ログイン時: サーバーAPI経由
- * 未ログイン時: ローカルDB直接操作
+ * アイテムのCRUD操作フック（#62 O7）
+ * - ログイン中・フラグ false: サーバーAPI経由
+ * - ゲスト・ログイン中でフラグ true: 端末の DB のリポジトリ経由（フラグ true ならキューに積み、同期を予約する）
  */
 export function useItemMutations() {
-  const { useServer } = useDataSource()
+  const source = useCatalogSource()
+  const useServer = source.mode === "server"
   const utils = trpc.useUtils()
 
   // サーバー側ミューテーション
@@ -53,23 +54,12 @@ export function useItemMutations() {
         })
       }
 
-      // ローカル
-      const id = crypto.randomUUID()
-      const now = new Date()
-      await db.items.add({
-        id,
-        name: input.name,
-        quantity: input.quantity,
-        memo: input.memo,
-        tagIds: input.tagIds,
-        groupId: input.groupId,
-        createdAt: now,
-        updatedAt: now,
-        purchasedAt: undefined,
-      })
-      return { id }
+      // 端末の DB
+      const item = await catalogRepository.createItem(requireStore(source), input)
+      source.afterWrite()
+      return { id: item.id }
     },
-    [useServer, createMutation]
+    [useServer, createMutation, source]
   )
 
   // アイテム更新
@@ -85,11 +75,12 @@ export function useItemMutations() {
         })
       }
 
-      // ローカル
-      await db.items.update(input.id, input)
+      // 端末の DB
+      await catalogRepository.updateItem(requireStore(source), input)
+      source.afterWrite()
       return { id: input.id }
     },
-    [useServer, updateMutation]
+    [useServer, updateMutation, source]
   )
 
   // アイテム削除
@@ -99,11 +90,12 @@ export function useItemMutations() {
         return deleteMutation.mutateAsync({ id })
       }
 
-      // ローカル
-      await db.items.delete(id)
+      // 端末の DB
+      await catalogRepository.deleteItem(requireStore(source), id)
+      source.afterWrite()
       return { success: true }
     },
-    [useServer, deleteMutation]
+    [useServer, deleteMutation, source]
   )
 
   return {

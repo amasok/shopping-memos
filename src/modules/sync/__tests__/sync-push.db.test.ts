@@ -1,0 +1,631 @@
+// @vitest-environment node
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import postgres from "postgres"
+import type { SyncPushOperation } from "@/shared/schemas/sync"
+
+/**
+ * sync.push（#62 O4）を実 DB で確かめるテスト
+ *
+ * DB_TEST_URL があるときだけ流す（なければスキップ）。流し方: npm run test:db
+ */
+const TEST_DB_URL = process.env.DB_TEST_URL
+
+if (TEST_DB_URL && !["localhost", "127.0.0.1"].includes(new URL(TEST_DB_URL).hostname)) {
+  throw new Error("DB_TEST_URL は localhost / 127.0.0.1 の DB だけ指定できます")
+}
+
+const T1 = "2026-01-01T00:00:00.000Z"
+const T2 = "2026-01-02T00:00:00.000Z"
+const T3 = "2026-01-03T00:00:00.000Z"
+
+describe.skipIf(!TEST_DB_URL)("sync.push（実 DB）", () => {
+  const owner = crypto.randomUUID()
+  const stranger = crypto.randomUUID()
+  const group = crypto.randomUUID()
+  const otherGroup = crypto.randomUUID()
+
+  type Ctx = {
+    db: typeof import("@/infrastructure/db/drizzle/client").db
+    schema: typeof import("@/infrastructure/db/drizzle/schema")
+    drizzle: typeof import("drizzle-orm")
+    service: typeof import("../application/services/SyncPushService").syncPushService
+  }
+  let ctx: Ctx
+
+  beforeAll(async () => {
+    process.env.DATABASE_URL = TEST_DB_URL
+    ctx = {
+      db: (await import("@/infrastructure/db/drizzle/client")).db,
+      schema: await import("@/infrastructure/db/drizzle/schema"),
+      drizzle: await import("drizzle-orm"),
+      service: (await import("../application/services/SyncPushService")).syncPushService,
+    }
+    const { db, schema } = ctx
+    await db.insert(schema.users).values([owner, stranger].map((u) => ({ id: u, email: `${u}@example.com` })))
+    await db.insert(schema.groups).values([
+      { id: group, name: "g", inviteCode: group.slice(0, 8).toUpperCase() },
+      { id: otherGroup, name: "o", inviteCode: otherGroup.slice(0, 8).toUpperCase() },
+    ])
+    await db.insert(schema.groupMembers).values([
+      { id: crypto.randomUUID(), groupId: group, userId: owner },
+      { id: crypto.randomUUID(), groupId: otherGroup, userId: stranger },
+    ])
+  })
+
+  afterAll(async () => {
+    if (!ctx) return
+    const { db, schema, drizzle } = ctx
+    await db.delete(schema.syncOperations).where(drizzle.inArray(schema.syncOperations.userId, [owner, stranger]))
+    await db.delete(schema.users).where(drizzle.inArray(schema.users.id, [owner, stranger]))
+    await db.delete(schema.groups).where(drizzle.inArray(schema.groups.id, [group, otherGroup]))
+  })
+
+  const op = (over: Partial<SyncPushOperation> & Pick<SyncPushOperation, "entity" | "type">): SyncPushOperation => ({
+    opId: crypto.randomUUID(),
+    entityId: crypto.randomUUID(),
+    clientTime: T1,
+    ...over,
+  })
+
+  const push1 = async (userId: string, operation: SyncPushOperation) => {
+    const { results } = await ctx.service.push(userId, [operation])
+    return results[0]
+  }
+
+  async function rawItem(id: string) {
+    const { db, schema, drizzle } = ctx
+    const [row] = await db.select().from(schema.items).where(drizzle.eq(schema.items.id, id))
+    return row
+  }
+
+  async function itemTagIds(id: string) {
+    const { db, schema, drizzle } = ctx
+    const rows = await db.select().from(schema.itemTags).where(drizzle.eq(schema.itemTags.itemId, id))
+    return rows.map((r) => r.tagId).sort()
+  }
+
+  async function createItem(userId = owner, patch: Record<string, unknown> = {}, clientTime = T1) {
+    const create = op({ entity: "item", type: "create", patch: { name: "牛乳", ...patch }, clientTime })
+    expect(await push1(userId, create)).toMatchObject({ status: "applied" })
+    return create.entityId
+  }
+
+  async function createTag(userId = owner, groupId?: string) {
+    const create = op({ entity: "tag", type: "create", patch: { name: "食品", ...(groupId ? { groupId } : {}) } })
+    expect(await push1(userId, create)).toMatchObject({ status: "applied" })
+    return create.entityId
+  }
+
+  describe("作成", () => {
+    it("アイテムを作り、書き込んだすべてのフィールドの時刻を操作の時刻にする", async () => {
+      const tag = await createTag()
+      const id = await createItem(owner, { quantity: 2, memo: "低脂肪", tagIds: [tag] })
+      const row = await rawItem(id)
+      expect(row).toMatchObject({ name: "牛乳", quantity: 2, memo: "低脂肪", userId: owner, groupId: null })
+      expect(row.fieldModifiedAt).toEqual({ name: T1, quantity: T1, memo: T1, tagIds: T1, purchasedAt: T1 })
+      expect(await itemTagIds(id)).toEqual([tag])
+    })
+
+    it("同じ opId の再送は duplicate で、二重に適用しない", async () => {
+      const create = op({ entity: "item", type: "create", patch: { name: "卵" } })
+      expect(await push1(owner, create)).toMatchObject({ status: "applied" })
+      expect(await push1(owner, { ...create, patch: { name: "卵（再送）" } })).toEqual({
+        opId: create.opId,
+        status: "duplicate",
+        reason: "applied",
+      })
+      expect((await rawItem(create.entityId)).name).toBe("卵")
+    })
+
+    it("同じ opId を同時に送っても、適用は 1 回だけで、ほかは duplicate", async () => {
+      const create = op({ entity: "item", type: "create", patch: { name: "同時" } })
+      const results = await Promise.all(Array.from({ length: 5 }, () => push1(owner, create)))
+      expect(results.map((r) => r.status).sort()).toEqual(["applied", "duplicate", "duplicate", "duplicate", "duplicate"])
+    })
+
+    it("rejected になった操作の再送は、duplicate の reason に最初の結果を返す", async () => {
+      const update = op({ entity: "item", type: "update", patch: { name: "x" } })
+      expect(await push1(owner, update)).toMatchObject({ status: "rejected", reason: "not_found" })
+      expect(await push1(owner, update)).toMatchObject({ status: "duplicate", reason: "rejected:not_found" })
+    })
+
+    it("ほかのユーザーが使った opId は rejected", async () => {
+      const create = op({ entity: "item", type: "create", patch: { name: "x" } })
+      await push1(owner, create)
+      expect(await push1(stranger, { ...create, entityId: crypto.randomUUID() })).toMatchObject({
+        status: "rejected",
+        reason: "op_conflict",
+      })
+    })
+
+    it("同じ ID の行が自分のものなら、フィールド単位の更新として扱う", async () => {
+      const id = await createItem(owner, {}, T1)
+      const again = op({ entity: "item", type: "create", entityId: id, patch: { name: "豆乳", groupId: null }, clientTime: T2 })
+      expect(await push1(owner, again)).toMatchObject({ status: "applied" })
+      expect((await rawItem(id)).name).toBe("豆乳")
+    })
+
+    it("同じ ID の行がほかのユーザーのものなら rejected で、serverRow を返さない", async () => {
+      const id = await createItem(stranger)
+      const result = await push1(owner, op({ entity: "item", type: "create", entityId: id, patch: { name: "x" } }))
+      expect(result).toMatchObject({ status: "rejected", reason: "id_conflict" })
+      expect(result.serverRow).toBeUndefined()
+      expect((await rawItem(id)).name).toBe("牛乳")
+    })
+
+    it("所属していないグループには作れない", async () => {
+      const result = await push1(owner, op({ entity: "item", type: "create", patch: { name: "x", groupId: otherGroup } }))
+      expect(result).toMatchObject({ status: "rejected", reason: "forbidden" })
+    })
+
+    it("所属しているグループに作れる", async () => {
+      const result = await push1(owner, op({ entity: "tag", type: "create", patch: { name: "g", groupId: group } }))
+      expect(result).toMatchObject({ status: "applied" })
+    })
+
+    it("ほかのスコープのタグは付けられない", async () => {
+      const foreignTag = await createTag(stranger)
+      const result = await push1(owner, op({ entity: "item", type: "create", patch: { name: "x", tagIds: [foreignTag] } }))
+      expect(result).toMatchObject({ status: "rejected", reason: "invalid_reference" })
+    })
+
+    it("リストのアイテムは、リストのグループで作る。完了したリスト・使えないリストには作れない", async () => {
+      const list = op({ entity: "list", type: "create", patch: { name: "週末", groupId: group } })
+      await push1(owner, list)
+      const li = op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name: "パン" } })
+      expect(await push1(owner, li)).toMatchObject({ status: "applied" })
+      const { db, schema, drizzle } = ctx
+      const [row] = await db.select().from(schema.listItems).where(drizzle.eq(schema.listItems.id, li.entityId))
+      expect(row).toMatchObject({ groupId: group, userId: owner, checked: false })
+
+      expect(
+        await push1(stranger, op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name: "x" } }))
+      ).toMatchObject({ status: "rejected", reason: "invalid_reference" })
+
+      await db.update(schema.shoppingLists).set({ status: "completed" }).where(drizzle.eq(schema.shoppingLists.id, list.entityId))
+      expect(
+        await push1(owner, op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name: "x" } }))
+      ).toMatchObject({ status: "rejected", reason: "list_completed" })
+      expect(
+        await push1(owner, op({ entity: "listItem", type: "update", entityId: li.entityId, patch: { checked: true } }))
+      ).toMatchObject({ status: "rejected", reason: "list_completed" })
+    })
+
+    it("不正なパッチはその操作だけ rejected にし、同じリクエストのほかの操作は適用する", async () => {
+      const bad = op({ entity: "item", type: "create", patch: { name: "x", isAdmin: true } })
+      const badType = op({ entity: "item", type: "create", patch: { name: 1 } })
+      const good = op({ entity: "item", type: "create", patch: { name: "ok" } })
+      const { results } = await ctx.service.push(owner, [bad, badType, good])
+      expect(results.map((r) => [r.status, r.reason])).toEqual([
+        ["rejected", "invalid_patch"],
+        ["rejected", "invalid_patch"],
+        ["applied", undefined],
+      ])
+      expect(await rawItem(bad.entityId)).toBeUndefined()
+    })
+  })
+
+  describe("更新（フィールド単位の LWW）", () => {
+    it("field_modified_at にキーがないフィールドは、古い時刻でも常に適用する", async () => {
+      const { db, schema } = ctx
+      const id = crypto.randomUUID()
+      await db.insert(schema.items).values({ id, name: "古い行", userId: owner, fieldModifiedAt: {} })
+      const result = await push1(owner, op({ entity: "item", type: "update", entityId: id, patch: { name: "新" }, clientTime: T1 }))
+      expect(result).toMatchObject({ status: "applied" })
+      expect((await rawItem(id)).fieldModifiedAt).toEqual({ name: T1 })
+    })
+
+    it("古いフィールドだけを捨てて partial にし、別のフィールドは適用する。serverRow に最新の行を返す", async () => {
+      const id = await createItem(owner, {}, T2)
+      const result = await push1(
+        owner,
+        op({
+          entity: "item",
+          type: "update",
+          entityId: id,
+          patch: { name: "古い名前", quantity: 5 },
+          fieldTimes: { name: T1, quantity: T3 },
+          clientTime: T3,
+        })
+      )
+      expect(result.status).toBe("partial")
+      expect(result.serverRow).toMatchObject({ id, name: "牛乳", quantity: 5, tagIds: [] })
+      const row = await rawItem(id)
+      expect(row.name).toBe("牛乳")
+      expect(row.fieldModifiedAt).toMatchObject({ name: T2, quantity: T3 })
+    })
+
+    it("古い操作を適用した後でも、後から届いた新しい操作は却下されない（updated_at を LWW に使わない）", async () => {
+      const { db, schema } = ctx
+      const id = crypto.randomUUID()
+      await db.insert(schema.items).values({ id, name: "x", userId: owner, fieldModifiedAt: {} })
+      await push1(owner, op({ entity: "item", type: "update", entityId: id, patch: { memo: "古い" }, clientTime: T1 }))
+      const later = await push1(owner, op({ entity: "item", type: "update", entityId: id, patch: { memo: "新しい" }, clientTime: T2 }))
+      expect(later.status).toBe("applied")
+      expect((await rawItem(id)).memo).toBe("新しい")
+    })
+
+    it("未来の時刻は serverTime に丸める", async () => {
+      const id = await createItem()
+      const future = "2999-01-01T00:00:00.000Z"
+      const { serverTime } = await ctx.service.push(owner, [
+        op({ entity: "item", type: "update", entityId: id, patch: { name: "未来" }, clientTime: future }),
+      ])
+      const stored = (await rawItem(id)).fieldModifiedAt.name
+      expect(Date.parse(stored)).toBeLessThanOrEqual(Date.parse(serverTime))
+      expect(stored).not.toBe(future)
+    })
+
+    it("タグを入れ替えると item_tags も入れ替わる", async () => {
+      const a = await createTag()
+      const b = await createTag()
+      const id = await createItem(owner, { tagIds: [a] })
+      await push1(owner, op({ entity: "item", type: "update", entityId: id, patch: { tagIds: [b] }, clientTime: T2 }))
+      expect(await itemTagIds(id)).toEqual([b])
+    })
+
+    it("ほかのユーザーの行・存在しない行は、どちらも rejected（not_found）で serverRow を返さない", async () => {
+      const foreign = await createItem(stranger)
+      for (const entityId of [foreign, crypto.randomUUID()]) {
+        const result = await push1(owner, op({ entity: "item", type: "update", entityId, patch: { name: "x" } }))
+        expect(result).toEqual({ opId: expect.any(String), status: "rejected", reason: "not_found" })
+      }
+      expect((await rawItem(foreign)).name).toBe("牛乳")
+    })
+
+    it("同じグループのメンバーは、グループの行を更新できる", async () => {
+      const id = crypto.randomUUID()
+      await push1(stranger, op({ entity: "tag", type: "create", entityId: id, patch: { name: "外", groupId: otherGroup } }))
+      const tag = await createTag(owner, group)
+      expect(
+        await push1(owner, op({ entity: "tag", type: "update", entityId: tag, patch: { name: "改名" }, clientTime: T2 }))
+      ).toMatchObject({ status: "applied" })
+      expect(await push1(owner, op({ entity: "tag", type: "update", entityId: id, patch: { name: "x" } }))).toMatchObject({
+        status: "rejected",
+      })
+    })
+  })
+
+  describe("グループを抜けた人", () => {
+    it("抜けたグループの行は、更新も削除もできない（not_found）", async () => {
+      const { db, schema, drizzle } = ctx
+      const leaveGroup = crypto.randomUUID()
+      const membershipId = crypto.randomUUID()
+      await db.insert(schema.groups).values({ id: leaveGroup, name: "抜ける", inviteCode: leaveGroup.slice(0, 8).toUpperCase() })
+      await db.insert(schema.groupMembers).values({ id: membershipId, groupId: leaveGroup, userId: owner })
+      const tag = await createTag(owner, leaveGroup)
+      await db.delete(schema.groupMembers).where(drizzle.eq(schema.groupMembers.id, membershipId))
+
+      expect(await push1(owner, op({ entity: "tag", type: "update", entityId: tag, patch: { name: "x" }, clientTime: T2 }))).toMatchObject({
+        status: "rejected",
+        reason: "not_found",
+      })
+      expect(await push1(owner, op({ entity: "tag", type: "delete", entityId: tag }))).toMatchObject({
+        status: "rejected",
+        reason: "not_found",
+      })
+      const [row] = await db.select().from(schema.tags).where(drizzle.eq(schema.tags.id, tag))
+      expect(row).toMatchObject({ name: "食品", deletedAt: null })
+      await db.delete(schema.groups).where(drizzle.eq(schema.groups.id, leaveGroup))
+    })
+  })
+
+  describe("リストの削除と、リストのアイテムの操作が同時に走ったとき", () => {
+    async function newList() {
+      const list = op({ entity: "list", type: "create", patch: { name: "同時" } })
+      await push1(owner, list)
+      return list.entityId
+    }
+
+    async function liveListItems(listId: string) {
+      const { db, schema, drizzle } = ctx
+      return db
+        .select()
+        .from(schema.listItems)
+        .where(drizzle.and(drizzle.eq(schema.listItems.listId, listId), drizzle.isNull(schema.listItems.deletedAt)))
+    }
+
+    it("リストの削除のコミットを待ち、削除済みのリストの下にアイテムを作らない", async () => {
+      const listId = await newList()
+      // 別の接続でリストを削除し、コミットを止めておく（リストの行のロックを持ったまま）
+      const holder = postgres(TEST_DB_URL!, { max: 1, onnotice: () => {} })
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => (release = resolve))
+      let markLocked!: () => void
+      const locked = new Promise<void>((resolve) => (markLocked = resolve))
+      const deleting = holder.begin(async (tx) => {
+        await tx.unsafe("UPDATE shopping_lists SET deleted_at = now(), updated_at = now() WHERE id = $1", [listId])
+        await tx.unsafe(
+          "UPDATE list_items SET deleted_at = now(), updated_at = now() WHERE list_id = $1 AND deleted_at IS NULL",
+          [listId]
+        )
+        markLocked()
+        await gate
+      })
+      await locked
+
+      const creating = push1(owner, op({ entity: "listItem", type: "create", patch: { listId, name: "パン" } }))
+      // ロックがなければ、この間に作成がコミットされてしまう
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      release()
+      await deleting
+      await holder.end()
+
+      expect(await creating).toMatchObject({ status: "rejected", reason: "invalid_reference" })
+      expect(await liveListItems(listId)).toEqual([])
+    })
+
+    it("リストの削除（リスト → アイテムの順にロック）と、アイテムの更新が同時に走ってもデッドロックしない", async () => {
+      const listId = await newList()
+      const li = op({ entity: "listItem", type: "create", patch: { listId, name: "チェック" } })
+      await push1(owner, li)
+
+      const holder = postgres(TEST_DB_URL!, { max: 1, onnotice: () => {} })
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => (release = resolve))
+      let markLocked!: () => void
+      const locked = new Promise<void>((resolve) => (markLocked = resolve))
+      // リストの削除と同じ順: 先にリストをロックし、後でリストのアイテムを更新する
+      const deleting = holder.begin(async (tx) => {
+        await tx.unsafe("UPDATE shopping_lists SET deleted_at = now(), updated_at = now() WHERE id = $1", [listId])
+        markLocked()
+        await gate
+        await tx.unsafe(
+          "UPDATE list_items SET deleted_at = now(), updated_at = now() WHERE list_id = $1 AND deleted_at IS NULL",
+          [listId]
+        )
+      })
+      await locked
+
+      const checking = push1(owner, op({ entity: "listItem", type: "update", entityId: li.entityId, patch: { checked: true } }))
+      // push がリストのロックを待っている間に、リストのアイテムの更新に進む（push がアイテムを先にロックしていればデッドロック）
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      release()
+      await deleting
+      await holder.end()
+
+      expect(await checking).toMatchObject({ status: "conflict", reason: "deleted" })
+    })
+
+    it("親のリストが削除済みの、生きているリストのアイテムは、削除済みと同じに扱う（キューを止めない）", async () => {
+      const listId = await newList()
+      const li = op({ entity: "listItem", type: "create", patch: { listId, name: "取り残し" } })
+      await push1(owner, li)
+      // 競合でできうる状態を直接作る（リストだけ削除済み）
+      const { db, schema, drizzle } = ctx
+      await db.update(schema.shoppingLists).set({ deletedAt: new Date() }).where(drizzle.eq(schema.shoppingLists.id, listId))
+
+      expect(await push1(owner, op({ entity: "listItem", type: "update", entityId: li.entityId, patch: { checked: true } }))).toMatchObject({
+        status: "conflict",
+        reason: "deleted",
+      })
+      expect(await push1(owner, op({ entity: "listItem", type: "delete", entityId: li.entityId }))).toMatchObject({
+        status: "applied",
+      })
+    })
+  })
+
+  describe("削除（削除が勝つ）", () => {
+    it("論理削除し、再送しても applied。削除済みへの更新は conflict で tombstone を返す", async () => {
+      const tag = await createTag()
+      const id = await createItem(owner, { tagIds: [tag] })
+      expect(await push1(owner, op({ entity: "item", type: "delete", entityId: id }))).toMatchObject({ status: "applied" })
+      expect((await rawItem(id)).deletedAt).not.toBeNull()
+      expect(await itemTagIds(id)).toEqual([])
+      expect(await push1(owner, op({ entity: "item", type: "delete", entityId: id }))).toMatchObject({ status: "applied" })
+
+      // 削除より新しい時刻の更新でも、削除が勝つ
+      const update = await push1(
+        owner,
+        op({ entity: "item", type: "update", entityId: id, patch: { name: "x" }, clientTime: "2026-06-01T00:00:00.000Z" })
+      )
+      expect(update.status).toBe("conflict")
+      expect(update.serverRow).toMatchObject({ id, deletedAt: expect.any(Date) })
+      expect((await rawItem(id)).name).toBe("牛乳")
+
+      // 削除済みの ID での作成も conflict
+      expect(await push1(owner, op({ entity: "item", type: "create", entityId: id, patch: { name: "x" } }))).toMatchObject({
+        status: "conflict",
+      })
+    })
+
+    it("リストを削除すると、リストのアイテムも論理削除する", async () => {
+      const list = op({ entity: "list", type: "create", patch: { name: "l" } })
+      await push1(owner, list)
+      const li = op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name: "x" } })
+      await push1(owner, li)
+      expect(await push1(owner, op({ entity: "list", type: "delete", entityId: list.entityId }))).toMatchObject({
+        status: "applied",
+      })
+      const { db, schema, drizzle } = ctx
+      const [row] = await db.select().from(schema.listItems).where(drizzle.eq(schema.listItems.id, li.entityId))
+      expect(row.deletedAt).not.toBeNull()
+    })
+
+    it("ほかのユーザーの行は削除できない（rejected）", async () => {
+      const id = await createItem(stranger)
+      expect(await push1(owner, op({ entity: "item", type: "delete", entityId: id }))).toMatchObject({
+        status: "rejected",
+        reason: "not_found",
+      })
+      expect((await rawItem(id)).deletedAt).toBeNull()
+    })
+  })
+
+  it("処理の結果を sync_operations に記録する", async () => {
+    const bad = op({ entity: "item", type: "update", patch: { name: "x" } })
+    await push1(owner, bad)
+    const { db, schema, drizzle } = ctx
+    const [row] = await db.select().from(schema.syncOperations).where(drizzle.eq(schema.syncOperations.id, bad.opId))
+    expect(row).toMatchObject({ userId: owner, entity: "item", entityId: bad.entityId, operation: "update" })
+    expect(JSON.parse(row.payload)).toMatchObject({ status: "rejected", reason: "not_found", patch: { name: "x" } })
+  })
+
+  describe("複合操作（買い物の完了・履歴の取り消し。#62 O4b）", () => {
+    /** 個人のリストと、チェック済み「牛乳」・未チェック「卵」のリストのアイテム、同名のカタログのアイテムを作る */
+    async function shoppingSetup(userId = owner) {
+      const catalogMilk = await createItem(userId, { name: "牛乳" })
+      const list = op({ entity: "list", type: "create", patch: { name: "買い物" } })
+      await push1(userId, list)
+      const milk = op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name: "牛乳", checked: true } })
+      const egg = op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name: "卵" } })
+      await ctx.service.push(userId, [milk, egg])
+      return { listId: list.entityId, catalogMilk, milkLi: milk.entityId, eggLi: egg.entityId }
+    }
+
+    async function rawList(id: string) {
+      const { db, schema, drizzle } = ctx
+      const [row] = await db.select().from(schema.shoppingLists).where(drizzle.eq(schema.shoppingLists.id, id))
+      return row
+    }
+
+    async function rawListItem(id: string) {
+      const { db, schema, drizzle } = ctx
+      const [row] = await db.select().from(schema.listItems).where(drizzle.eq(schema.listItems.id, id))
+      return row
+    }
+
+    const finish = (listId: string, clientTime: string, patch: Record<string, unknown> = {}) =>
+      op({ entity: "list", type: "finishShopping", entityId: listId, patch, clientTime })
+    const revert = (listId: string, clientTime: string) =>
+      op({ entity: "list", type: "revertHistory", entityId: listId, clientTime })
+
+    it("買い物の完了: リストを完了にし、チェック済みと同名のカタログのアイテムを購入済みに、未チェックの行を論理削除する", async () => {
+      const { listId, catalogMilk, milkLi, eggLi } = await shoppingSetup()
+      const othersMilk = await createItem(stranger, { name: "牛乳" })
+
+      expect(await push1(owner, finish(listId, T2, { location: "スーパー" }))).toMatchObject({ status: "applied" })
+
+      const list = await rawList(listId)
+      expect(list).toMatchObject({ status: "completed", location: "スーパー" })
+      expect(list.purchasedAt?.toISOString()).toBe(T2)
+      expect(list.completedAt?.toISOString()).toBe(T2)
+      expect(list.fieldModifiedAt).toMatchObject({ status: T2, completedAt: T2, purchasedAt: T2, location: T2 })
+      const milk = await rawItem(catalogMilk)
+      expect(milk.purchasedAt?.toISOString()).toBe(T2)
+      expect(milk.fieldModifiedAt.purchasedAt).toBe(T2)
+      expect((await rawItem(othersMilk)).purchasedAt).toBeNull()
+      expect((await rawListItem(milkLi)).deletedAt).toBeNull()
+      expect((await rawListItem(eggLi)).deletedAt).not.toBeNull()
+    })
+
+    it("同期で届いた完了は操作の時刻より新しい購入日時を上書きしない", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      // 完了（T2）より後（T3）に、別の端末で「未購入」にしていた（先にサーバーに届いた）
+      await push1(owner, op({ entity: "item", type: "update", entityId: catalogMilk, patch: { purchasedAt: null }, clientTime: T3 }))
+
+      expect(await push1(owner, finish(listId, T2))).toMatchObject({ status: "applied" })
+
+      const milk = await rawItem(catalogMilk)
+      expect(milk.purchasedAt).toBeNull()
+      expect(milk.fieldModifiedAt.purchasedAt).toBe(T3)
+    })
+
+    it("同期で届いた完了済みのリストの完了は conflict にする", async () => {
+      const { listId } = await shoppingSetup()
+      await push1(owner, finish(listId, T2))
+      const again = await push1(owner, finish(listId, T3))
+      expect(again).toMatchObject({ status: "conflict", reason: "already_completed", serverRow: { id: listId, status: "completed" } })
+    })
+
+    it("履歴の取り消し: リストを進行中に戻し、同名の購入済みのカタログのアイテムを未購入に戻す", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      await push1(owner, finish(listId, T2))
+
+      expect(await push1(owner, revert(listId, T3))).toMatchObject({ status: "applied" })
+
+      const list = await rawList(listId)
+      expect(list).toMatchObject({ status: "in_progress", purchasedAt: null, completedAt: null, location: null })
+      expect(list.fieldModifiedAt).toMatchObject({ status: T3, purchasedAt: T3 })
+      const milk = await rawItem(catalogMilk)
+      expect(milk.purchasedAt).toBeNull()
+      expect(milk.fieldModifiedAt.purchasedAt).toBe(T3)
+    })
+
+    it("同期で届いた古い完了は conflict にする（新しい取り消しの後に届いた古い完了）", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      await push1(owner, finish(listId, T1))
+      await push1(owner, revert(listId, T3))
+
+      const late = await push1(owner, finish(listId, T2))
+      expect(late).toMatchObject({ status: "conflict", reason: "stale" })
+      expect((await rawList(listId)).status).toBe("in_progress")
+      expect((await rawItem(catalogMilk)).purchasedAt).toBeNull()
+    })
+
+    it("同期で届いた購入履歴でないリストの取り消しは conflict にする", async () => {
+      const { listId } = await shoppingSetup()
+      expect(await push1(owner, revert(listId, T2))).toMatchObject({ status: "conflict", reason: "not_completed" })
+    })
+
+    it("同期で届いたチェック 0 件の完了は conflict にする", async () => {
+      const name = `空-${crypto.randomUUID()}`
+      const catalogItem = await createItem(owner, { name })
+      const list = op({ entity: "list", type: "create", patch: { name: "買い物" } })
+      await push1(owner, list)
+      const entry = op({ entity: "listItem", type: "create", patch: { listId: list.entityId, name } })
+      await push1(owner, entry)
+
+      expect(await push1(owner, finish(list.entityId, T2))).toMatchObject({
+        status: "conflict",
+        reason: "no_checked_items",
+        serverRow: { id: list.entityId, status: "in_progress" },
+      })
+
+      const after = await rawList(list.entityId)
+      expect(after.status).toBe("in_progress")
+      expect(after.purchasedAt).toBeNull()
+      expect((await rawListItem(entry.entityId)).deletedAt).toBeNull()
+      expect((await rawItem(catalogItem)).purchasedAt).toBeNull()
+    })
+
+    it("同期で届いた完了は同じ名前の購入済みの商品の購入日時を変えない", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      // 前に買った同じ名前の商品（購入日時は操作より前）
+      const oldMilk = await createItem(owner, { name: "牛乳", purchasedAt: T1 }, T1)
+
+      expect(await push1(owner, finish(listId, T2))).toMatchObject({ status: "applied" })
+
+      expect((await rawItem(catalogMilk)).purchasedAt?.toISOString()).toBe(T2)
+      expect((await rawItem(oldMilk)).purchasedAt?.toISOString()).toBe(T1)
+    })
+
+    it("同期で届いた使えないリストの取り消しは rejected にする", async () => {
+      const { listId } = await shoppingSetup()
+      await push1(owner, finish(listId, T2))
+      expect(await push1(stranger, revert(listId, T3))).toMatchObject({ status: "rejected", reason: "not_found" })
+      expect((await rawList(listId)).status).toBe("completed")
+    })
+
+    it("同期で届いた削除したリストの取り消しは conflict にする", async () => {
+      const { listId } = await shoppingSetup()
+      await push1(owner, finish(listId, T2))
+      await push1(owner, op({ entity: "list", type: "delete", entityId: listId }))
+      expect(await push1(owner, revert(listId, T3))).toMatchObject({ status: "conflict", reason: "deleted" })
+    })
+
+    it("同期で届いた古い取り消しは conflict にする（購入日時が入っているリストで、新しい完了の後に届いた古い取り消し）", async () => {
+      const { listId, catalogMilk } = await shoppingSetup()
+      await push1(owner, finish(listId, T3))
+
+      expect(await push1(owner, revert(listId, T2))).toMatchObject({ status: "conflict", reason: "stale" })
+      expect((await rawList(listId)).status).toBe("completed")
+      expect((await rawItem(catalogMilk)).purchasedAt?.toISOString()).toBe(T3)
+    })
+
+    it("リスト以外・未知のフィールド・他人のリスト・削除済みのリストは適用しない", async () => {
+      const { listId } = await shoppingSetup()
+      const item = await createItem()
+      expect(await push1(owner, op({ entity: "item", type: "finishShopping", entityId: item, clientTime: T2 }))).toMatchObject({
+        status: "rejected",
+        reason: "invalid_patch",
+      })
+      expect(await push1(owner, finish(listId, T2, { status: "completed" }))).toMatchObject({ reason: "invalid_patch" })
+      expect(await push1(stranger, finish(listId, T2))).toMatchObject({ status: "rejected", reason: "not_found" })
+      expect((await rawList(listId)).status).toBe("in_progress")
+
+      await push1(owner, op({ entity: "list", type: "delete", entityId: listId }))
+      expect(await push1(owner, finish(listId, T2))).toMatchObject({ status: "conflict", reason: "deleted" })
+    })
+  })
+})

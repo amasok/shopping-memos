@@ -3,6 +3,7 @@
 import { AuthProvider } from "@/contexts/AuthContext"
 import { GroupProvider } from "@/contexts/GroupContext"
 import { DataMergeProvider } from "@/contexts/DataMergeContext"
+import { SyncProvider } from "@/contexts/SyncContext"
 import { ThemeProvider } from "@/contexts/ThemeContext"
 import { DBProvider } from "@/lib/db/provider"
 import { TRPCProvider } from "@/infrastructure/trpc/provider"
@@ -15,12 +16,14 @@ export function Providers({ children }: { children: ReactNode }) {
       <TRPCProvider>
         <AuthProvider>
           <DataMergeProvider>
-            <GroupProvider>
-              <DBProvider>
-                {children}
-                <DataMergeStatus />
-              </DBProvider>
-            </GroupProvider>
+            <SyncProvider>
+              <GroupProvider>
+                <DBProvider>
+                  {children}
+                  <DataMergeStatus />
+                </DBProvider>
+              </GroupProvider>
+            </SyncProvider>
           </DataMergeProvider>
         </AuthProvider>
       </TRPCProvider>

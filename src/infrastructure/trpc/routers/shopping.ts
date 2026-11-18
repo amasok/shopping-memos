@@ -13,9 +13,13 @@ import {
   deleteHistorySchema,
   updateListSchema,
   deleteListSchema,
+  getListSchema,
   removeListItemSchema,
 } from "@/shared/schemas"
 import { db } from "@/infrastructure/db/drizzle/client"
+import { listItems } from "@/infrastructure/db/drizzle/schema"
+import { DuplicateIdError } from "@/infrastructure/db/errors"
+import { eq } from "drizzle-orm"
 import { shoppingListRepository } from "@/modules/shopping/infrastructure/repositories/DrizzleShoppingListRepository"
 import { itemRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleItemRepository"
 import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
@@ -27,13 +31,18 @@ import { ShoppingService, ShoppingDomainError } from "@/modules/shopping/applica
 import { ShoppingSyncService } from "@/modules/shopping/application/services/ShoppingSyncService"
 import type { ItemWithTags } from "@/modules/catalog/domain/entities/Item"
 import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
-import { isSameScope } from "@/infrastructure/db/ownership"
-import {
-  getListScope,
-  markScopedItemsUnpurchasedByName,
-  deleteScopedItemsByName,
-} from "@/modules/shopping/application/services/catalogItemScope"
+import { isSameScope } from "@/shared/domain/ownerScope"
+import { getListScope, deleteScopedItemsByName } from "@/modules/shopping/application/services/catalogItemScope"
+import { snapshotListItem } from "@/modules/shopping/domain/services/snapshot"
 import { verifyGroupMembership } from "../middleware/groupAuth"
+
+/** カタログのアイテムを、スナップショットの元の形にする（タグは ID だけ写す） */
+const catalogSnapshotSource = (item: ItemWithTags) => ({
+  name: item.name,
+  quantity: item.quantity,
+  memo: item.memo,
+  tagIds: item.tags.map((t) => t.id),
+})
 
 // サービスインスタンス
 const shoppingService = new ShoppingService(shoppingListRepository)
@@ -75,7 +84,7 @@ export const shoppingRouter = router({
 
   /** 買い物リストを取得 */
   getList: protectedProcedure
-    .input(deleteListSchema) // idのみ
+    .input(getListSchema)
     .query(async ({ input, ctx }) => {
       // アクセス権確認
       const canAccess = await shoppingSyncService.canAccessList(input.id, ctx.userId)
@@ -126,7 +135,7 @@ export const shoppingRouter = router({
       // グループ指定時はメンバーシップを検証
       await verifyGroupMembership(input.groupId, ctx.userId)
 
-      const listId = crypto.randomUUID()
+      const listId = input.id ?? crypto.randomUUID()
       const listGroupId = input.groupId ?? null
       const listScope = { userId: ctx.userId, groupId: listGroupId }
 
@@ -160,15 +169,7 @@ export const shoppingRouter = router({
 
       for (const item of selectedItems) {
         await shoppingSyncService.addItem(
-          {
-            id: crypto.randomUUID(),
-            listId,
-            name: item.name,
-            quantity: item.quantity,
-            memo: item.memo,
-            tagIds: item.tags.map((t) => t.id),
-            groupId: listGroupId,
-          },
+          snapshotListItem(catalogSnapshotSource(item), { id: listId, groupId: listGroupId }, crypto.randomUUID()),
           ctx.userId
         )
       }
@@ -185,15 +186,7 @@ export const shoppingRouter = router({
 
         for (const item of items) {
           await shoppingSyncService.addItem(
-            {
-              id: crypto.randomUUID(),
-              listId,
-              name: item.name,
-              quantity: item.quantity,
-              memo: item.memo,
-              tagIds: item.tags.map((t) => t.id),
-              groupId: listGroupId,
-            },
+            snapshotListItem(catalogSnapshotSource(item), { id: listId, groupId: listGroupId }, crypto.randomUUID()),
             ctx.userId
           )
         }
@@ -238,7 +231,10 @@ export const shoppingRouter = router({
         })
       }
 
-      await shoppingSyncService.deleteList(input.id, ctx.userId)
+      // 指定があれば、リストの商品と同じ名前・同じスコープの未購入のカタログの商品も同じトランザクションで消す（179b）
+      await shoppingSyncService.deleteList(input.id, ctx.userId, {
+        deleteCatalogItems: input.deleteCatalogItems ?? false,
+      })
       return { success: true }
     }),
 
@@ -290,15 +286,11 @@ export const shoppingRouter = router({
 
       // リストにアイテムを追加（スナップショット、同期ログ記録付き）
       return shoppingSyncService.addItem(
-        {
-          id: crypto.randomUUID(),
-          listId: input.listId,
-          name: item.name,
-          quantity: item.quantity,
-          memo: item.memo,
-          tagIds: item.tags.map((t) => t.id),
-          groupId: list.groupId,
-        },
+        snapshotListItem(
+          catalogSnapshotSource(item),
+          { id: input.listId, groupId: list.groupId },
+          input.id ?? crypto.randomUUID()
+        ),
         ctx.userId
       )
     }),
@@ -343,6 +335,17 @@ export const shoppingRouter = router({
         })
       }
 
+      // リストのアイテムの ID が使用済みなら、カタログのアイテムを作る前に止める（作りかけを残さない。#62 O3b）
+      if (input.id) {
+        const [existing] = await db
+          .select({ id: listItems.id })
+          .from(listItems)
+          .where(eq(listItems.id, input.id))
+        if (existing) {
+          throw new DuplicateIdError("リストのアイテム")
+        }
+      }
+
       // カタログにもアイテムを作成（リストから外した時に「買いたいもの」に戻れるようにする）
       const catalogItemId = crypto.randomUUID()
       await catalogSyncService.createItem(
@@ -360,15 +363,11 @@ export const shoppingRouter = router({
 
       // リストにアイテムを追加（スナップショット、同期ログ記録付き）
       return shoppingSyncService.addItem(
-        {
-          id: crypto.randomUUID(),
-          listId: input.listId,
-          name: input.name,
-          quantity: input.quantity ?? 1,
-          memo: input.memo,
-          tagIds: input.tagIds ?? [],
-          groupId: list.groupId,
-        },
+        snapshotListItem(
+          { name: input.name, quantity: input.quantity ?? 1, memo: input.memo, tagIds: input.tagIds ?? [] },
+          { id: input.listId, groupId: list.groupId },
+          input.id ?? crypto.randomUUID()
+        ),
         ctx.userId
       )
     }),
@@ -540,36 +539,20 @@ export const shoppingRouter = router({
         })
       }
 
-      // リストに含まれるアイテムのカタログアイテムを未購入に戻す
-      // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
-      const revertedItemIds: string[] = []
-      const scope = await getListScope(db, input.historyId)
-      if (scope) {
-        for (const listItem of history.items) {
-          const ids = await markScopedItemsUnpurchasedByName(db, scope, listItem.name)
-          for (const catalogItemId of ids) {
-            revertedItemIds.push(catalogItemId)
-
-            // 同期ログを記録
-            await syncRepository.createOperation({
-              id: crypto.randomUUID(),
-              userId: ctx.userId,
-              entity: "item",
-              entityId: catalogItemId,
-              operation: "update",
-              payload: { id: catalogItemId, purchasedAt: null },
-            })
-          }
-        }
+      // リストと同じスコープの購入済みの同名のカタログアイテムを未購入に戻し、リストを進行中に戻す。
+      // 1 つのトランザクションで行い、その中でリストを読み直す（#179）
+      const result = await shoppingService.revertHistory(input.historyId, ctx.userId)
+      if (!result) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "履歴が見つかりません",
+        })
       }
-
-      // リストを未購入に戻す
-      const list = await shoppingSyncService.revertHistory(input.historyId, ctx.userId)
 
       return {
         success: true,
-        list,
-        revertedItemIds,
+        list: result.list,
+        revertedItemIds: result.revertedItemIds,
       }
     }),
 
@@ -595,28 +578,33 @@ export const shoppingRouter = router({
         })
       }
 
-      // リストに含まれるアイテムに対応するカタログアイテムを削除
-      // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
-      const scope = await getListScope(db, input.id)
-      if (scope) {
-        for (const listItem of history.items) {
-          const ids = await deleteScopedItemsByName(db, scope, listItem.name)
-          for (const catalogItemId of ids) {
-            // 同期ログを記録
-            await syncRepository.createOperation({
-              id: crypto.randomUUID(),
-              userId: ctx.userId,
-              entity: "item",
-              entityId: catalogItemId,
-              operation: "delete",
-              payload: { id: catalogItemId },
-            })
+      // リストに含まれるアイテムに対応するカタログアイテムと、リスト（list_items も）を、1 つのトランザクションで論理削除する。
+      // カタログアイテムはリストと同じスコープ（グループ or 作成者の個人データ）のものに限定する
+      const deletedCatalogItemIds = await shoppingSyncService.deleteHistory(
+        input.id,
+        ctx.userId,
+        async (tx) => {
+          const scope = await getListScope(tx, input.id)
+          if (!scope) return []
+          const ids: string[] = []
+          for (const listItem of history.items) {
+            ids.push(...(await deleteScopedItemsByName(tx, scope, listItem.name)))
           }
+          return ids
         }
-      }
+      )
 
-      // リストを削除（list_itemsはcascadeで削除される）
-      await shoppingSyncService.deleteHistory(input.id, ctx.userId)
+      // 同期ログを記録（コミットの後）
+      for (const catalogItemId of deletedCatalogItemIds) {
+        await syncRepository.createOperation({
+          id: crypto.randomUUID(),
+          userId: ctx.userId,
+          entity: "item",
+          entityId: catalogItemId,
+          operation: "delete",
+          payload: { id: catalogItemId },
+        })
+      }
 
       return { success: true }
     }),

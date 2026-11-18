@@ -1,4 +1,5 @@
-import { eq, and, desc, gte, inArray, isNull, isNotNull } from "drizzle-orm"
+import { eq, and, gte, inArray, isNull, isNotNull } from "drizzle-orm"
+import { notDeleted } from "@/infrastructure/db/syncColumns"
 import { db } from "@/infrastructure/db/drizzle/client"
 import {
   syncOperations,
@@ -13,9 +14,7 @@ import type {
   SyncOperation,
   CreateSyncOperationInput,
   SyncEntity,
-  EntityAccess,
 } from "../../domain/entities/SyncOperation"
-import { checkEntityAccess } from "../entityAccess"
 
 /**
  * Drizzleを使用した同期リポジトリ実装
@@ -104,41 +103,6 @@ export class DrizzleSyncRepository implements SyncRepository {
     return operations.map(this.mapToEntity)
   }
 
-  async findLatestEntityState(
-    entity: SyncEntity,
-    entityId: string,
-    options?: { userId?: string }
-  ): Promise<SyncOperation | null> {
-    const conditions = [
-      eq(syncOperations.entity, entity),
-      eq(syncOperations.entityId, entityId),
-    ]
-    if (options?.userId) {
-      conditions.push(eq(syncOperations.userId, options.userId))
-    }
-
-    const result = await db
-      .select()
-      .from(syncOperations)
-      .where(and(...conditions))
-      .orderBy(desc(syncOperations.createdAt))
-      .limit(1)
-
-    if (result.length === 0) {
-      return null
-    }
-
-    return this.mapToEntity(result[0])
-  }
-
-  async checkEntityAccess(
-    entity: SyncEntity,
-    entityId: string,
-    userId: string
-  ): Promise<EntityAccess> {
-    return checkEntityAccess(db, entity, entityId, userId)
-  }
-
   async markAsSynced(operationIds: string[]): Promise<void> {
     if (operationIds.length === 0) {
       return
@@ -177,7 +141,8 @@ export class DrizzleSyncRepository implements SyncRepository {
               .where(
                 and(
                   inArray(items.groupId, groupIds),
-                  gte(items.updatedAt, sinceDate)
+                  gte(items.updatedAt, sinceDate),
+                  notDeleted(items)
                 )
               )
           : Promise.resolve([]),
@@ -188,7 +153,8 @@ export class DrizzleSyncRepository implements SyncRepository {
               .where(
                 and(
                   inArray(tags.groupId, groupIds),
-                  gte(tags.updatedAt, sinceDate)
+                  gte(tags.updatedAt, sinceDate),
+                  notDeleted(tags)
                 )
               )
           : Promise.resolve([]),
@@ -199,7 +165,8 @@ export class DrizzleSyncRepository implements SyncRepository {
               .where(
                 and(
                   inArray(shoppingLists.groupId, groupIds),
-                  gte(shoppingLists.createdAt, sinceDate)
+                  gte(shoppingLists.createdAt, sinceDate),
+                  notDeleted(shoppingLists)
                 )
               )
           : Promise.resolve([]),
@@ -210,7 +177,8 @@ export class DrizzleSyncRepository implements SyncRepository {
               .where(
                 and(
                   inArray(listItems.groupId, groupIds),
-                  gte(listItems.createdAt, sinceDate)
+                  gte(listItems.createdAt, sinceDate),
+                  notDeleted(listItems)
                 )
               )
           : Promise.resolve([]),
@@ -223,7 +191,8 @@ export class DrizzleSyncRepository implements SyncRepository {
                 and(
                   inArray(shoppingLists.groupId, groupIds),
                   isNotNull(shoppingLists.purchasedAt),
-                  gte(shoppingLists.purchasedAt, sinceDate)
+                  gte(shoppingLists.purchasedAt, sinceDate),
+                  notDeleted(shoppingLists)
                 )
               )
           : Promise.resolve([]),

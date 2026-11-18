@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test"
-import { setupCleanPage } from "./fixtures/test-helpers"
-import { resetIdCounter } from "./fixtures/test-data"
+import { seedTable, setupCleanPage } from "./fixtures/test-helpers"
+import { createItem, resetIdCounter } from "./fixtures/test-data"
 
 test.describe("買い物中", () => {
   // ヘルパー: アイテムを追加してリストを作成し、リスト詳細ページにいる状態にする
@@ -32,6 +32,26 @@ test.describe("買い物中", () => {
     await page.locator("[data-testid='item-selector-submit']").click()
     await expect(page).toHaveURL(/\/lists\//)
     await page.locator("[data-testid='unchecked-section']").waitFor({ state: "visible", timeout: 10000 })
+  }
+
+  /** ゲスト DB のカタログの商品（名前と購入日時） */
+  async function catalogItems(page: import("@playwright/test").Page) {
+    return page.evaluate(
+      () =>
+        new Promise<Array<{ name: string; purchasedAt?: string }>>((resolve, reject) => {
+          const request = indexedDB.open("ShoppingMemosDB")
+          request.onsuccess = () => {
+            const db = request.result
+            const all = db.transaction("items", "readonly").objectStore("items").getAll()
+            all.onsuccess = () => {
+              db.close()
+              resolve(all.result.map((i: { name: string; purchasedAt?: string }) => ({ name: i.name, purchasedAt: i.purchasedAt })))
+            }
+            all.onerror = () => reject(all.error)
+          }
+          request.onerror = () => reject(request.error)
+        })
+    )
   }
 
   test.beforeEach(async ({ page }) => {
@@ -155,5 +175,111 @@ test.describe("買い物中", () => {
 
     // /lists に遷移
     await expect(page).toHaveURL(/\/lists$/, { timeout: 10000 })
+  })
+
+  test.describe("チェック 0 件の完了（179b）", () => {
+    async function openNoCheckedDialog(page: import("@playwright/test").Page) {
+      await page.locator("[data-testid='partial-complete-button']").click()
+      await page.locator("[data-testid='no-checked-dialog']").waitFor({ state: "visible" })
+    }
+
+    test("E-9: チェック 0 件で完了を押すと確認ダイアログを出す", async ({ page }) => {
+      await createListWithItems(page, ["牛乳", "パン"])
+
+      const button = page.locator("[data-testid='partial-complete-button']")
+      await expect(button).toHaveText("買い物を完了")
+      await expect(button).toBeEnabled()
+      await openNoCheckedDialog(page)
+
+      await expect(page.locator("[data-testid='bottom-sheet-title']")).toHaveText("カゴに入れたものがありません")
+      await expect(page.locator("[data-testid='no-checked-delete-with-items']")).toHaveText("リストの商品ごと消す")
+      await expect(page.locator("[data-testid='no-checked-delete-list-only']")).toHaveText("リストだけ消して商品は元に戻す")
+      await expect(page.locator("[data-testid='no-checked-cancel']")).toHaveText("キャンセル")
+    })
+
+    test("E-10: リストの商品ごと消すとリストと同じ名前の未購入の商品を削除する", async ({ page }) => {
+      await createListWithItems(page, ["牛乳", "パン"])
+      // 前に買った同じ名前の商品（購入済み）は残る
+      const purchasedAt = new Date("2026-11-01T00:00:00.000Z").toISOString()
+      await seedTable(page, "items", [createItem({ name: "牛乳", purchasedAt })])
+
+      await openNoCheckedDialog(page)
+      await page.locator("[data-testid='no-checked-delete-with-items']").click()
+
+      await expect(page).toHaveURL(/\/lists$/, { timeout: 10000 })
+      await expect(page.locator("[data-testid='lists-empty-state']")).toBeVisible()
+      await expect.poll(() => catalogItems(page)).toEqual([{ name: "牛乳", purchasedAt }])
+      // 購入履歴は作られない
+      await page.goto("/history")
+      await expect(page.locator("[data-testid='history-empty-state']")).toBeVisible()
+    })
+
+    test("E-11: リストだけ消すとカタログの商品は変えずに買いたいものに戻る", async ({ page }) => {
+      await createListWithItems(page, ["牛乳", "パン"])
+
+      await openNoCheckedDialog(page)
+      await page.locator("[data-testid='no-checked-delete-list-only']").click()
+
+      await expect(page).toHaveURL(/\/lists$/, { timeout: 10000 })
+      await expect(page.locator("[data-testid='lists-empty-state']")).toBeVisible()
+      await page.goto("/")
+      const itemList = page.locator("[data-testid='item-list']")
+      await expect(itemList).toContainText("牛乳")
+      await expect(itemList).toContainText("パン")
+      expect((await catalogItems(page)).every((i) => !i.purchasedAt)).toBe(true)
+      await page.goto("/history")
+      await expect(page.locator("[data-testid='history-empty-state']")).toBeVisible()
+    })
+
+    test("E-12: キャンセルするとリストはそのまま", async ({ page }) => {
+      await createListWithItems(page, ["牛乳"])
+
+      await openNoCheckedDialog(page)
+      await page.locator("[data-testid='no-checked-cancel']").click()
+
+      await expect(page.locator("[data-testid='no-checked-dialog']")).toBeHidden()
+      await expect(page).toHaveURL(/\/lists\/detail/)
+      await expect(page.locator("[data-testid='unchecked-section']")).toContainText("牛乳")
+      expect(await catalogItems(page)).toEqual([{ name: "牛乳", purchasedAt: undefined }])
+    })
+  })
+
+  test.describe("メニューからのリストの削除（#191）", () => {
+    async function openDeleteDialog(page: import("@playwright/test").Page) {
+      await page.locator("[data-testid='list-menu-button']").click()
+      await page.locator("[data-testid='list-delete-menu']").click()
+      await page.locator("[data-testid='list-delete-dialog']").waitFor({ state: "visible" })
+    }
+
+    test("E-13: メニューで商品ごと消すとリストと同じ名前の未購入の商品も削除する", async ({ page }) => {
+      await createListWithItems(page, ["牛乳", "パン"])
+      // 前に買った同じ名前の商品（購入済み）は残る
+      const purchasedAt = new Date("2026-11-01T00:00:00.000Z").toISOString()
+      await seedTable(page, "items", [createItem({ name: "牛乳", purchasedAt })])
+
+      await openDeleteDialog(page)
+      await expect(page.locator("[data-testid='list-delete-option-list-only']")).toBeChecked()
+      await page.locator("[data-testid='list-delete-option-with-items']").check()
+      await page.locator("[data-testid='list-delete-confirm']").click()
+
+      await expect(page).toHaveURL(/\/lists$/, { timeout: 10000 })
+      await expect(page.locator("[data-testid='lists-empty-state']")).toBeVisible()
+      await expect.poll(() => catalogItems(page)).toEqual([{ name: "牛乳", purchasedAt }])
+    })
+
+    test("E-14: メニューでリストだけ消すとカタログの商品は変えずに買いたいものに戻る", async ({ page }) => {
+      await createListWithItems(page, ["牛乳", "パン"])
+
+      await openDeleteDialog(page)
+      await page.locator("[data-testid='list-delete-confirm']").click()
+
+      await expect(page).toHaveURL(/\/lists$/, { timeout: 10000 })
+      await expect(page.locator("[data-testid='lists-empty-state']")).toBeVisible()
+      await page.goto("/")
+      const itemList = page.locator("[data-testid='item-list']")
+      await expect(itemList).toContainText("牛乳")
+      await expect(itemList).toContainText("パン")
+      expect((await catalogItems(page)).every((i) => !i.purchasedAt)).toBe(true)
+    })
   })
 })

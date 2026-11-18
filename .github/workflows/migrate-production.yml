@@ -1,0 +1,126 @@
+name: Migrate Production DB (manual)
+
+# 本番 DB への migrate を手動で流す（#164）。
+# DB の変更を含むリリースでは、develop → main の PR をマージする前に、develop を指定してこれを流す。
+# Vercel の本番デプロイと CI の migrate（main への push）は互いを待たないため、
+# 新しい列を参照するコードが先に出ると、migrate が終わるまで「column does not exist」で失敗する。
+# expand（足すだけ）のマイグレーションを先に当てておけば、古いコードはそのまま動く。
+#
+# 実行例: gh workflow run migrate-production.yml --ref develop -f confirm="migrate production"
+#
+# main への push で動く ci.yml の migrate はそのまま残す。drizzle の migrator は適用済みの分を飛ばすので、
+# ここで当てた後に main への push でもう一度流れても何も起きない（冪等）
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '本番 DB に migrate します。対象の ref（develop か main）を確かめてから "migrate production" と入力してください'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # production 環境（本番の secret）に入る前に、依頼の内容を確かめる
+  check:
+    name: Check request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # 誤操作を防ぐ。リリースする develop（と、やり直し用の main）以外の ref では流さない
+      - name: Check ref and confirmation
+        env:
+          REF: ${{ github.ref }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          case "$REF" in
+            refs/heads/develop | refs/heads/main) ;;
+            *)
+              echo "::error title=Unsupported ref::本番 DB への migrate は develop か main からだけ流せます（指定された ref: $REF）。--ref develop を付けてください（#164）"
+              exit 1
+              ;;
+          esac
+          if [ "$CONFIRM" != "migrate production" ]; then
+            echo "::error title=Confirmation mismatch::confirm に \"migrate production\" と入力してください（#164）"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # main との差分を取るため、origin/main も取得する
+          fetch-depth: 0
+          persist-credentials: false
+
+      # 本番のアプリ（main）が動いたまま当てるので、古いコードが壊れる変更（contract）は流さない。
+      # main にない migration から、典型的な contract（テーブル・列・型・制約・インデックスの削除、名前の変更、型の変更、データの削除（DELETE・TRUNCATE））を探して止める。
+      # 既存の列の DROP DEFAULT や SET NOT NULL、制約の追加（UNIQUE・CHECK・FK）など、古いコードを壊しうるのに見分けられない変更もあるので、expand かどうかはレビューで確かめる
+      # （O3 の 0005 のように、足した列を埋めて既定値を付けてからの SET NOT NULL は expand なので通す）
+      - name: Check migrations are expand-only
+        env:
+          BASE_REF: origin/main
+        run: |
+          dir=src/infrastructure/db/drizzle/migrations
+          files="$(git diff --name-only --no-renames --diff-filter=AM "${BASE_REF}...HEAD" -- "$dir/*.sql")"
+          if [ -z "$files" ]; then
+            echo "::notice title=No new migrations::main にない migration はありません（適用済みの分は飛ばされるので、流しても何も変わりません）"
+            exit 0
+          fi
+          echo "main にない migration:"
+          echo "$files"
+          pattern='DROP[[:space:]]+(TABLE|COLUMN|SCHEMA|VIEW|TYPE|CONSTRAINT|INDEX)|(^|[^[:alnum:]_"])(RENAME|TRUNCATE)([^[:alnum:]_"]|$)|DELETE[[:space:]]+FROM|SET[[:space:]]+DATA[[:space:]]+TYPE|ALTER[[:space:]]+COLUMN[[:space:]]+[^[:space:]]+[[:space:]]+TYPE'
+          found=0
+          while IFS= read -r f; do
+            # 行頭の -- コメントは除く
+            if hits="$(grep -vE '^[[:space:]]*--' "$f" | grep -iE "$pattern")"; then
+              echo "::error file=$f,title=Not an expand migration::$f に、動いている本番のコードを壊す変更（削除・名前の変更・型の変更・データの削除）があります。先に当てずに、main への push の migrate で流してください（#164）"
+              echo "$hits"
+              found=1
+            fi
+          done <<< "$files"
+          exit "$found"
+
+  migrate:
+    name: Migrate Production DB
+    runs-on: ubuntu-latest
+    needs: check
+    environment: production
+    timeout-minutes: 15
+    # ci.yml の migrate（main への push）と同じ group にし、本番 DB への migrate を常に 1 本ずつにする（#94）。
+    # concurrency の group はリポジトリ全体で共有されるので、ワークフローが違っても直列になる
+    concurrency:
+      group: migrate-production
+      cancel-in-progress: false
+
+    steps:
+      # secret が未設定のまま空の DATABASE_URL で動くと、drizzle-kit の分かりにくいエラーになる。先に明確に止める
+      - name: Check NEON_DATABASE_URL
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error title=NEON_DATABASE_URL is not set::secret の NEON_DATABASE_URL が空です。production 環境の secret に本番の接続文字列を登録してください（#164）"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ci.yml の migrate と同じく、未適用の分がすべて当たる（適用済みの分は飛ばされる）
+      - name: Run migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}

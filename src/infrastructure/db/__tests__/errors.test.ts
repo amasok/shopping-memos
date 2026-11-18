@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest"
-import { describeDbError, formatDbErrorKind, isUniqueViolation } from "../errors"
+import {
+  DuplicateIdError,
+  RowNotFoundError,
+  describeDbError,
+  formatDbErrorKind,
+  isUniqueViolation,
+  rethrowDuplicateId,
+} from "../errors"
 
 const pgError = (extra: Record<string, unknown> = {}) =>
   Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505", ...extra })
@@ -55,5 +62,23 @@ describe("describeDbError / formatDbErrorKind", () => {
 
   it("制約名がないエラーは code だけを出す", () => {
     expect(formatDbErrorKind(describeDbError({ code: "40001" }))).toBe("code=40001")
+  })
+})
+
+describe("rethrowDuplicateId（#62 O3b）", () => {
+  it("主キーの一意制約違反は DuplicateIdError にする", () => {
+    const wrapped = Object.assign(new Error("Failed query"), { cause: pgError({ constraint_name: "items_pkey" }) })
+    expect(() => rethrowDuplicateId(wrapped, "items", "アイテム")).toThrow(DuplicateIdError)
+  })
+
+  it("主キー以外の一意制約違反や、ほかのエラーはそのまま投げる", () => {
+    const other = pgError({ constraint_name: "groups_invite_code_unique" })
+    expect(() => rethrowDuplicateId(other, "items", "アイテム")).toThrow(other)
+    const plain = new Error("connection refused")
+    expect(() => rethrowDuplicateId(plain, "items", "アイテム")).toThrow(plain)
+  })
+
+  it("RowNotFoundError のメッセージに対象の名前が入る", () => {
+    expect(new RowNotFoundError("アイテム").message).toBe("アイテムが見つかりません")
   })
 })

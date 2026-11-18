@@ -9,8 +9,17 @@
 - 並行して書き換えるときは必ず git worktree を使う。メインの作業フォルダは書き換えない
   `git worktree add ../<repo>-wt-<役割> -b <branch> develop`
 - ちょっとした調査は名前なしのサブエージェントに任せる（Explore や quick-lookup / haiku）。返してほしい結論の形を指定する
-- 同じブランチは 2 つの worktree で同時に checkout できないので、実装者と tester は同じ worktree を順番に使う
-- チームメイトどうしは名前を指定した SendMessage でやりとりする
+- tester は、実装者の worktree を使わず、テストするコミットに固定した自分専用の worktree で流す（`git worktree add --detach ../<repo>-wt-test <HEAD>`、次の HEAD は `git checkout --detach <HEAD>`、終わったら消す）。実装者はテスト中でも自分の worktree を書き換えてよい（同じ worktree を順番に使う方式では、テスト中に書き換える事故が 2 回あった。2026-11-17）
+- 依頼に書く HEAD は、コミットの後に `git log` で確かめた値にする
+- チームメイトどうしは名前を指定した SendMessage で直接やりとりする。指摘・修正・再確認の往復はチームメイトどうしで済ませ、リーダーを経由しない
+- レビュー担当も SendMessage を使える種類のエージェントで作る（code-reviewer・database-reviewer などの読み取り専用の種類は SendMessage が使えず、リーダーの中継が要るため。general-purpose などで作り、指示で「ファイルを書き換えない」と縛る）
+
+## 仕様から実装までの流れ（OpenSpec）
+- 振る舞いが変わる Issue は、仕様（OpenSpec の change の proposal・specs）→ ユーザーの承認 → 実装 → tester → reviewer の順に進める（`feature-design.md`）
+- change は設計・実装の担当が作り、リーダーがユーザーに承認を取る。承認の前にコードを書かない
+- tester は、specs の Scenario ごとに対応するテストがあり、通っていることを確かめ、テストのない Scenario を報告に書く
+- reviewer は、実装が specs と合っているか、tasks.md のチェックがそろっているかを確かめる
+- archive は、tester の結果と reviewer の LGTM がそろった後、実装の担当が同じブランチで流してコミットする（未完了のタスクがあれば止める。手順は `feature-design.md` の「archive の手順」）。reviewer がその archive のコミット（specs/ への取り込み）を確かめてから、実装の担当がリーダーに報告する
 
 ## push・PR・マージ
 - チームメイトは push や PR 作成をしない。ローカルブランチにコミットしたら、tester → reviewer（ローカル差分でレビュー）の順に受け渡す
@@ -23,7 +32,21 @@
 - CI の E2E は、main へのリリース（main への PR と main への push）のときの最後の確認
 - `npx playwright test` を直接流すときは、`E2E_PORT` を指定する。既定の 3000 で別の worktree の dev サーバーが動いていると、そのサーバーのコードに当たる
 
+## DB の変更を含むリリース（#164）
+- Vercel の本番デプロイと CI の本番 migrate（main への push）は互いを待たない。新しい列を参照するコードが先に出ると、migrate が終わるまで「column does not exist」で失敗する
+- そのため、DB の変更を含む develop → main のリリースでは、**Vercel の本番デプロイより前（= main への PR をマージする前）に、本番 migrate を手動で流す**。develop への新しいマージを止めてから（migrate の後に develop に入った migration は main への push の migrate で当たり、Vercel とまた競合するため）、ユーザーの確認を取って `gh workflow run migrate-production.yml --ref develop -f confirm="migrate production"` を実行し、`Migrate Production DB` の成功を確かめてからマージする。失敗したらマージしない
+- 先に当てられるのは expand（足すだけ。古いコードがそのまま動く）だけ。`Check request` は main にない migration に典型的な contract（テーブル・列・型・制約・インデックスの削除、名前の変更、型の変更、データの削除（DELETE・TRUNCATE））があると止まるが、既存の列の DROP DEFAULT や SET NOT NULL、制約の追加（UNIQUE・CHECK・FK）などは見分けられないので、expand かどうかはレビューで確かめる。contract は別のリリースに分け、main への push の migrate で流す
+- main への push の migrate は残っている。適用済みの分は飛ばされるので二重に流れても問題ない。develop → main は merge commit でマージする（squash だと次の `Check request` が誤検出する）。手順は docs/features/offline-support.md の「各リリースの共通手順」
+- ref・入力のチェックは誤操作の防止で、守りの境界ではない。守りは、リポジトリの書き込み権限（amasok だけ）と、Production 環境の Deployment branches
+- 必要なリポジトリの設定: Production 環境の Deployment branches を `main` と `develop` に絞る（ほかのブランチの job は step の前に止まる。`main` だけにすると develop からの手動の migrate が動かない）。Required reviewers は付けない（ci.yml の main への push の migrate が毎回承認待ちで止まるため）
+- 残る危険: `NEON_DATABASE_URL` はリポジトリの secret にもあり（ci.yml の #139 のガードが、develop 用の URL が本番を指していないかを比べるのに使う）、environment を使わない job からはどのブランチでも読める。書き込みできるのは amasok だけなので受け入れる（2026-11-17）。消すなら、#139 のガードを本番の URL のハッシュとの比較などに変えてから消す
+
 ## 報告
+- リーダーに報告するのは、(1) 作業が終わったとき（テストが全部通り、レビューが LGTM で、push・マージできる状態）と、(2) リーダーかユーザーの判断が必要なときだけ。途中経過や「待機します」の連絡はしない（トークン節約。2026-11-17 ユーザーの指示）
+- 実装担当は、tester の結果と reviewer の LGTM がそろってから、まとめてリーダーに報告する
+- リーダーも、判断が要らない途中の連絡には応答しない
+- 話がループするとき（同じ指摘の往復、やる・やらないで揉める、直しても同じ失敗が続くなど）は、続けずにすぐリーダーを呼ぶ。リーダーで決められなければユーザーに聞く
+
 リーダーへの報告は次の3点を短く。
 1. 結論（PR URL など）
 2. 変更したファイル

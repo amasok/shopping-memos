@@ -45,7 +45,7 @@ export class CatalogSyncService {
   }
 
   async updateItem(input: UpdateItemInput, userId: string): Promise<Item> {
-    const item = await this.itemRepository.update(input)
+    const item = await this.itemRepository.update(input, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -61,7 +61,7 @@ export class CatalogSyncService {
   }
 
   async deleteItem(id: string, userId: string): Promise<void> {
-    await this.itemRepository.delete(id)
+    await this.itemRepository.delete(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -75,7 +75,7 @@ export class CatalogSyncService {
   }
 
   async markItemAsPurchased(id: string, userId: string): Promise<Item> {
-    const item = await this.itemRepository.markAsPurchased(id)
+    const item = await this.itemRepository.markAsPurchased(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -91,7 +91,7 @@ export class CatalogSyncService {
   }
 
   async markItemAsUnpurchased(id: string, userId: string): Promise<Item> {
-    const item = await this.itemRepository.markAsUnpurchased(id)
+    const item = await this.itemRepository.markAsUnpurchased(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -138,7 +138,7 @@ export class CatalogSyncService {
   }
 
   async updateTag(input: UpdateTagInput, userId: string): Promise<Tag> {
-    const tag = await this.tagRepository.update(input)
+    const tag = await this.tagRepository.update(input, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -154,7 +154,7 @@ export class CatalogSyncService {
   }
 
   async deleteTag(id: string, userId: string): Promise<void> {
-    await this.tagRepository.delete(id)
+    await this.tagRepository.delete(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({

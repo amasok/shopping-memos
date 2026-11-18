@@ -1,6 +1,6 @@
 # オフライン対応（ログイン中の編集と復帰時の同期、Service Worker キャッシュ）
 
-> ステータス: **方針承認済み（2026-11-16）・設計レビュー対応中**（未実装）
+> ステータス: **方針承認済み（2026-11-16）・実装中**（O1〜O2 は実装済み〈R1〉。O3〜O5 のサーバー側を実装中。決定事項 6 の補足を参照）
 > 関連 Issue: #62（本機能）、#44（PWA 対応）、#61（認証方式の変更。オフライン時のセッション扱いで連携）
 > 関連 ADR: [ADR-004 オフライン同期戦略](../adr/004-offline-sync-strategy.md)（承認済み）、[ADR-005 PWA アーキテクチャ](../adr/005-pwa-architecture.md)（提案中）
 > 関連セキュリティ Issue: #69（sync.push / merge の認可不備）、#64（同名アイテムの全ユーザー更新）、#68（itemId / tagId の所有権を検証していない）、#72（入力の上限・ページングがない）、#73-1（WHERE にスコープがない）、#71（セキュリティヘッダ）、#65（Next.js の脆弱性）。「## セキュリティ」節で対応関係を示す
@@ -137,7 +137,7 @@
 | 対象 | 戦略 | 理由 |
 |------|------|------|
 | `/_next/static/**`（ハッシュ付き JS/CSS） | Precache（ビルドのマニフェスト）+ CacheFirst | URL がビルドごとに変わるため |
-| アプリシェル（`/`, `/lists`, `/lists/new`, `/lists/detail`, `/items/new`, `/history`, `/tags`, `/settings`, `/groups`, `/login`, `/~offline`） | `additionalPrecacheEntries`（revision = ビルド ID） | 全ページが `"use client"` で、HTML にユーザー固有のデータが入らないことを確認済み（サーバーで `auth()` を呼ぶのは tRPC の context だけ） |
+| アプリシェル（`/`, `/lists`, `/lists/new`, `/lists/detail`, `/history`, `/tags`, `/settings`, `/groups`, `/login`, `/~offline`） | `additionalPrecacheEntries`（revision = ビルド ID） | 全ページが `"use client"` で、HTML にユーザー固有のデータが入らないことを確認済み（サーバーで `auth()` を呼ぶのは tRPC の context だけ） |
 | ページのナビゲーション（document） | NetworkFirst（タイムアウト 3 秒）→ キャッシュ → `/~offline` | オンラインなら最新、圏外ならすぐキャッシュで開く |
 | RSC リクエスト（`RSC: 1` ヘッダ） | NetworkFirst（3 秒）→ キャッシュ | Serwist の `defaultCache` の matcher を流用する |
 | 画像・フォント | StaleWhileRevalidate / CacheFirst（`defaultCache` に準拠） | |
@@ -203,6 +203,8 @@
 | 定期実行 | 行わない（ADR-004 の「リアルタイム不要」に従う。電池と通信量のため） |
 
 Background Sync API は iOS で使えないため、上記のアプリ側のきっかけで再送する。
+
+- O7 の時点（2026-11-17）で呼んでいる場所: カタログ（商品・タグ）の端末の DB への書き込みの後に `requestSync()`（2 秒のデバウンス）。買い物（O8 まで tRPC）の変更の後と、グループの作成・参加・更新・脱退（tRPC）の後に `sync()`（すぐ。待たない）。手動更新ボタンは O9
 
 ### 4b. ゲストのデータとログイン・ログアウト（2026-11-17 決定、#144 で改訂）
 
@@ -274,6 +276,17 @@ R1 の時点（ゲスト用の `ShoppingMemosDB` だけがある）での振る�
 | `sync_operations` | 冪等化のため、`id`（クライアントの操作 ID）を一意キーとして使う。処理結果（`applied` / `rejected` / `conflict`）を記録する |
 
 - 既存の取得系クエリは、すべて `deleted_at IS NULL` で絞り込む（リポジトリ層で共通化する）
+- `updated_at` は、サーバーの DB の `now()` だけで入れる。JS の `new Date()` と混ぜない（列はタイムゾーンなしの `timestamp` で、接続のタイムゾーンは UTC 前提。アプリの時計と DB の時計がずれると、pull のカーソルが行を取りこぼす）
+- **論理削除の細部（O3b で決定）**:
+  - アイテムの削除は論理削除にし、`item_tags` の行は物理削除する（tombstone にタグは要らない。タグの使用数にも数えない）
+  - タグの削除は論理削除にし、そのタグの `item_tags` の行を物理削除する。関連を外したアイテムは `updated_at` と `field_modified_at.tagIds` を更新する（中間テーブルの削除は pull で伝わらないので、アイテムの変更として伝える）
+  - リストの削除は、リストとその `list_items` をまとめて論理削除する（物理削除の cascade の代わり）。リストからアイテムを外す操作と、買い物の完了で未チェックの行を消す処理も論理削除にする
+  - 削除済みの行は、取得・一覧・件数・名前での検索や重複の確認・アクセス判定のすべてで「見つからない」扱いにする（既存の API の応答は変わらない）。削除したものと同じ名前では作り直せる。例外は ID の重なりの判定（ゲストのデータの取り込みで、その ID の行がすでにあるか）だけで、削除済みも含めて見る（取り込み後にサーバーで削除したものを、送り直しで復活させないため）
+  - 削除済みの行の ID で作成すると、ID の重複（CONFLICT）として扱う。自分の行・他人の行・削除済みの行を区別せず、同じエラー・同じメッセージにする（存在の有無を漏らさない）
+  - 履歴（購入済みのリスト）のアイテムはスナップショットなので、カタログのアイテムを削除しても残る。タグを削除すると、履歴のアイテムのタグの表示から消える（どちらも物理削除のときと同じ）
+- **通常の mutation での同期用の列（O3b）**: `field_modified_at` のキーは API のフィールド名（`name` / `quantity` / `memo` / `tagIds` / `purchasedAt` / `checked` / `status` / `completedAt` / `location`）。値は DB の `now()` を UTC・ミリ秒の ISO 文字列（`2026-11-17T05:00:00.000Z`）にしたもので、作成時は書き込んだすべてのフィールドに、更新時は書き込んだフィールドだけに入れる（`src/infrastructure/db/syncColumns.ts`）
+- **更新・削除の WHERE のスコープ（#73-1。O3b）**: リポジトリの更新・削除には操作したユーザーを渡し、WHERE に「自分の個人データ、または所属しているグループのデータ」と `deleted_at IS NULL` を付ける。`list_items` は親のリストで判定する（`list_items.user_id` は入っていないことがあるため）。一致する行がなければ `RowNotFoundError` を投げ、tRPC では NOT_FOUND にする（存在しない・削除済み・スコープ外を区別しない）
+- **作成時のクライアント ID（O3b）**: `createItem` / `createTag` / `createList` / `addItemToList` / `addNewItemToList`（リストのアイテムの ID。同時に作るカタログのアイテムの ID はサーバーで採番する）で、任意の uuid の `id` を受け付ける。使用済みの ID は CONFLICT にする
 - tombstone（`deleted_at` が入った行）は 30 日後に物理削除する（定期ジョブは別 Issue。当面は削除しない）。30 日を超えてオフラインだったクライアントは、全件の再同期にする
 
 **`sync.push`（作り直し）**
@@ -285,7 +298,7 @@ input: {
     entity: "item" | "tag" | "list" | "listItem"
     entityId: string        // クライアントで採番した UUID
     type: "create" | "update" | "delete" | "finishShopping" | "revertHistory"
-    patch?: Record<string, unknown>      // entity ごとの Zod スキーマで検証（JSON で 8KB まで）
+    patch?: Record<string, unknown>      // entity ごとの Zod スキーマで検証（JSON で 16KB まで。REQUEST_LIMITS.recordBytes）
     fieldTimes?: Record<string, string>  // patch の各フィールドの操作時刻（補正済み ISO）
     clientTime: string                   // 操作全体の時刻（create / delete / 複合操作で使う）
   }>  // 最大 100 件 / リクエスト
@@ -306,6 +319,23 @@ output: {
 - 操作ごとに**認可**する（自分の個人データ、または所属しているグループのデータだけ）。既存の catalog / shopping のサービス層を再利用し、tRPC の通常ミューテーションと同じ検証を通す
 - 操作は 1 件ずつのトランザクションで適用し、1 件の失敗で全体を止めない。`opId` が処理済みなら `duplicate` を返す
 - update の適用: 行を `SELECT ... FOR UPDATE` で取り、`fieldTimes[f] >= field_modified_at[f]` のフィールドだけを書き込み、`field_modified_at` を更新する。`updated_at` は `now()` にする
+- **O4 での細部（2026-11-17）**（`src/modules/sync/application/services/SyncPushService.ts`）:
+  - 冪等化: `sync_operations.id` を `opId` にし、操作の記録（`INSERT ... ON CONFLICT DO NOTHING`）を適用と同じトランザクションの最初に行う。同じユーザーの `opId` は `duplicate`、ほかのユーザーの `opId` と重なれば `rejected`（`op_conflict`）。処理の結果は `payload` の JSON（`{ patch, fieldTimes, clientTime, status, reason }`）に入れる（列は足さない。件数は `payload::jsonb->>'status'` で数える）
+  - 結果: create は新しい行なら `applied`。同じ ID の行が使えるならフィールド単位の更新、削除済みなら `conflict`（`serverRow` に tombstone）、使えなければ `rejected`（`id_conflict`）。update は行がない・使えないなら `rejected`（`not_found`。区別しない）、削除済みなら `conflict`、捨てたフィールドがあれば `partial`（`serverRow` に最新の行。アイテムは `tagIds` つき）。delete は時刻に関係なく論理削除し、削除済みなら `applied`、行がない・使えないなら `rejected`（`not_found`）
+  - パッチは、エンティティと種類ごとの strict な Zod スキーマで検証する（未知のフィールドは拒否）。受け付けるフィールドは tRPC と同じ範囲（update: アイテムは `name` / `quantity` / `memo` / `tagIds` / `purchasedAt`、タグとリストは `name`、リストのアイテムは `checked`）。不正ならその操作だけ `rejected`（`invalid_patch`）。パッチの大きさ（`REQUEST_LIMITS.recordBytes`）と件数（100）は入力の検証で拒否する（#72。クライアントはキューに積むときに同じ上限で検証する）
+  - 認可と参照: グループへの作成はメンバーだけ（`forbidden`）。タグは同じスコープのものだけ（`invalid_reference`）。リストのアイテムは、使える進行中のリストにだけ作り、`group_id` はリストの値にする（#68）。完了したリストのアイテムの作成・チェック・削除は `rejected`（`list_completed`。tRPC と同じ）
+  - 時刻: フィールドの時刻は `fieldTimes[f]`、なければ `clientTime`。`serverTime`（DB の `now()`）より未来なら `serverTime` に丸め、UTC・ミリ秒の ISO で保存する。create は、書き込んだすべてのフィールドに操作の時刻を入れる
+  - 再送: `duplicate` の `reason` に、最初に処理したときの結果（`applied` / `partial` / `conflict:deleted` / `rejected:not_found` など）を入れる。クライアント（O6）は、`reason` が `applied` ならキューから消し、`partial` / `conflict` ならキューから消して pull で最新の行を取り直し、`rejected` なら `failed` にする（レスポンスが失われて再送したとき、拒否された操作を適用済みと取り違えない）
+  - リストのアイテム: 作成・チェック・削除の間は、親のリストに共有ロック（`FOR SHARE`）を取り（ロックはリストの削除・完了と同じく「親のリスト → リストのアイテム」の順に取る。逆だとデッドロックになる）、リストの削除・完了と同時に走っても、削除済み・完了済みのリストの下に生きたアイテムができないようにする。親のリストが削除済みのアイテムは、削除済みと同じに扱う（update は `conflict`、delete は `applied`）
+  - リポジトリの「対象なし」（`RowNotFoundError`）は、その操作だけ `rejected`（`not_found`）にする（決まって失敗する操作で、キュー全体を止めない）
+  - `purchasedAt` の値も、未来なら `serverTime` に丸める。返す `serverTime` は処理の後の時刻（丸めにはリクエストの開始時刻を使う）。`fieldTimes` のキーは 20 個まで
+  - 予期しないエラー（DB の障害など）は、リクエスト全体を 500 にする（クライアントがまとめて再送する。適用済みの操作は `duplicate` になる）。1 操作 1 トランザクションで、`statement_timeout` は 30 秒
+  - 対応外の `protocolVersion` は `PRECONDITION_FAILED`（メッセージ `CLIENT_TOO_OLD`）。今は 1 だけを受け付ける
+  - **複合操作（O4b）**: `finishShopping` / `revertHistory` は `entity: "list"` で送り、パッチは tRPC と同じ（`finishShopping` は `{ location? }`、`revertHistory` は `{}`）。1 トランザクションで、時刻はすべて操作の時刻（`clientTime` を丸めたもの）にする
+    - `finishShopping`: チェック済みのリストのアイテムと同名の、リストと同じスコープのカタログのアイテムを購入済みにし（`purchasedAt` も操作の時刻）、未チェックの行を論理削除し、リストを完了にする（`status` / `completedAt` / `purchasedAt` / `location` の時刻は操作の時刻）
+    - `revertHistory`: リストのアイテムと同名の、購入済みのカタログのアイテムを未購入に戻し、リストを進行中に戻す
+    - カタログのアイテムは、`purchasedAt` の時刻が操作の時刻より新しいものを変えない（フィールド単位の LWW。オフラインで完了した後に、別の端末で「未購入」に戻したものを、遅れて届いた完了で上書きしない）
+    - リストの状態のフィールドが操作の時刻より新しく書き換えられていれば、何もせず `conflict`（`stale`）。完了済みのリストの完了は `conflict`（`already_completed`）、チェック済みのアイテムがないリストの完了は `conflict`（`no_checked_items`。#179 の 179b）、完了していないリストの取り消しは `conflict`（`not_completed`）。どれも `serverRow` に最新のリストを返す。リスト以外・不正なパッチは `rejected`（`invalid_patch`）、使えないリストは `rejected`（`not_found`）、削除済みのリストは `conflict`（`deleted`）
 
 **`sync.pull`（作り直し）**
 
@@ -320,22 +350,31 @@ output: {
 ```
 
 - 対象は、自分の個人データと所属グループのデータ
-- **取りこぼし対策**: Postgres の `now()` は**トランザクションの開始時刻**なので、時刻順とコミット順がずれることがある（長いトランザクションほど大きくずれる）。そのため、カーソルの時刻から **60 秒さかのぼって**取り直す（`updated_at > cursor.time - 60s`）。重複して届いた行は、クライアントが冪等に適用する（同じ行を `bulkPut` するだけ）。同期の書き込みは 1 操作 1 トランザクションにし、ステートメントタイムアウトを 30 秒にして、60 秒を超えるトランザクションが起きないようにする
+- **取りこぼし対策**: Postgres の `now()` は**トランザクションの開始時刻**なので、時刻順とコミット順がずれることがある（長いトランザクションほど大きくずれる）。そのため、カーソルの時刻から **60 秒さかのぼって**取り直す（`updated_at > cursor.time - 60s`）。重複して届いた行は、クライアントが冪等に適用する（同じ行を `bulkPut` するだけ）。**60 秒のさかのぼりは pull の始め（1 ページ目）だけにし、2 ページ目からは `(updated_at, id) > (t, id)` で続きを取る**（ページごとにさかのぼると、60 秒以内に 500 行を超える変更があったとき、同じページを繰り返し取り続ける）。同期の書き込みは 1 操作 1 トランザクションにし、ステートメントタイムアウトを 30 秒にして、60 秒を超えるトランザクションが起きないようにする（`statement_timeout` は 1 文ごとの上限で、トランザクション全体の長さは縛らない。60 秒を超えるトランザクションを作らない対象は、同期の対象のテーブルに書くすべての処理。push は 1 操作 1 トランザクション、tRPC の mutation は数文。1 トランザクションで多くの文を流す `sync.merge` は、入力の件数の上限（`MERGE_LIMITS`）で数秒に収まる想定。もし 60 秒を超えると、ほかの端末の pull がその行を取りこぼし、カーソルなしで取り直すまで届かない）
+- **O3b からの申し送り**: タグを削除しても、リストのアイテムの `tag_ids`（スナップショット）は残り、`updated_at` も変わらない。また、リストへのアイテムの追加とリストの削除が同時に走ると、削除済みのリストの下に生きたリストのアイテムができうる。pull では、親のリストが削除済みのリストのアイテムを除くか tombstone として返し、クライアントでは、削除済みのリストのアイテムをまとめて消し、存在しないタグの ID は表示で無視する
 - 所属グループの一覧が前回と変わったとき（脱退・追加）は、クライアントがそのグループのローカルデータを削除するか、カーソルなしで再取得する
+- **O5 での細部（2026-11-17）**（`src/modules/sync/application/services/SyncPullService.ts`）:
+  - カーソルは、エンティティ（tags / items / lists / listItems）ごとの `(updated_at, id)` と「この pull の最初のページを取ったか」を JSON にして base64url にしたもの（不透明。長さは `REQUEST_LIMITS.pullCursor` まで。形が壊れていれば BAD_REQUEST）。`updated_at` は DB の文字列のままマイクロ秒まで持つ（JS の Date にするとミリ秒に丸まり、境目の行を取りこぼす・取り続ける）
+  - 1 回の pull で、tags → items → lists → listItems の順に合わせて 500 行まで返す。ページが埋まって取れなかったエンティティは、次のページで（60 秒さかのぼる）最初のページとして取る。`hasMore` が false になったら、次の pull はすべてのエンティティで 60 秒さかのぼって始める
+  - 対象は `accessibleByUser`（自分の個人データか所属グループのデータ）。リストのアイテムは親のリストで判定する（`list_items.user_id` は入っていないことがある）。tombstone も返し、親のリストが削除済みのリストのアイテムは、`deletedAt` に親の削除時刻を入れて tombstone として返す。アイテムには `tagIds` を埋め込む
+  - スコープの条件は、同じトランザクションで先に読んだ所属グループの ID で `(group_id IS NULL AND user_id = 自分) OR group_id IN (所属グループ)` にする（`ownedOrInGroups`）。サブクエリにすると `(user_id, updated_at)` / `(group_id, updated_at)` のインデックスが絞り込みに使われず、サービス全体の変更の量に比例して遅くなるため。続きのページでは、行の比較に加えて `updated_at >= t` も付けてインデックスの範囲にする。リストのアイテムは親のリストで判定するので、`list_items` のこのインデックスは使えない（件数が少ないうちは十分。多くなったら `list_items.group_id` / `user_id` での絞り込みを足す）
+  - カーソルの時刻は `to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS.US')` で形を固定する（`::text` はセッションの DateStyle で形が変わる）。時刻として正しくない値のカーソルは、DB に送る前に BAD_REQUEST にする
+  - 読み取りは 1 トランザクション（`statement_timeout` 30 秒）。`memberships.groupIds` は毎ページ返す。グループの削除では、アイテムなどの `group_id` が FK の `SET NULL` で変わるが `updated_at` は変わらないので、クライアントは所属グループの一覧が変わったら、カーソルなしで取り直す（そのグループのローカルデータの削除だけでは、作成者の個人データに変わった行を取りこぼす）
+  - tombstone の 30 日後の物理削除（別 Issue）を入れるときに、30 日より古いカーソルを「全件の取り直しが必要」として返すようにする（今は物理削除しないので不要）
 
 **ID の受け入れ**: `createItemSchema` などの作成用スキーマに `id: z.string().uuid().optional()` を追加し、既存の tRPC ミューテーションでもクライアント ID を受け付ける。
 
 ### クライアント
 
-**Dexie version 9**
+**Dexie version 10**（v9 は #144 の `pendingMerge` で使ったため、同期の変更は v10。2026-11-17）
 
-- `lists`, `listItems` に `updatedAt` を追加する。ローカルで更新するたびに、全エンティティの `updatedAt` を補正済みの時刻で更新する（現在 `db.items.update` が `updatedAt` を更新していない問題も直す）
+- `lists`, `listItems` に `updatedAt` を追加する（既存の行は `createdAt` で埋める。以前の形の `syncQueue` は使っていなかったので v10 で捨てる）。ローカルで更新するたびに、全エンティティの `updatedAt` を補正済みの時刻で更新する（現在 `db.items.update` が `updatedAt` を更新していない問題も直す）
 - `syncQueue` を拡張: `{ id(opId), entity, entityId, type, patch, fieldTimes, clientTime, retryCount, status: "pending" | "inflight" | "failed", lastError? }`
 - **キューの圧縮**: 同じエンティティへの `pending` の操作をまとめる
   - create + update → create（パッチを統合）、update + update → update（統合）、create + delete → 両方消す、update + delete → delete
   - パッチを統合するとき、`fieldTimes` は**フィールドごとに新しい方**を残す（操作全体の `clientTime` は最新のものにする）
-  - **`inflight`（送信中）の操作は圧縮の対象から外す**。例えば create を送信中に delete が来た場合、両方消すとサーバーには作成だけが残る。そのため、delete は新しい操作として積む
-- **Dexie のバージョン更新（v8 → v9）**: 古いタブが開いていると `blocked` になる。古いタブ側は `versionchange` を受けたら DB を閉じてリロードする。新しいタブ側は `blocked` のときに「他のタブを閉じてください」と表示する
+  - **`inflight`（送信中）の操作は圧縮の対象から外す**。例えば create を送信中に delete が来た場合、両方消すとサーバーには作成だけが残る。そのため、delete は新しい操作として積む。一度送ってレスポンスが届かずに `pending` に戻した操作（`attempted`）も、サーバーで処理済みかもしれないので同じく圧縮しない（まとめると再送が `duplicate` になり、後の変更が届かない）。まとめた結果が push の上限を超えるときも、まとめずに積む
+- **Dexie のバージョン更新（v9 → v10）**: 古いタブが開いていると `blocked` になる。古いタブ側は `versionchange` を受けたら DB を閉じてリロードする。新しいタブ側は `blocked` のときに「他のタブを閉じてください」と表示する
 - ユーザー DB の `meta` テーブル: `cursor`, `serverTimeOffset`, `lastSyncAt`, `groupIds`
 
 **リポジトリ層（新規 `src/infrastructure/local/`）**
@@ -343,7 +382,7 @@ output: {
 - `itemRepository`, `tagRepository`, `listRepository` を作る。書き込みは `db.transaction("rw", [table, db.syncQueue], ...)` で、エンティティとキューを同時に更新する（ゲストではキューに積まない）
 - 既存の hook（`src/hooks/data/*`）の書き込みは、すべてこのリポジトリ経由にする。読み取りは `useLiveQuery` を使う
 - **フィーチャーフラグ `NEXT_PUBLIC_LOCAL_FIRST`**（本番で切り戻すための安全策）
-  - `true`（R3 以降の既定）: ログイン中もローカルファーストで動く
+  - `"true"`: ログイン中もローカルファーストで動く。**コードの既定は false**（値が `"true"` のときだけ有効。`src/lib/featureFlags.ts`）。R3 で Vercel の環境変数 `NEXT_PUBLIC_LOCAL_FIRST=true` を Production と Preview に入れて有効にする（2026-11-17、O7 で決定）。O11 でフラグごと消す
   - `false`: 従来のサーバーファースト（tRPC 直呼び）に戻す。このとき SyncEngine は **push だけを続けて未送信のキューを送り切る**（drain モード）。端末内の未送信の変更を失わずに戻せる
   - そのため、O7 / O8 では tRPC の分岐を**すぐには消さず**、フラグで切り替えられる形で残す。R3 から 2 週間安定したら、O11 でサーバーファーストの分岐とフラグを削除する
 - グループ管理（`identity.*`）は、tRPC を直接呼ぶオンライン限定のまま残す。`groups` / `groupMembers` は、pull のたびに `identity.getGroups` の結果で上書きして読み取り専用でキャッシュする（オフラインでもグループの切り替えと表示はできる）
@@ -354,6 +393,27 @@ output: {
 - `pull()`: `hasMore` が false になるまでカーソルで取得 → `bulkPut` / tombstone の削除 → メンバーシップの差分を処理。**ローカルに未送信の操作があるエンティティは上書きしない**（push が先、pull が後の順番を守る）
 - 同時実行の防止: 同期処理は 1 本だけにする（タブ間は Web Locks API の `navigator.locks.request("sync")`）
 - `SyncProvider` を providers に組み込む（`Auth > DataMerge > Sync > Group > DB`）。`useSync()` で `isOnline`, `isSyncing`, `pendingCount`, `failedCount`, `lastSyncAt`, `sessionExpired` を公開する
+- **O6 での細部（2026-11-17）**（`src/infrastructure/sync/SyncEngine.ts`、`applyServerRows.ts`、`src/contexts/SyncContext.tsx`）:
+  - push の取り出しと `inflight` への変更は 1 つのトランザクションで行う（取り出した後に積まれた変更が、送る前の操作にまとめられて消えないように）。前の実行で `inflight` のまま残った操作は、ロックの中で `pending` に戻してから送る
+  - 結果が返らなかった操作は `pending` に戻す。1 件も返らなければバックオフする。`partial` / `conflict` の `serverRow` は、同じエンティティに未送信の操作が残っていなければローカルに反映する。push で `duplicate`（再送）か `rejected`（`failed`）が返ったら、カーソルを消して次の pull を最初から取る（`meta` から消すので、pull が失敗しても残る）。未送信の間に pull が飛ばした行は、push が `applied` なら `updated_at` が上がって次の差分で届くが、再送・拒否ではサーバーの行が変わらずカーソルの後ろに残るため（どちらもまれなので、全件の取り直しを受け入れる）
+  - push が入力の中身で拒否された（400 BAD_REQUEST・413。tRPC の形でない 413 / 400 も HTTP の状態で判断する）ときは、半分ずつに分けて送り直し、1 件で拒否された操作だけを `failed` にして残りを送り続ける（1 件の不正で、ほかの操作を `failed` にしない）。429 と、そのほかの 4xx（WAF の 403、デプロイの切り替わりの 404・405 など、どの操作が悪いのかに関係なく全体が拒否されるもの）は、5xx と同じく `failed` にせずバックオフで再試行する（1 件ずつ `failed` にすると、カーソルが消え、pull がユーザーの未送信の変更をまとめてサーバーの値に戻すため）。`CLIENT_TOO_OLD` は `clientTooOld` にして止める（強制更新は O1b の仕組みで扱う）
+  - pull で上書きしないのは、`pending` / `inflight` の操作があるエンティティ。`failed` のものはサーバーの値で上書きする。壊れたカーソル（BAD_REQUEST）は捨てる
+  - 所属グループが変わったら、抜けたグループのローカルデータを消し、カーソルなしで取り直す（前回の一覧がない最初の pull では比べない）。保存は、カーソルを消してから一覧を書く順にする（一覧だけ保存して止まると、次の pull が古いカーソルの差分だけを取る）
+  - drain モードでは pull しない。エンジンは、ログイン中で merge が終わってから作る（`isMergeCompleted`）。`useSync()` は `engine`（O7 でリポジトリが時計と DB を使う）と `requestSync()`（書き込みの後の 2 秒のデバウンス）も返す
+  - `groups` / `groupMembers` のキャッシュ（`identity.getGroups` での上書き）と、ログアウト時のユーザー DB の削除は、まだ行わない（O7 / O9）→ `groups` のキャッシュは O7 で入れた（下の「O7 での細部」）。`groupMembers` のキャッシュとユーザー DB の削除は O9
+- **O7 での細部（2026-11-17）**（`src/hooks/data/useCatalogSource.ts`、`src/infrastructure/local/catalogRepository.ts`、`src/hooks/data/catalogQueries.ts`。仕様は `openspec/changes/archive/2026-11-17-62-o7-catalog-local-first/`）:
+  - カタログの読み書きの経路: ゲスト（とログイン中で merge の前）はゲスト DB（キューに積まない）、ログイン中・フラグ false は tRPC、ログイン中・フラグ true はユーザー DB（キューに積み、書き込みの後に `requestSync()`）。買い物の hooks（`useDataSource`）は O8 まで tRPC のまま
+  - ローカルファーストの一覧の並びはサーバーと同じ（商品は作成の古い順、タグは名前の文字コードの順。タグは本番の DB の照合順序が C のときだけサーバーと一致）。ゲストの並びは今のまま（そろえるかは保留の change `62-o7b-catalog-guest-alignment`）
+  - ユーザー DB の初回の同期（`lastSyncAt` がない）が終わるまで、カタログとグループの一覧は読み込み中にする
+  - タグの削除は、外した商品ごとに `update {tagIds}` もキューに積む（送る前のタグの create + delete が圧縮で消えたとき、商品のパッチに消えたタグが残らないように）
+  - フラグが true の同期は、pull の後に `identity.getGroups` で `groups` のキャッシュを上書きし（失敗しても同期は成功）、`useGroups` はそれを読む。キャッシュは `ownerId` と `inviteCodeExpiresAt` を持たない（表示だけに使う）
+  - 買い物（tRPC）の変更の後は、`catalog.getItems` の invalidate の代わりに、フラグが true なら `sync()` する（「買いたいもの」の除外を追いつかせる）（O8 で、買い物も端末の DB に書くようになったのでやめた）
+- **O8 での細部（2026-11-17）**（`src/infrastructure/local/shoppingRepository.ts`、`src/hooks/data/shoppingQueries.ts`。仕様は `openspec/specs/shopping` の「端末の DB の…」）:
+  - 買い物の hooks も O7 の `useCatalogSource` の経路を使う。ゲストの hooks にあった完了・取り消し・スナップショット・照合のコピーはなくなり、ゲストも同じリポジトリ（キューに積まない）を通る
+  - 完了と取り消しは、端末の DB のカタログの商品・リストの商品・リストを 1 トランザクションで更新し、キューには `finishShopping`（location）/ `revertHistory` を 1 つだけ積む（サーバーが同じ規則で適用する）。端末の照合は、リストと同じ groupId の同じ名前の商品
+  - 進行中のリストを消すときは、リストの商品ごとの `delete` も積む（送る前の create を圧縮で一緒に消す）。完了したリスト（履歴の削除を含む）では、リストの `delete` だけを積む（サーバーは完了したリストの商品の削除を `list_completed` で断る）
+  - ゲストで残す振る舞い: チェック 0 件の完了はエラー、完了の照合は未購入だけ（`179b-finish-empty-list-dialog` で決める）。リストとリストの商品の並びは今のまま（`62-o8b-shopping-guest-order` で決める）。ローカルファーストはサーバーと同じ（作成の古い順、0 件でも完了でき、購入済みも更新する）
+  - 完了・取り消しがサーバーで conflict / rejected になると、端末で変えたカタログの商品は全件の取り直しまでずれが残る（まれ。O9 の失敗の表示で見直す）
 
 **オフライン時のセッション（#61 に依存）**
 
@@ -381,7 +441,7 @@ output: {
 | `src/infrastructure/trpc/routers/sync.ts` | push / pull の作り直し |
 | `src/infrastructure/trpc/routers/{catalog,shopping}.ts`、サービス層・リポジトリ層 | 論理削除、`deleted_at` の絞り込み、クライアント ID の受け入れ |
 | `src/shared/schemas/*` | `id` の追加、push のパッチ用スキーマ |
-| `src/lib/db/index.ts` | Dexie v9、ユーザーごとの DB |
+| `src/lib/db/index.ts` | Dexie v10、ユーザーごとの DB |
 | `src/infrastructure/local/*`（新規） | リポジトリ層 |
 | `src/infrastructure/sync/SyncEngine.ts`, `src/contexts/SyncContext.tsx`, `src/app/providers.tsx` | push / pull の実装と組み込み |
 | `src/hooks/data/*` | ローカルファースト化（tRPC の分岐を削除） |
@@ -401,7 +461,7 @@ output: {
 | ゲスト利用者 | R1 からオフラインで起動できるようになる。データの扱いは変わらない |
 | DB | `updated_at` / `deleted_at` / インデックスの追加（列の追加のみ）。削除が論理削除になる |
 | API | `sync.push` / `sync.pull` の仕様が変わる。現在の呼び出し元は `DataMergeContext`（`sync.merge`）だけで、push / pull は未使用なので、既存の端末への影響はない。R3 以降の変更は `protocolVersion` で後方互換を 30 日間保つ |
-| デプロイとマイグレーションの順序 | Vercel のデプロイと CI の `migrate` ジョブ（main への push 時）は互いを待たない。そのため、**マイグレーションは必ず先に単独でリリースする**（列を足すだけで、古いコードはそのまま動く）。その後で、新しい列を使うコードをリリースする |
+| デプロイとマイグレーションの順序 | Vercel のデプロイと CI の `migrate` ジョブ（main への push 時）は互いを待たない。そのため、**マイグレーションは必ず先に単独でリリースする**（列を足すだけで、古いコードはそのまま動く）。その後で、新しい列を使うコードをリリースする。ただし R2a のコードも、`schema.ts` に列を足すので、新しい列を select / returning で参照する（Vercel が先に終わると、migrate が終わるまで items / tags / lists / list_items の読み書きが「column does not exist」で失敗する）。そのため、**DB の変更を含むリリースは、本番 DB への migrate をアプリのデプロイより先に当てる**（expand なので古いコードはそのまま動く）。手動実行のワークフロー `migrate-production.yml` で、develop → main の PR をマージする前に本番 DB へ migrate する（#164。「各リリースの共通手順」の 5） |
 | Vercel Preview | develop にマージすると Preview に SW 入りでデプロイされる。Preview は本番と別のドメイン・別の DB なので、SW・キャッシュ・データは本番に影響しない。ユーザーの確認には develop ブランチの固定 URL を使う |
 
 ### リリース手順（develop → main）
@@ -412,7 +472,8 @@ output: {
 develop に PR をマージ
   → Vercel が Preview に自動デプロイ ＋ CI が Preview の DB にマイグレーション（#61 の A2 で追加するジョブ）
   → ユーザーが Preview で「確認チェックリスト」を実施（実機を含む）
-  → OK → develop → main の PR をマージ → 本番デプロイ ＋ 本番 DB にマイグレーション
+  → OK →（DB の変更を含むリリースでは、本番 DB に手動でマイグレーション。#164）
+  → develop → main の PR をマージ → 本番デプロイ ＋ 本番 DB にマイグレーション（適用済みなら何もしない）
   → NG → develop で修正して、Preview の確認からやり直す
 ```
 
@@ -422,7 +483,7 @@ develop に PR をマージ
 | R1 | O1 + O1b + O2（SW、更新通知・強制更新、リスト詳細のルート変更） | **リリース後 1 週間は様子を見て**、問題がなければ R2 に進む |
 | R2a | O3（expand マイグレーションだけ） | 列を足すだけ。古いコードはそのまま動く |
 | R2b | O3b + O4 + O5（論理削除、サーバーの同期 API） | 画面は tRPC の直接呼び出しのまま |
-| R3 | O6 + O7 + O8 + O9（クライアントのローカルファースト化）。**分けずに同時にリリースする** | O7 / O8 だけを出すと、オフライン時にログイン状態が失われ、ゲストの表示に切り替わる（O9 で解消） |
+| R3 | O6 + O7 + O8 + O9（クライアントのローカルファースト化）。**分けずに同時にリリースする**。Vercel の環境変数 `NEXT_PUBLIC_LOCAL_FIRST=true` を Preview（確認の前）と Production（main へのマージの前）に入れる（ビルド時に埋め込むので、入れた後のデプロイから有効） | O7 / O8 だけを出すと、オフライン時にログイン状態が失われ、ゲストの表示に切り替わる（O9 で解消） |
 | R4 | O10 + O11（ドキュメント、移行用コードの削除） | R3 から 2 週間安定したあと。O11 の後は、フラグによる切り戻しができなくなる |
 
 #### Preview での確認チェックリスト（ユーザーが実施）
@@ -473,8 +534,16 @@ develop に PR をマージ
 2. develop への PR をマージし、Preview の自動デプロイと、Preview の DB へのマイグレーション（R2a 以降）の完了を確認する
 3. **ユーザーが Preview で上のチェックリストを実施する。すべて OK になるまで main へは進まない**
 4. DB の変更を含むリリース（R2a、R2b）の前に、Neon で本番ブランチのバックアップを作る
-5. develop → main の PR を作り、CI（lint / test / build / E2E）が通ることを確認してマージする
-6. CI の `migrate` ジョブの成功と、Vercel の本番デプロイの完了を確認する
+5. develop → main の PR を作り、CI（lint / test / build / E2E）が通ることを確認してマージする。**DB の変更を含むリリース（R2a、R2b）では、マージの前に本番 DB への migrate を手動で流す**（「デプロイとマイグレーションの順序」参照。#164）
+   1. develop への新しいマージを止める（PR の head と、migrate する develop をそろえる。migrate の後に develop に入った migration は、main への push の migrate で当たるので、Vercel の本番デプロイとまた競合する）
+   2. `gh workflow run migrate-production.yml --ref develop -f confirm="migrate production"` を実行する（ユーザーの確認を取ってから）
+   3. 実行の結果を確かめる。dispatch の直後は前の実行を拾うことがあるので、数秒待ってから `gh run list --workflow=migrate-production.yml --event workflow_dispatch -L 1 --json databaseId,headSha,status,createdAt` で今の実行を探し、`headSha` が develop（PR の head。`git fetch origin develop` の後の `git rev-parse origin/develop`）と同じことを確かめてから `gh run watch <run id>` で待つ。`Check request` は、ref が develop / main 以外、確認の入力の不一致、main にない migration に典型的な contract（テーブル・列・型・制約・インデックスの削除、名前の変更、型の変更、データの削除（DELETE・TRUNCATE））があるときに止まる。既存の列の DROP DEFAULT や SET NOT NULL、制約の追加（UNIQUE・CHECK・FK）などは見分けられないので、expand かどうかはレビューで確かめる。contract の migration は先に当てられないので、この手順を使わない（expand / contract を別のリリースに分ける）
+   4. `Migrate Production DB` の成功を確かめてから、main への PR をマージする。失敗したらマージしない（`gh run rerun <run id> --failed` で再実行する）
+   - main への push で動く CI の `migrate` ジョブはそのまま動く。適用済みの分は飛ばされるので、二重に流れても何も起きない。2 つは同じ concurrency group（`migrate-production`）で 1 本ずつ動く
+   - develop → main の PR は merge commit でマージする（squash にすると develop と main の merge-base が古いまま残り、次のリリースで `Check request` が適用済みの migration を main にないものとして調べてしまう）
+   - ワークフローの ref・入力のチェックは誤操作を防ぐためのもので、守りの境界ではない（ブランチのワークフローのファイルを書き換えれば外せる）。守りは、リポジトリの書き込み権限（amasok だけ）と、Production 環境の Deployment branches
+   - 必要なリポジトリの設定: Production 環境の Deployment branches を `main` と `develop` に絞る（ほかのブランチの job は step の前に止まる。`main` だけにすると develop からの手動の migrate が動かない）。Required reviewers は付けない（ci.yml の main への push の migrate が毎回承認待ちで止まるため）。残る危険は「考慮事項」の「本番 DB の secret」
+6. CI の `migrate` ジョブの成功と、Vercel の本番デプロイの完了を確認する（DB の変更を含むリリースでは、5 の手動の migrate が先に成功していること）
 7. 本番で動作を確認し、家族に案内する（R1: 「圏外でも開けるようになりました」、R3: 「オフラインでも編集できるようになりました」）
 
 ### ロールバック
@@ -496,16 +565,16 @@ develop に PR をマージ
 | O3b | `feat: 削除を論理削除に変更しクライアントIDを受け入れ` | 既存の削除を論理削除に、取得クエリの `deleted_at IS NULL`、update / delete の WHERE にスコープ（#73-1）、通常の mutation でも `updated_at` / `field_modified_at` を更新、作成時のクライアント ID 受け入れ | O3 | ~400 |
 | O4 | `feat: sync.push を実データに反映する冪等 API に作り直し` | 操作ごとの認可、パッチの検証と上限、フィールド単位の LWW と削除優先、`opId` による冪等化、`serverTime`、`protocolVersion`（#69 の push 部分を解消） | O3b、#68、#69（merge 部分） | ~500 |
 | O5 | `feat: sync.pull をカーソル差分取得に作り直し` | カーソル（60 秒のさかのぼり、ステートメントタイムアウト）、tombstone、`tagIds` の埋め込み、メンバーシップ、ページング、`protocolVersion` | O3b（O4 とは独立だが、ルールに従い O4 のマージ後に着手） | ~350 |
-| O6 | `feat: クライアント同期エンジン（push/pull/キュー圧縮）を実装` | Dexie v9（`versionchange` / `blocked` の処理）、ユーザーごとの DB、`meta`、リポジトリ層の土台、SyncEngine の push/pull/バックオフ/ロック/drain モード、キューの圧縮（`inflight` を除外、`fieldTimes` の統合）、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、SyncProvider の組み込み（この PR では hook はまだ tRPC 直呼びのまま。同期エンジンは「キューが空なら pull するだけ」で動く） | O4, O5 | ~500 |
-| O7 | `refactor: カタログ（items/tags）をローカルファーストに移行` | `useItems` / `useTags` / ミューテーションをリポジトリ経由に（フラグが false なら従来の tRPC の分岐）。マージ後のゲスト DB 消去と初回の全件 pull | O6 | ~400 |
-| O8 | `refactor: 買い物（lists/listItems/history）をローカルファーストに移行` | `useLists` / `useListMutations` / `useHistory*` の移行（フラグで切り替え）、`finishShopping` / `revertHistory` の複合操作 | O7 | ~500 |
+| O6 | `feat: クライアント同期エンジン（push/pull/キュー圧縮）を実装` | 2 つの PR に分ける。**O6a**: Dexie v10（`versionchange` / `blocked` の処理）、ユーザーごとの DB、`meta`、時刻の補正、リポジトリ層の土台、キューの圧縮（`inflight` を除外、`fieldTimes` の統合）、使っていなかった旧 SyncEngine / SyncContext の削除。**O6b**: SyncEngine の push/pull/バックオフ/ロック/drain モード、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、SyncProvider の組み込み（O6b では hook はまだ tRPC 直呼びのまま。同期エンジンは「キューが空なら pull するだけ」で動く） | O4, O5 | ~500 |
+| O7 | `refactor: カタログ（items/tags）をローカルファーストに移行` | `useItems` / `useTags` / ミューテーションをリポジトリ経由に（フラグが false なら従来の tRPC の分岐）。初回の同期が終わるまでの読み込み中、`groups` のキャッシュ（「マージ後のゲスト DB 消去」は #144 で済み。初回の全件 pull は O6 の SyncEngine がカーソルなしで行う） | O6 | ~400 |
+| O8 | `refactor: 買い物（lists/listItems/history）をローカルファーストに移行` | `useLists` / `useListMutations` / `useHistory*` の移行（フラグで切り替え）、`finishShopping` / `revertHistory` の複合操作（`LocalShoppingRepository` が #179 の domain の関数で端末の DB を更新し、複合操作を 1 つ積む）。ゲストも同じリポジトリを通る | O7 | ~500 |
 | O9 | `feat: オフライン時のセッション保持と同期状態 UI を追加` | `lastKnownUser`、`status: "offline"`、セッション切れの処理、ログアウト時の消去と確認、OfflineBanner / SyncStatusBadge / FailedOperationsSheet / 手動更新、オンライン限定操作の無効化 | O8、#61 の A3（AuthContext の置き換え） | ~450 |
 | O10 | `docs: ADR-004/005 と同期実装状況を更新` | ADR の更新、`sync-implementation-status.md` の更新 | O9 | ~150 |
 | O11 | `refactor: サーバーファーストの分岐と移行用コードを削除` | hook の tRPC 分岐、`NEXT_PUBLIC_LOCAL_FIRST` フラグ、`public/sw.js`（自己解除用）の削除 | O10、R3 から 2 週間安定 | ~300（削除が中心） |
 
 - **セキュリティ Issue との順序**: #64 / #68 / #69 は既存の API の不具合で、本設計のサーバー側ステップ（O3 / O4）が同じサービス層に乗るため、**先に修正してマージする**。#65（依存更新）は O1 の前に行う
 - **本番リリースの単位**は上の「リリース手順」に従う（R1 = O1〜O2、R2a = O3、R2b = O3b〜O5、R3 = O6〜O9 を同時、R4 = O10〜O11）
-- **#61 との順序**: O1〜O8 は #61 と独立に進められる。O9 だけは #61 の A3 のマージ後に着手する。**#61 の切り替え（R1b）を先に本番へ出し、その後に O1 から始める**（決定事項 6）。認証の置き換えが先に済んでいれば、O9 で `AuthContext` を二度書き換えずに済む
+- **#61 との順序**: O1〜O8 は #61 と独立に進められる。O9 だけは #61 の A3 のマージ後に着手する。**#61 の切り替え（R1b）を先に本番へ出し、その後に O1 から始める**（決定事項 6。2026-11-17 の補足で、サーバー側の O3〜O5 は #61 より先に進める）。認証の置き換えが先に済んでいれば、O9 で `AuthContext` を二度書き換えずに済む
 - O1 は単独でも価値が大きい（ゲストのオフライン起動が直る）。O1 だけ先行してもよい
 
 ## テスト計画
@@ -578,7 +647,7 @@ develop に PR をマージ
 | #64 | finishShopping / revertHistory / deleteHistory が、名前だけで全ユーザーのアイテムを更新・削除する | **O4 より前に修正が必須**。push の複合操作（`finishShopping` / `revertHistory`）は同じサービス層を再利用するため。#64 で `list_items.source_item_id` を追加する場合は、O3 のマイグレーションと競合しないよう #64 を先にマージする |
 | #68 | itemId / tagId の所有権を検証していない。listItem の groupId がリスト側の値になっていない | **O4 より前に修正が必須**。push はこの検証を通るサービス層を使う。pull は `list_items.group_id` で絞り込むため、#68 の groupId 修正が pull の正しさの前提になる |
 | #73-1 | リポジトリの update / delete の WHERE が id だけ | O3（論理削除化）で、update / delete の WHERE に `user_id` / `group_id` のスコープ条件を入れる |
-| #72 | 配列件数・payload サイズの上限、ページングがない | push は 1 リクエスト 100 件まで、パッチは JSON で 8KB まで、pull は 1 回 500 行のページングにする（O4 / O5） |
+| #72 | 配列件数・payload サイズの上限、ページングがない | push は 1 リクエスト 100 件まで、パッチは JSON で 16KB まで（`REQUEST_LIMITS.recordBytes`）、pull は 1 回 500 行のページングにする（O4 / O5） |
 | #71 | セキュリティヘッダがない | 上記の `worker-src` と SW スクリプトの Cache-Control |
 | #65 | Next.js 16.1.5 の既知脆弱性 | O1 の前に #65 で Next.js を更新し、更新後のバージョンで `@serwist/turbopack` の動作を確認する |
 
@@ -591,6 +660,7 @@ develop に PR をマージ
 - **パフォーマンス**: 読み取りを Dexie に一本化することで、画面の表示はサーバーファーストより速くなる。pull はカーソルによる差分取得なので、通信量は小さい
 - **ADR の更新**: ADR-004 の「現在の実装状況：C: 現状維持」を「A: ローカルファースト移行」に、ADR-005 の `@serwist/next` を `@serwist/turbopack` に更新する（O10）
 - **本番で同期の不具合が出たとき**: (1) `NEXT_PUBLIC_LOCAL_FIRST=false` で前進デプロイし、サーバーファーストに戻す（未送信のキューは drain される）。(2) サーバーが不正な操作を受けている場合は、`MIN_CLIENT_RELEASE` を上げて古いクライアントを強制更新する。(3) SW が原因なら kill switch。(4) `sync_operations` の `rejected` / `conflict` の件数をログで確認し、原因を調べる
+- **本番 DB の secret（#164）**: 残る危険: `NEON_DATABASE_URL` はリポジトリの secret にもあり（ci.yml の #139 のガードが、develop 用の URL が本番を指していないかを比べるのに使う）、environment を使わない job からはどのブランチでも読める。書き込みできるのは amasok だけなので受け入れる（2026-11-17）。消すなら、#139 のガードを本番の URL のハッシュとの比較などに変えてから消す
 - **本番の既存データ**: O3 のマイグレーションは列の追加だけにし、既存のデータを保持する。R3 のリリース直後は、既存のログインユーザーのユーザー DB が空なので、初回の全件 pull が走る（「## 本番環境への影響とリリース手順」参照）
 
 ## 決定事項（2026-11-16 ユーザー承認）
@@ -602,4 +672,4 @@ develop に PR をマージ
 | 3 | リスト詳細の URL | `/lists/<id>` から **`/lists/detail?id=<id>`** に変更する。旧 URL はリダイレクトで残す |
 | 4 | グループ管理 | グループの作成・参加・メンバー管理・招待コードの再生成は**オンライン時のみ** |
 | 5 | 同期のタイミング | **イベント駆動のみ**（書き込み後・オンライン復帰時・前面に戻ったとき・手動更新）。定期的な自動取得はしない |
-| 6 | #61 との順序 | **#61 を先に進め**、その後で本 Issue に着手する（O1 の SW キャッシュだけは先行してもよい） |
+| 6 | #61 との順序 | **#61 を先に進め**、その後で本 Issue に着手する（O1 の SW キャッシュだけは先行してもよい）。**補足（2026-11-17 ユーザー決定）**: この順序を緩め、サーバー側の O3〜O5 を #61 より先に進める。develop まではマージし、本番へのリリース（R2a = O3、R2b = O3b〜O5）は、R1 の様子見が終わる 2026-11-24 以降にリーダーが判断する。O9 が #61 の A3 の後なのは変わらない |

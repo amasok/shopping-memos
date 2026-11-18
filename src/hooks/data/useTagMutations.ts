@@ -1,9 +1,9 @@
 "use client"
 
 import { useCallback } from "react"
-import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
-import { useDataSource } from "./useDataSource"
+import * as catalogRepository from "@/infrastructure/local/catalogRepository"
+import { requireStore, useCatalogSource } from "./useCatalogSource"
 
 type CreateTagInput = {
   name: string
@@ -12,12 +12,13 @@ type CreateTagInput = {
 type UpdateTagInput = Partial<CreateTagInput> & { id: string }
 
 /**
- * タグのCRUD操作フック
- * ログイン時: サーバーAPI経由
- * 未ログイン時: ローカルDB直接操作
+ * タグのCRUD操作フック（#62 O7）
+ * - ログイン中・フラグ false: サーバーAPI経由
+ * - ゲスト・ログイン中でフラグ true: 端末の DB のリポジトリ経由（フラグ true ならキューに積み、同期を予約する）
  */
 export function useTagMutations() {
-  const { useServer } = useDataSource()
+  const source = useCatalogSource()
+  const useServer = source.mode === "server"
   const utils = trpc.useUtils()
 
   // サーバー側ミューテーション
@@ -47,19 +48,12 @@ export function useTagMutations() {
         })
       }
 
-      // ローカル
-      const id = crypto.randomUUID()
-      const now = new Date()
-      await db.tags.add({
-        id,
-        name: input.name,
-        groupId: input.groupId,
-        createdAt: now,
-        updatedAt: now,
-      })
-      return { id }
+      // 端末の DB
+      const tag = await catalogRepository.createTag(requireStore(source), input)
+      source.afterWrite()
+      return { id: tag.id }
     },
-    [useServer, createMutation]
+    [useServer, createMutation, source]
   )
 
   // タグ更新
@@ -72,11 +66,14 @@ export function useTagMutations() {
         })
       }
 
-      // ローカル
-      await db.tags.update(input.id, input)
+      // 端末の DB
+      if (input.name !== undefined) {
+        await catalogRepository.updateTag(requireStore(source), { id: input.id, name: input.name })
+        source.afterWrite()
+      }
       return { id: input.id }
     },
-    [useServer, updateMutation]
+    [useServer, updateMutation, source]
   )
 
   // タグ削除
@@ -86,18 +83,12 @@ export function useTagMutations() {
         return deleteMutation.mutateAsync({ id })
       }
 
-      // ローカル
-      await db.tags.delete(id)
-      // アイテムからタグIDを削除
-      const items = await db.items.filter((item) => item.tagIds.includes(id)).toArray()
-      for (const item of items) {
-        await db.items.update(item.id, {
-          tagIds: item.tagIds.filter((tagId) => tagId !== id),
-        })
-      }
+      // 端末の DB（商品の tagIds からも外す）
+      await catalogRepository.deleteTag(requireStore(source), id)
+      source.afterWrite()
       return { success: true }
     },
-    [useServer, deleteMutation]
+    [useServer, deleteMutation, source]
   )
 
   return {

@@ -4,6 +4,10 @@ import {
   checkItemSchema,
   finishShoppingSchema,
   listStatusSchema,
+  addItemToListSchema,
+  addNewItemToListSchema,
+  deleteListSchema,
+  getListSchema,
 } from "../list"
 
 describe("createListSchema", () => {
@@ -132,5 +136,48 @@ describe("listStatusSchema", () => {
     const result = listStatusSchema.safeParse("cancelled")
 
     expect(result.success).toBe(false)
+  })
+})
+
+describe("作成時のクライアント ID（#62 O3b）", () => {
+  const id = "550e8400-e29b-41d4-a716-446655440009"
+  const listId = "550e8400-e29b-41d4-a716-446655440001"
+
+  it("createListSchema は uuid の id を受け付け、uuid でない id はバリデーションエラーにする", () => {
+    expect(createListSchema.parse({ name: "週末", id }).id).toBe(id)
+    expect(createListSchema.safeParse({ name: "週末", id: "x" }).success).toBe(false)
+  })
+
+  it("addItemToListSchema / addNewItemToListSchema はリストのアイテムの id を受け付ける", () => {
+    const itemId = "550e8400-e29b-41d4-a716-446655440002"
+    expect(addItemToListSchema.parse({ id, listId, itemId }).id).toBe(id)
+    expect(addNewItemToListSchema.parse({ id, listId, name: "卵" }).id).toBe(id)
+    expect(addNewItemToListSchema.safeParse({ id: "x", listId, name: "卵" }).success).toBe(false)
+  })
+})
+
+describe("deleteListSchema（179b: リストと同じ名前の未購入の商品も消す指定）", () => {
+  const id = "550e8400-e29b-41d4-a716-446655440000"
+
+  it("指定は省略できる（既定は消さない）", () => {
+    const result = deleteListSchema.safeParse({ id })
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.data.deleteCatalogItems).toBeUndefined()
+  })
+
+  it("真偽値の指定を受け入れる", () => {
+    expect(deleteListSchema.safeParse({ id, deleteCatalogItems: true }).success).toBe(true)
+    expect(deleteListSchema.safeParse({ id, deleteCatalogItems: false }).success).toBe(true)
+  })
+
+  it("真偽値でない指定はエラー", () => {
+    expect(deleteListSchema.safeParse({ id, deleteCatalogItems: "yes" }).success).toBe(false)
+  })
+})
+
+describe("getListSchema", () => {
+  it("id だけを受け入れ、UUID でなければエラー", () => {
+    expect(getListSchema.safeParse({ id: "550e8400-e29b-41d4-a716-446655440000" }).success).toBe(true)
+    expect(getListSchema.safeParse({ id: "x" }).success).toBe(false)
   })
 })

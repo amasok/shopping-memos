@@ -1,3 +1,4 @@
+import type { DbExecutor } from "@/infrastructure/db/ownership"
 import type {
   Tag,
   CreateTagInput,
@@ -28,12 +29,12 @@ export interface TagRepository {
   /**
    * タグを更新
    */
-  update(input: UpdateTagInput): Promise<Tag>
+  update(input: UpdateTagInput, actorUserId: string): Promise<Tag>
 
   /**
    * タグを削除
    */
-  delete(id: string): Promise<void>
+  delete(id: string, actorUserId: string, executor?: DbExecutor): Promise<void>
 
   /**
    * ユーザーがタグにアクセスできるか確認

@@ -1,10 +1,12 @@
-import { inArray } from "drizzle-orm"
+import { and, inArray } from "drizzle-orm"
+import { notDeleted } from "@/infrastructure/db/syncColumns"
 import { db } from "@/infrastructure/db/drizzle/client"
 import { tags } from "@/infrastructure/db/drizzle/schema"
-import { isSameScope, type DbExecutor, type OwnerScope } from "@/infrastructure/db/ownership"
+import type { DbExecutor } from "@/infrastructure/db/ownership"
+import { isSameScope, type OwnerScope } from "@/shared/domain/ownerScope"
 
-// 所有スコープの型と判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101）。
-// ここからは再エクスポートしない（#151）
+// 所有スコープの型と純粋な判定（OwnerScope・isSameScope）は src/shared/domain/ownerScope.ts、
+// DB を使う判定は src/infrastructure/db/ownership.ts に 1 つだけ置く（#101・#179）。ここからは再エクスポートしない（#151）
 
 /**
  * 指定したタグがすべて存在し、かつ scope と同じ所有スコープに属するか判定する
@@ -24,7 +26,7 @@ export async function areTagsInScope(
   const found = await executor
     .select({ id: tags.id, userId: tags.userId, groupId: tags.groupId })
     .from(tags)
-    .where(inArray(tags.id, targetIds))
+    .where(and(inArray(tags.id, targetIds), notDeleted(tags)))
 
   if (found.length !== targetIds.length) {
     return false

@@ -1,4 +1,5 @@
-import type { TRPCError } from "@trpc/server"
+import { TRPCError } from "@trpc/server"
+import { DuplicateIdError, RowNotFoundError } from "@/infrastructure/db/errors"
 
 /**
  * 本番で、予期しないエラー（INTERNAL_SERVER_ERROR）のメッセージに代えて返す文言（#135）
@@ -31,4 +32,20 @@ export function formatErrorShape<S extends Shape>(
     message: error.code === "INTERNAL_SERVER_ERROR" ? INTERNAL_ERROR_MESSAGE : shape.message,
     data,
   }
+}
+
+/**
+ * リポジトリが投げたエラー（#62 O3b）を、利用者に見せる tRPC のエラーに変える。対象外なら null
+ * - RowNotFoundError（更新・削除の対象がない・削除済み・スコープ外）→ NOT_FOUND
+ * - DuplicateIdError（クライアントで採番した ID が使用済み）→ CONFLICT
+ */
+export function toClientError(error: TRPCError): TRPCError | null {
+  const cause = error.cause
+  if (cause instanceof RowNotFoundError) {
+    return new TRPCError({ code: "NOT_FOUND", message: cause.message, cause })
+  }
+  if (cause instanceof DuplicateIdError) {
+    return new TRPCError({ code: "CONFLICT", message: cause.message, cause })
+  }
+  return null
 }

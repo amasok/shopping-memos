@@ -45,62 +45,141 @@ export const syncQueueItemSchema = z.object({
 export type SyncQueueItem = z.infer<typeof syncQueueItemSchema>
 
 /**
- * 同期プッシュリクエスト
+ * 同期のプロトコルのバージョン（#62 O4）。
+ * サーバーは現在と 1 つ前のバージョンを、少なくとも 30 日間受け付ける（docs/features/offline-support.md）
+ */
+export const SYNC_PROTOCOL_VERSION = 1
+export const SUPPORTED_SYNC_PROTOCOL_VERSIONS: readonly number[] = [1]
+/** 対応外の protocolVersion のときの、エラーのメッセージ（クライアントはこれで強制更新に進む） */
+export const CLIENT_TOO_OLD = "CLIENT_TOO_OLD"
+
+/** sync.push で送れるエンティティ（履歴はリストとして送る） */
+export const syncPushEntitySchema = z.enum(["item", "tag", "list", "listItem"])
+
+export type SyncPushEntity = z.infer<typeof syncPushEntitySchema>
+
+/**
+ * sync.push の操作の種類。finishShopping（買い物の完了）と revertHistory（履歴の取り消し）は、
+ * リスト（entity: "list"）に対する複合操作（#62 O4b）
+ */
+export const syncPushOperationTypeSchema = z.enum(["create", "update", "delete", "finishShopping", "revertHistory"])
+
+export type SyncPushOperationType = z.infer<typeof syncPushOperationTypeSchema>
+
+/** 操作の時刻（クライアントの時刻をサーバー時刻で補正したもの。ISO 8601） */
+const operationTimeSchema = z.string().datetime({ offset: true })
+
+/**
+ * sync.push の 1 件の操作（#62 O4）。
+ * patch の中身はエンティティと種類ごとにサーバーで検証し、不正ならその操作だけ rejected にする
+ * （1 件の不正で、ほかの操作を止めない）。patch の大きさだけは入力の検証で拒否する（クライアントはキューに積むときに同じ上限で検証する）
+ */
+export const syncPushOperationSchema = z.object({
+  /** クライアントで採番した操作の ID（冪等キー） */
+  opId: z.string().uuid(),
+  entity: syncPushEntitySchema,
+  /** クライアントで採番したエンティティの ID */
+  entityId: z.string().uuid(),
+  type: syncPushOperationTypeSchema,
+  /** 変更したフィールドだけ（作成では全フィールド）。JSON で REQUEST_LIMITS.recordBytes まで（#72） */
+  patch: boundedRecordSchema.optional(),
+  /** patch の各フィールドの操作時刻。ないフィールドは clientTime を使う。キーは REQUEST_LIMITS.pushFieldTimes 個まで */
+  fieldTimes: z
+    .record(z.string().max(64), operationTimeSchema)
+    .refine((times) => Object.keys(times).length <= REQUEST_LIMITS.pushFieldTimes, {
+      message: `fieldTimes は ${REQUEST_LIMITS.pushFieldTimes} 件までです`,
+    })
+    .optional(),
+  /** 操作全体の時刻 */
+  clientTime: operationTimeSchema,
+})
+
+export type SyncPushOperation = z.infer<typeof syncPushOperationSchema>
+
+/**
+ * 同期プッシュリクエスト（#62 O4）
  */
 export const syncPushInputSchema = z.object({
-  operations: z
-    .array(
-      z.object({
-        id: z.string().uuid(),
-        entity: syncEntitySchema,
-        entityId: z.string().uuid(),
-        operation: syncOperationTypeSchema,
-        payload: boundedRecordSchema,
-        createdAt: z.coerce.date(),
-      }),
-    )
-    .max(REQUEST_LIMITS.pushOperations),
+  protocolVersion: z.number().int(),
+  operations: z.array(syncPushOperationSchema).max(REQUEST_LIMITS.pushOperations),
 })
 
 export type SyncPushInput = z.infer<typeof syncPushInputSchema>
 
 /**
- * 同期競合情報
+ * 操作の結果
+ * - applied: すべて適用した
+ * - partial: 一部のフィールドが新しい値に負けて捨てられた（serverRow に最新の行）
+ * - duplicate: 同じ opId の操作を処理済み
+ * - conflict: 削除済みの行への操作（serverRow に tombstone）
+ * - rejected: 適用できない（行がない・使えない・パッチが不正など。serverRow は返さない）
  */
-export const syncConflictSchema = z.object({
-  operationId: z.string().uuid(),
-  entity: syncEntitySchema,
-  entityId: z.string().uuid(),
-  serverData: z.record(z.string(), z.unknown()),
-  serverUpdatedAt: z.coerce.date(),
+export const syncPushStatusSchema = z.enum(["applied", "partial", "duplicate", "conflict", "rejected"])
+
+export type SyncPushStatus = z.infer<typeof syncPushStatusSchema>
+
+export const syncPushResultSchema = z.object({
+  opId: z.string().uuid(),
+  status: syncPushStatusSchema,
+  reason: z.string().optional(),
+  /** 呼び出し元が使える行だけ（#69） */
+  serverRow: z.record(z.string(), z.unknown()).optional(),
 })
 
-export type SyncConflict = z.infer<typeof syncConflictSchema>
+export type SyncPushResult = z.infer<typeof syncPushResultSchema>
 
 /**
  * 同期プッシュレスポンス
  */
 export const syncPushOutputSchema = z.object({
-  processedIds: z.array(z.string().uuid()),
-  conflicts: z.array(syncConflictSchema),
+  /** サーバーの時刻（クライアントは時計のずれの補正に使う） */
+  serverTime: z.string(),
+  results: z.array(syncPushResultSchema),
 })
 
 export type SyncPushOutput = z.infer<typeof syncPushOutputSchema>
 
 /**
- * 同期プルリクエスト
+ * 同期プルリクエスト（#62 O5）
+ * cursor は前回の nextCursor（不透明な文字列）。省略すると最初から全件
  */
 export const syncPullInputSchema = z.object({
-  since: z.coerce.date().optional(),
-  groupIds: z.array(z.string().uuid()).max(REQUEST_LIMITS.groupIds).optional(),
+  cursor: z.string().max(REQUEST_LIMITS.pullCursor).optional(),
+  protocolVersion: z.number().int(),
 })
 
 export type SyncPullInput = z.infer<typeof syncPullInputSchema>
 
+/** sync.pull で返すエンティティ */
+export type SyncPullEntity = "tags" | "items" | "lists" | "listItems"
+
+const pulledRowsSchema = z.array(z.record(z.string(), z.unknown()))
+
 /**
- * 同期プルレスポンス（エンティティごとの変更）
+ * 同期プルレスポンス（#62 O5）
+ * - changes: 前回からの変更（tombstone を含む。アイテムは tagIds つき）
+ * - memberships: 所属グループの現在の一覧（前回と変わったら、クライアントはカーソルなしで取り直す）
+ * - hasMore が true の間、nextCursor で続きを取る。false になったら nextCursor を保存し、次の pull で使う
  */
 export const syncPullOutputSchema = z.object({
+  serverTime: z.string(),
+  changes: z.object({
+    tags: pulledRowsSchema,
+    items: pulledRowsSchema,
+    lists: pulledRowsSchema,
+    listItems: pulledRowsSchema,
+  }),
+  memberships: z.object({ groupIds: z.array(z.string()) }),
+  nextCursor: z.string(),
+  hasMore: z.boolean(),
+})
+
+export type SyncPullOutput = z.infer<typeof syncPullOutputSchema>
+
+/**
+ * サーバーのデータ（sync.merge のレスポンスで返す、エンティティごとの全件）
+ */
+export const syncServerDataSchema = z.object({
   items: z.array(z.record(z.string(), z.unknown())),
   tags: z.array(z.record(z.string(), z.unknown())),
   lists: z.array(z.record(z.string(), z.unknown())),
@@ -109,7 +188,7 @@ export const syncPullOutputSchema = z.object({
   syncedAt: z.coerce.date(),
 })
 
-export type SyncPullOutput = z.infer<typeof syncPullOutputSchema>
+export type SyncServerData = z.infer<typeof syncServerDataSchema>
 
 /**
  * 初回ログイン時のマージリクエスト
@@ -283,7 +362,7 @@ export type IdMapping = z.infer<typeof idMappingSchema>
  */
 export const syncMergeOutputSchema = z.object({
   idMappings: z.array(idMappingSchema),
-  serverData: syncPullOutputSchema,
+  serverData: syncServerDataSchema,
 })
 
 export type SyncMergeOutput = z.infer<typeof syncMergeOutputSchema>

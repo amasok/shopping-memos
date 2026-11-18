@@ -165,3 +165,15 @@ describe("getItemsQuerySchema", () => {
     }
   })
 })
+
+describe("createItemSchema のクライアント ID（#62 O3b）", () => {
+  it("uuid の id を受け付け、省略もできる", () => {
+    const id = "550e8400-e29b-41d4-a716-446655440009"
+    expect(createItemSchema.parse({ name: "牛乳", id }).id).toBe(id)
+    expect(createItemSchema.parse({ name: "牛乳" }).id).toBeUndefined()
+  })
+
+  it("uuid でない id はバリデーションエラーにする", () => {
+    expect(createItemSchema.safeParse({ name: "牛乳", id: "not-a-uuid" }).success).toBe(false)
+  })
+})

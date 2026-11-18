@@ -37,8 +37,10 @@ export const REQUEST_LIMITS = {
   itemIds: 500,
   /** sync.push の 1 リクエストあたりの操作数 */
   pushOperations: 100,
-  /** sync.pull で指定するグループの数 */
-  groupIds: 50,
+  /** sync.push の 1 操作の fieldTimes のキーの数（どのエンティティもフィールドは 10 個未満） */
+  pushFieldTimes: 20,
+  /** sync.pull のカーソルの長さ（エンティティごとの位置を入れた base64url。#62 O5） */
+  pullCursor: 2000,
   /**
    * sync.push のパッチの JSON の大きさ（バイト）。
    * 最大級のレコード（日本語のメモ 2000 文字・名前 100 文字・タグ 50 件）で約 8.4KB なので、余裕を見て 16KB。

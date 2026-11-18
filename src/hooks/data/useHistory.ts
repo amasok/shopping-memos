@@ -1,16 +1,11 @@
 "use client"
 
 import { useLiveQuery } from "dexie-react-hooks"
-import { db, type ShoppingList, type ListItem } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
-import { useDataSource } from "./useDataSource"
+import { useCatalogSource } from "./useCatalogSource"
+import { queryHistory, type PurchaseHistoryWithItems } from "./shoppingQueries"
 
-/**
- * 購入履歴（purchasedAtが入っているリスト）にlistItemsを付与した型
- */
-export interface PurchaseHistoryWithItems extends ShoppingList {
-  listItems: ListItem[]
-}
+export type { PurchaseHistoryWithItems } from "./shoppingQueries"
 
 interface UseHistoryOptions {
   groupId?: string
@@ -19,63 +14,28 @@ interface UseHistoryOptions {
 }
 
 /**
- * 購入履歴一覧を取得するフック
- * グループ選択時: サーバーから取得
- * 個人モード: ローカルDBから取得
+ * 購入履歴一覧を取得するフック（#62 O8）
+ * - ゲスト: ゲスト DB から
+ * - ログイン中・フラグ false: サーバー（tRPC）から
+ * - ログイン中・フラグ true: ユーザー DB から（初回の同期が終わるまでは読み込み中）
  *
- * 購入履歴 = purchasedAtが入っているリスト
+ * 購入履歴 = purchasedAtが入っているリスト（購入日時の新しい順）
  */
 export function useHistory(options: UseHistoryOptions = {}) {
   const { groupId, limit, offset } = options
-  const { useServer, isAuthLoading, selectedGroupId } = useDataSource()
+  const { mode, store, awaitingFirstSync, isAuthLoading, selectedGroupId } = useCatalogSource()
+  const useServer = mode === "server"
 
   // 実際に使用するgroupId
   const effectiveGroupId = "groupId" in options ? groupId : selectedGroupId
 
-  // ローカル（Dexie）クエリ - purchasedAtが入っているリストを取得
+  // 端末の DB（ゲスト DB・ユーザー DB）のクエリ
   const localHistory = useLiveQuery(
     async () => {
-      if (useServer) return undefined
-
-      // purchasedAtが入っているリストを取得
-      const lists = await db.lists
-        .filter((list) => list.groupId === effectiveGroupId && !!list.purchasedAt)
-        .toArray()
-
-      // purchasedAtで降順ソート
-      const sorted = lists.sort((a, b) => {
-        const dateA = a.purchasedAt?.getTime() ?? 0
-        const dateB = b.purchasedAt?.getTime() ?? 0
-        return dateB - dateA
-      })
-
-      // ページネーション
-      let result = sorted
-      if (offset) {
-        result = result.slice(offset)
-      }
-      if (limit) {
-        result = result.slice(0, limit)
-      }
-
-      // 各履歴にlistItemsを付与
-      const historyWithItems: PurchaseHistoryWithItems[] = await Promise.all(
-        result.map(async (list) => {
-          const listItems = await db.listItems
-            .where("listId")
-            .equals(list.id)
-            .toArray()
-
-          return {
-            ...list,
-            listItems,
-          }
-        })
-      )
-
-      return historyWithItems
+      if (!store) return undefined
+      return queryHistory(store.db, { groupId: effectiveGroupId, limit, offset })
     },
-    [useServer, effectiveGroupId, limit, offset]
+    [store, effectiveGroupId, limit, offset]
   )
 
   // サーバー（tRPC）クエリ
@@ -124,7 +84,7 @@ export function useHistory(options: UseHistoryOptions = {}) {
 
   return {
     history: localHistory ?? [],
-    isLoading: localHistory === undefined || isAuthLoading,
+    isLoading: localHistory === undefined || awaitingFirstSync || isAuthLoading,
     error: null,
     refetch: async () => {},
   }

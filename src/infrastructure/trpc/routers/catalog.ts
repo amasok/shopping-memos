@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server"
+import { notDeleted } from "@/infrastructure/db/syncColumns"
 import { eq, and, isNull } from "drizzle-orm"
 import { router, protectedProcedure } from "../server"
 import {
@@ -17,6 +18,7 @@ import { itemRepository } from "@/modules/catalog/infrastructure/repositories/Dr
 import { tagRepository } from "@/modules/catalog/infrastructure/repositories/DrizzleTagRepository"
 import { CatalogSyncService } from "@/modules/catalog/application/services/CatalogSyncService"
 import { areTagsInScope } from "@/modules/catalog/application/services/ownership"
+import { excludeItemsInActiveLists } from "@/modules/shopping/domain/services/activeListExclusion"
 import { verifyGroupMembership } from "../middleware/groupAuth"
 
 // 同期サービスインスタンス
@@ -59,7 +61,11 @@ export const catalogRouter = router({
 
       // 進行中のリストに含まれるアイテム名を取得（除外用）
       // グループ指定時はグループのリスト、個人時はユーザーのリスト
-      const listConditions = [eq(shoppingLists.status, "in_progress")]
+      const listConditions = [
+        eq(shoppingLists.status, "in_progress"),
+        notDeleted(shoppingLists),
+        notDeleted(listItems),
+      ]
       if (input.groupId) {
         listConditions.push(eq(shoppingLists.groupId, input.groupId))
       } else {
@@ -73,10 +79,11 @@ export const catalogRouter = router({
         .innerJoin(shoppingLists, eq(listItems.listId, shoppingLists.id))
         .where(and(...listConditions))
 
-      const namesInActiveLists = new Set(activeListItems.map((item) => item.name))
-
-      // 進行中リストに含まれるアイテムを除外
-      return items.filter((item) => !namesInActiveLists.has(item.name))
+      // 進行中リストに含まれるアイテムを除外（規則は shopping の domain。#179）
+      return excludeItemsInActiveLists(
+        items,
+        activeListItems.map((item) => item.name)
+      )
     }),
 
   /** アイテムを取得 */
@@ -123,7 +130,7 @@ export const catalogRouter = router({
 
       return catalogSyncService.createItem(
         {
-          id: crypto.randomUUID(),
+          id: input.id ?? crypto.randomUUID(),
           name: input.name,
           quantity: input.quantity,
           memo: input.memo,
@@ -269,7 +276,7 @@ export const catalogRouter = router({
 
       return catalogSyncService.createTag(
         {
-          id: crypto.randomUUID(),
+          id: input.id ?? crypto.randomUUID(),
           name: input.name,
           userId: ctx.userId,
           groupId: input.groupId,

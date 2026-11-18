@@ -63,7 +63,7 @@ describe("CatalogSyncService: 書き込みは同期ログを 1 件残す", () =>
     )
   })
 
-  it("作成・更新の入力は加工せずリポジトリに渡す", async () => {
+  it("作成・更新の入力は加工せずリポジトリに渡し、更新には操作したユーザーを渡す", async () => {
     const { service, itemRepo, tagRepo } = setup()
     const itemIn = { id: "i", name: "x" }
     const tagIn = { id: "t", name: "y" }
@@ -72,15 +72,15 @@ describe("CatalogSyncService: 書き込みは同期ログを 1 件残す", () =>
     await service.createTag(tagIn as never, "u1")
     await service.updateTag(tagIn as never, "u1")
     expect(itemRepo.create).toHaveBeenCalledWith(itemIn)
-    expect(itemRepo.update).toHaveBeenCalledWith(itemIn)
+    expect(itemRepo.update).toHaveBeenCalledWith(itemIn, "u1")
     expect(tagRepo.create).toHaveBeenCalledWith(tagIn)
-    expect(tagRepo.update).toHaveBeenCalledWith(tagIn)
+    expect(tagRepo.update).toHaveBeenCalledWith(tagIn, "u1")
   })
 
   it("deleteItem は削除してから id だけのペイロードで delete を記録する", async () => {
     const { service, itemRepo } = setup()
     await service.deleteItem("item-1", "u1")
-    expect(itemRepo.delete).toHaveBeenCalledWith("item-1")
+    expect(itemRepo.delete).toHaveBeenCalledWith("item-1", "u1")
     expect(itemRepo.delete.mock.invocationCallOrder[0]).toBeLessThan(createOperation.mock.invocationCallOrder[0])
     expect(createOperation).toHaveBeenCalledWith(
       expect.objectContaining({ entity: "item", entityId: "item-1", operation: "delete", payload: { id: "item-1" } })
@@ -90,7 +90,7 @@ describe("CatalogSyncService: 書き込みは同期ログを 1 件残す", () =>
   it("deleteTag は削除してから id だけのペイロードで delete を記録する", async () => {
     const { service, tagRepo } = setup()
     await service.deleteTag("tag-1", "u1")
-    expect(tagRepo.delete).toHaveBeenCalledWith("tag-1")
+    expect(tagRepo.delete).toHaveBeenCalledWith("tag-1", "u1")
     expect(tagRepo.delete.mock.invocationCallOrder[0]).toBeLessThan(createOperation.mock.invocationCallOrder[0])
     expect(createOperation).toHaveBeenCalledWith(
       expect.objectContaining({ entity: "tag", entityId: "tag-1", operation: "delete", payload: { id: "tag-1" } })

@@ -1,9 +1,9 @@
 "use client"
 
 import { useLiveQuery } from "dexie-react-hooks"
-import { db } from "@/lib/db"
 import { trpc } from "@/infrastructure/trpc/client"
-import { useDataSource } from "./useDataSource"
+import { useCatalogSource } from "./useCatalogSource"
+import { queryListItems, queryLists } from "./shoppingQueries"
 
 interface UseListsOptions {
   groupId?: string
@@ -20,7 +20,8 @@ interface UseListsOptions {
  */
 export function useLists(options: UseListsOptions = {}) {
   const { groupId, status, includeCompleted = false, includeAllGroups = false } = options
-  const { useServer, isAuthLoading, selectedGroupId } = useDataSource()
+  const { mode, store, awaitingFirstSync, isAuthLoading, selectedGroupId } = useCatalogSource()
+  const useServer = mode === "server"
 
   // 実際に使用するgroupId
   // 明示的にgroupIdが渡された場合（undefinedでも）はそれを使用
@@ -30,21 +31,10 @@ export function useLists(options: UseListsOptions = {}) {
   // ローカル（Dexie）クエリ
   const localLists = useLiveQuery(
     async () => {
-      if (useServer) return undefined
-
-      const filtered = await db.lists.filter((list) => {
-        // グループフィルタ（includeAllGroups時はスキップ）
-        if (!includeAllGroups && list.groupId !== effectiveGroupId) return false
-        // ステータスフィルタ
-        if (status && list.status !== status) return false
-        // 完了済み除外
-        if (!includeCompleted && list.status === "completed") return false
-        return true
-      }).toArray()
-
-      return filtered
+      if (!store) return undefined
+      return queryLists(store.db, { groupId: effectiveGroupId, status, includeCompleted, includeAllGroups })
     },
-    [useServer, effectiveGroupId, status, includeCompleted, includeAllGroups]
+    [store, effectiveGroupId, status, includeCompleted, includeAllGroups]
   )
 
   // サーバー（tRPC）クエリ
@@ -72,7 +62,7 @@ export function useLists(options: UseListsOptions = {}) {
 
   return {
     lists: localLists ?? [],
-    isLoading: localLists === undefined || isAuthLoading,
+    isLoading: localLists === undefined || awaitingFirstSync || isAuthLoading,
     error: null,
     refetch: async () => {},
   }
@@ -90,7 +80,8 @@ interface UseListsWithItemsOptions {
  */
 export function useListsWithItems(options: UseListsWithItemsOptions = {}) {
   const { status, includeCompleted = false } = options
-  const { useServer, isAuthLoading, selectedGroupId } = useDataSource()
+  const { mode, store, awaitingFirstSync, isAuthLoading, selectedGroupId } = useCatalogSource()
+  const useServer = mode === "server"
 
   // 実際に使用するgroupId
   const effectiveGroupId = "groupId" in options ? options.groupId : selectedGroupId
@@ -98,32 +89,19 @@ export function useListsWithItems(options: UseListsWithItemsOptions = {}) {
   // ローカル（Dexie）クエリ - リスト
   const localLists = useLiveQuery(
     async () => {
-      if (useServer) return undefined
-
-      const filtered = await db.lists.filter((list) => {
-        if (list.groupId !== effectiveGroupId) return false
-        if (status && list.status !== status) return false
-        if (!includeCompleted && list.status === "completed") return false
-        return true
-      }).toArray()
-
-      return filtered
+      if (!store) return undefined
+      return queryLists(store.db, { groupId: effectiveGroupId, status, includeCompleted })
     },
-    [useServer, effectiveGroupId, status, includeCompleted]
+    [store, effectiveGroupId, status, includeCompleted]
   )
 
   // ローカル（Dexie）クエリ - リストアイテム（該当グループのリストに紐づくもの）
   const localListItems = useLiveQuery(
     async () => {
-      if (useServer) return undefined
-      if (!localLists) return undefined
-
-      const listIds = localLists.map((list) => list.id)
-      if (listIds.length === 0) return []
-
-      return db.listItems.filter((item) => listIds.includes(item.listId)).toArray()
+      if (!store || !localLists) return undefined
+      return queryListItems(store.db, localLists.map((list) => list.id))
     },
-    [useServer, localLists]
+    [store, localLists]
   )
 
   // サーバー（tRPC）クエリ
@@ -154,7 +132,7 @@ export function useListsWithItems(options: UseListsWithItemsOptions = {}) {
   return {
     lists: localLists ?? [],
     listItems: localListItems ?? [],
-    isLoading: localLists === undefined || localListItems === undefined || isAuthLoading,
+    isLoading: localLists === undefined || localListItems === undefined || awaitingFirstSync || isAuthLoading,
     error: null,
     refetch: async () => {},
   }
@@ -169,23 +147,24 @@ interface UseListOptions {
  */
 export function useList(options: UseListOptions) {
   const { listId } = options
-  const { useServer, isAuthLoading } = useDataSource()
+  const { mode, store, awaitingFirstSync, isAuthLoading } = useCatalogSource()
+  const useServer = mode === "server"
 
   // ローカル（Dexie）クエリ
   const localList = useLiveQuery(
     async () => {
-      if (useServer) return undefined
-      return db.lists.get(listId)
+      if (!store) return undefined
+      return store.db.lists.get(listId)
     },
-    [useServer, listId]
+    [store, listId]
   )
 
   const localListItems = useLiveQuery(
     async () => {
-      if (useServer) return undefined
-      return db.listItems.where("listId").equals(listId).toArray()
+      if (!store) return undefined
+      return queryListItems(store.db, [listId])
     },
-    [useServer, listId]
+    [store, listId]
   )
 
   // サーバー（tRPC）クエリ
@@ -209,7 +188,7 @@ export function useList(options: UseListOptions) {
   return {
     list: localList ?? null,
     items: localListItems ?? [],
-    isLoading: localList === undefined || localListItems === undefined || isAuthLoading,
+    isLoading: localList === undefined || localListItems === undefined || awaitingFirstSync || isAuthLoading,
     error: null,
     refetch: async () => {},
   }

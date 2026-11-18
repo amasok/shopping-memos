@@ -4,7 +4,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { db } from "../index"
 import {
   DEFAULT_TAG_NAMES,
-  createTag,
   deleteTag,
   getTagById,
   getTags,
@@ -15,6 +14,16 @@ import {
 } from "../tags"
 
 const NOW = new Date("2026-03-01T09:00:00Z")
+
+let seq = 0
+/** テスト用にゲスト DB へタグを足す（画面からの作成は hooks を通す。lib/db の createTag は #62 o7b で消した） */
+async function createTag(name: string, groupId?: string) {
+  seq += 1
+  const now = new Date()
+  const tag = { id: `tag-${seq}`, name, groupId, createdAt: now, updatedAt: now }
+  await db.tags.add(tag)
+  return tag
+}
 
 afterEach(() => {
   vi.useRealTimers()

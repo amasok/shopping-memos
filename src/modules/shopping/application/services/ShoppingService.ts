@@ -1,13 +1,12 @@
 import { db } from "@/infrastructure/db/drizzle/client"
-import { shoppingLists, listItems } from "@/infrastructure/db/drizzle/schema"
-import { inArray } from "drizzle-orm"
-import { eq } from "drizzle-orm"
+import { RowNotFoundError } from "@/infrastructure/db/errors"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
-import type { ShoppingListWithItems } from "../../domain/entities/ShoppingList"
-import { ListStatus, isInProgress, canTransition } from "../../domain/value-objects/ListStatus"
-import { getListScope, markScopedItemsPurchasedByName } from "./catalogItemScope"
-
+import type { ShoppingList, ShoppingListWithItems } from "../../domain/entities/ShoppingList"
+import { ListStatus } from "../../domain/value-objects/ListStatus"
+import { planFinishShopping } from "../../domain/services/finishShopping"
+import { planRevertHistory } from "../../domain/services/revertHistory"
+import { applyFinishPlan, applyRevertPlan, lockAccessibleList, readListEntries } from "./shoppingCompletion"
 
 /**
  * 買い物の業務ルールの違反（利用者に見せてよいメッセージ）。
@@ -25,9 +24,14 @@ export interface FinishShoppingResult {
   purchasedItemIds: string[]
 }
 
+export interface RevertHistoryResult {
+  list: ShoppingList
+  revertedItemIds: string[]
+}
+
 /**
  * 買い物ドメインサービス
- * 買い物完了フローを管理
+ * 買い物の完了・履歴の取り消し（規則は domain の planFinishShopping / planRevertHistory。#179）
  */
 export class ShoppingService {
   constructor(
@@ -35,80 +39,40 @@ export class ShoppingService {
   ) {}
 
   /**
-   * 買い物を完了する
+   * 買い物を完了する（specs/shopping「チェック済みの商品がある買い物の完了」「チェック 0 件の完了」）
    *
-   * ビジネスルール:
-   * - チェック済みアイテムのみ購入済みとして記録
-   * - チェック済みアイテムはCatalog.ItemのpurchasedAtを設定
-   * - 未チェックアイテムは自動的に「買いたいもの」に戻る（カタログアイテムは保持されている）
-   * - リストのpurchasedAtを設定（購入履歴として表示）
+   * 1 つのトランザクションで、リストの行をロックしてからリストの商品を読み、チェック 0 件なら断る（179b）。
+   * チェック済みの商品と同じ名前・同じスコープの未購入のカタログの商品を購入済みに、未チェックの商品を論理削除し、
+   * リストを完了にする。リストは操作したユーザーが使える、削除されていないものに限る（#73-1）
    */
   async finishShopping(
     listId: string,
     userId: string,
     location?: string
   ): Promise<FinishShoppingResult> {
-    // リストを取得
-    const list = await this.shoppingListRepository.findById(listId)
-    if (!list) {
-      throw new ShoppingDomainError("リストが見つかりません")
-    }
+    const now = new Date()
 
-    // ステータス確認
-    if (!isInProgress(list.status)) {
-      throw new ShoppingDomainError("このリストは既に完了しています")
-    }
-
-    if (!canTransition(list.status, ListStatus.COMPLETED)) {
-      throw new ShoppingDomainError("このステータスから完了に遷移できません")
-    }
-
-    // チェック済み・未チェックアイテムを抽出
-    const checkedItems = list.items.filter((item) => item.checked)
-    const uncheckedItems = list.items.filter((item) => !item.checked)
-    const checkedItemIds = checkedItems.map((item) => item.id)
-    const uncheckedItemIds = uncheckedItems.map((item) => item.id)
-
-    // トランザクションで一括処理
     const result = await db.transaction(async (tx) => {
-      const now = new Date()
-
-      // 1. リストを購入完了に更新（purchasedAtを設定）
-      await tx
-        .update(shoppingLists)
-        .set({
-          status: ListStatus.COMPLETED,
-          completedAt: now,
-          purchasedAt: now,
-          location: location ?? null,
-        })
-        .where(eq(shoppingLists.id, listId))
-
-      // 2. チェック済みアイテムに対応するCatalog.ItemのpurchasedAtを設定
-      // リストと同じスコープ（グループ or 作成者の個人データ）のアイテムに限定する
-      const purchasedCatalogItemIds: string[] = []
-
-      if (checkedItems.length > 0) {
-        const scope = await getListScope(tx, listId)
-        if (scope) {
-          for (const checkedItem of checkedItems) {
-            const ids = await markScopedItemsPurchasedByName(tx, scope, checkedItem.name, now)
-            purchasedCatalogItemIds.push(...ids)
-          }
-        }
+      const list = await lockAccessibleList(tx, listId, userId)
+      if (!list) {
+        throw new ShoppingDomainError("リストが見つかりません")
       }
 
-      // 3. 未チェックアイテムをlist_itemsから削除（履歴には購入済みのみ残す）
-      // カタログアイテムはリスト追加時に保持されているため、自動的に「買いたいもの」に戻る
-      if (uncheckedItemIds.length > 0) {
-        await tx
-          .delete(listItems)
-          .where(inArray(listItems.id, uncheckedItemIds))
+      const entries = await readListEntries(tx, listId)
+      const plan = planFinishShopping({ status: list.status, entries, at: now, location })
+      if (!plan.ok) {
+        throw new ShoppingDomainError(
+          plan.reason === "no_checked_items" ? "カゴに入れた商品がありません" : "このリストは既に完了しています"
+        )
       }
 
+      const applied = await applyFinishPlan(tx, list, plan, { actorUserId: userId })
+      if (!applied.listUpdated) {
+        throw new ShoppingDomainError("リストが見つかりません")
+      }
       return {
-        purchasedCatalogItemIds,
-        deletedListItemIds: uncheckedItemIds,
+        purchasedCatalogItemIds: applied.purchasedItemIds,
+        checkedEntryIds: entries.filter((e) => e.checked).map((e) => e.id),
       }
     })
 
@@ -123,7 +87,7 @@ export class ShoppingService {
       payload: { id: listId, status: ListStatus.COMPLETED, purchasedAt: new Date() },
     })
 
-    // 購入済みアイテム更新
+    // 購入済みアイテム更新（実際に更新したアイテムだけ）
     for (const itemId of result.purchasedCatalogItemIds) {
       await syncRepository.createOperation({
         id: crypto.randomUUID(),
@@ -143,7 +107,58 @@ export class ShoppingService {
 
     return {
       list: updatedList,
-      purchasedItemIds: checkedItemIds,
+      purchasedItemIds: result.checkedEntryIds,
     }
+  }
+
+  /**
+   * 購入履歴を取り消す（specs/shopping「履歴の取り消し」）
+   *
+   * 1 つのトランザクションで、リストの行をロックしてから、リストの商品と同じ名前・同じスコープの購入済みの
+   * カタログの商品を未購入に戻し、リストを進行中に戻す。途中で失敗したらどれも反映しない
+   * @returns 取り消せない（使えない・削除済み・購入履歴でない）ときは null
+   */
+  async revertHistory(listId: string, userId: string): Promise<RevertHistoryResult | null> {
+    const result = await db.transaction(async (tx) => {
+      const list = await lockAccessibleList(tx, listId, userId)
+      if (!list) return null
+
+      const entries = await readListEntries(tx, listId)
+      const plan = planRevertHistory({ purchasedAt: list.purchasedAt, entries })
+      if (!plan.ok) return null
+
+      const applied = await applyRevertPlan(tx, list, plan, { actorUserId: userId })
+      if (!applied.listRow) {
+        // ロック済みなので起きないはずだが、起きたらカタログの更新ごと戻す
+        throw new RowNotFoundError("リスト")
+      }
+      return {
+        list: { ...applied.listRow, status: applied.listRow.status as ListStatus },
+        revertedItemIds: applied.revertedItemIds,
+      }
+    })
+    if (!result) return null
+
+    // 同期ログを記録（コミットの後）
+    for (const catalogItemId of result.revertedItemIds) {
+      await syncRepository.createOperation({
+        id: crypto.randomUUID(),
+        userId,
+        entity: "item",
+        entityId: catalogItemId,
+        operation: "update",
+        payload: { id: catalogItemId, purchasedAt: null },
+      })
+    }
+    await syncRepository.createOperation({
+      id: crypto.randomUUID(),
+      userId,
+      entity: "list",
+      entityId: listId,
+      operation: "update",
+      payload: { id: listId, purchasedAt: null, status: result.list.status },
+    })
+
+    return result
   }
 }

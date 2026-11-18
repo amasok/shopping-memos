@@ -1,4 +1,7 @@
+import { db } from "@/infrastructure/db/drizzle/client"
+import type { DbExecutor } from "@/infrastructure/db/ownership"
 import { syncRepository } from "@/modules/sync/infrastructure/repositories/DrizzleSyncRepository"
+import { deleteCatalogItemsWithList } from "./shoppingCompletion"
 import type { ShoppingListRepository } from "../../domain/repositories/ShoppingListRepository"
 import type {
   ShoppingList,
@@ -42,7 +45,7 @@ export class ShoppingSyncService {
   }
 
   async updateList(input: UpdateShoppingListInput, userId: string): Promise<ShoppingList> {
-    const list = await this.shoppingListRepository.update(input)
+    const list = await this.shoppingListRepository.update(input, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -57,10 +60,34 @@ export class ShoppingSyncService {
     return list
   }
 
-  async deleteList(id: string, userId: string): Promise<void> {
-    await this.shoppingListRepository.delete(id)
+  /**
+   * リストを削除する（リストの商品もまとめて論理削除される）
+   * @param options.deleteCatalogItems true なら、同じトランザクションで、リストの商品と同じ名前・同じスコープの
+   *   未購入のカタログの商品も論理削除する（179b）。同期の記録はコミットの後に書く
+   */
+  async deleteList(id: string, userId: string, options: { deleteCatalogItems?: boolean } = {}): Promise<void> {
+    let deletedCatalogItemIds: string[] = []
+    if (options.deleteCatalogItems) {
+      deletedCatalogItemIds = await db.transaction(async (tx) => {
+        const ids = await deleteCatalogItemsWithList(tx, id, userId)
+        await this.shoppingListRepository.delete(id, userId, tx)
+        return ids
+      })
+    } else {
+      await this.shoppingListRepository.delete(id, userId)
+    }
 
-    // 同期ログを記録
+    // 同期ログを記録（コミットの後）
+    for (const itemId of deletedCatalogItemIds) {
+      await syncRepository.createOperation({
+        id: crypto.randomUUID(),
+        userId,
+        entity: "item",
+        entityId: itemId,
+        operation: "delete",
+        payload: { id: itemId },
+      })
+    }
     await syncRepository.createOperation({
       id: crypto.randomUUID(),
       userId,
@@ -103,7 +130,7 @@ export class ShoppingSyncService {
   }
 
   async updateItem(input: UpdateListItemInput, userId: string): Promise<ListItem> {
-    const item = await this.shoppingListRepository.updateItem(input)
+    const item = await this.shoppingListRepository.updateItem(input, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -119,7 +146,7 @@ export class ShoppingSyncService {
   }
 
   async removeItem(id: string, userId: string): Promise<void> {
-    await this.shoppingListRepository.removeItem(id)
+    await this.shoppingListRepository.removeItem(id, userId)
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -155,9 +182,22 @@ export class ShoppingSyncService {
     return null
   }
 
-  async deleteHistory(id: string, userId: string): Promise<void> {
-    // 履歴削除 = リスト削除（cascade でlist_itemsも削除される）
-    await this.shoppingListRepository.delete(id)
+  /**
+   * 履歴を削除する（リスト削除。list_items もまとめて論理削除される）
+   * @param deleteCatalogItems 同じトランザクションで行う、カタログのアイテムの削除（削除したアイテムの ID を返す）。
+   *   リストの削除が失敗したら、カタログのアイテムの削除も戻す
+   * @returns deleteCatalogItems が削除したカタログのアイテムの ID
+   */
+  async deleteHistory(
+    id: string,
+    userId: string,
+    deleteCatalogItems?: (executor: DbExecutor) => Promise<string[]>
+  ): Promise<string[]> {
+    const deletedCatalogItemIds = await db.transaction(async (tx) => {
+      const ids = deleteCatalogItems ? await deleteCatalogItems(tx) : []
+      await this.shoppingListRepository.delete(id, userId, tx)
+      return ids
+    })
 
     // 同期ログを記録
     await syncRepository.createOperation({
@@ -168,23 +208,8 @@ export class ShoppingSyncService {
       operation: "delete",
       payload: { id },
     })
-  }
 
-  async revertHistory(id: string, userId: string): Promise<ShoppingList> {
-    // リストを未購入に戻す
-    const list = await this.shoppingListRepository.markAsUnpurchased(id)
-
-    // 同期ログを記録
-    await syncRepository.createOperation({
-      id: crypto.randomUUID(),
-      userId,
-      entity: "list",
-      entityId: id,
-      operation: "update",
-      payload: { id, purchasedAt: null, status: list.status },
-    })
-
-    return list
+    return deletedCatalogItemIds
   }
 
   async canAccessHistory(listId: string, userId: string): Promise<boolean> {

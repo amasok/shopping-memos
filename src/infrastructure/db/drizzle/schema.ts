@@ -3,12 +3,30 @@ import {
   text,
   integer,
   boolean,
+  bigint,
+  check,
   timestamp,
+  jsonb,
   primaryKey,
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
+
+/**
+ * 同期用の列（#62 O3。docs/features/offline-support.md「## 実装方針」）
+ * - updatedAt: サーバーの書き込み時刻。pull のカーソル専用（LWW の判定には使わない）
+ * - fieldModifiedAt: フィールド名 → 最後に適用した操作時刻（補正済みの ISO 文字列）。LWW の判定専用
+ * - deletedAt: 論理削除（tombstone）の時刻
+ */
+const syncColumns = () => ({
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  fieldModifiedAt: jsonb("field_modified_at")
+    .$type<Record<string, string>>()
+    .notNull()
+    .default(sql`'{}'::jsonb`),
+  deletedAt: timestamp("deleted_at"),
+})
 
 // ============================================================
 // Identity コンテキスト
@@ -22,10 +40,16 @@ export const users = pgTable("users", {
   id: text("id").primaryKey(),
   name: text("name"),
   email: text("email").notNull().unique(),
+  // Auth.js 用（timestamp）。contract（#61 A6）で削除する
   emailVerified: timestamp("email_verified"),
+  // Better Auth 用（boolean。#61 A2 の expand で追加し、email_verified から写した）
+  emailVerifiedFlag: boolean("email_verified_flag").default(false).notNull(),
   image: text("image"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
 })
 
 /**
@@ -76,6 +100,130 @@ export const verificationTokens = pgTable(
     expires: timestamp("expires").notNull(),
   },
   (table) => [primaryKey({ columns: [table.identifier, table.token] })]
+)
+
+// ------------------------------------------------------------
+// Better Auth（#61。docs/features/passkey-email-auth.md の「### DB スキーマ」）
+// A2 の expand で追加。移行の間は Auth.js のテーブル（accounts / sessions / verification_tokens）と
+// 共存させるため、別の名前にする。key は Better Auth のフィールド名に合わせる（drizzleAdapter が key で引く）
+// ------------------------------------------------------------
+
+/** Better Auth のセッション（データベースセッション） */
+export const authSessions = pgTable(
+  "auth_sessions",
+  {
+    id: text("id").primaryKey(),
+    expiresAt: timestamp("expires_at").notNull(),
+    token: text("token").notNull().unique(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+  },
+  (table) => [index("auth_sessions_user_idx").on(table.userId)]
+)
+
+/** Better Auth のアカウント（ログイン方法ごとの行） */
+export const authAccounts = pgTable(
+  "auth_accounts",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at"),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [index("auth_accounts_user_idx").on(table.userId)]
+)
+
+/** Better Auth の検証（メールの OTP。value はハッシュ） */
+export const authVerifications = pgTable(
+  "auth_verifications",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [index("auth_verifications_identifier_idx").on(table.identifier)]
+)
+
+/** パスキー（@better-auth/passkey。A5 で使う） */
+export const passkeys = pgTable(
+  "passkeys",
+  {
+    id: text("id").primaryKey(),
+    name: text("name"),
+    publicKey: text("public_key").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    credentialID: text("credential_id").notNull().unique(),
+    counter: integer("counter").notNull(),
+    deviceType: text("device_type").notNull(),
+    backedUp: boolean("backed_up").notNull(),
+    transports: text("transports"),
+    aaguid: text("aaguid"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("passkeys_user_idx").on(table.userId)]
+)
+
+/** Better Auth のレート制限（storage: "database"。サーバーレスでメモリを共有できないため） */
+export const rateLimits = pgTable("rate_limits", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  count: integer("count").notNull(),
+  lastRequest: bigint("last_request", { mode: "number" }).notNull(),
+})
+
+/**
+ * OTP の送信・照合・制限の記録（#72。設計書「#### OTP 送信の乱用対策」、61-a3 の design の D4）
+ * - email_hash: OTP_EVENT_HMAC_KEY を鍵にした HMAC-SHA256。管理者への知らせ（alerted）だけは特定のアドレスに結びつかないので NULL
+ * - ip: IP が取れないときは固定の値 'unknown'（NULL にすると (email_hash, ip) の照合が効かない）
+ * - kind: sent（送信）/ attempted（照合の前に記録）/ locked / unlocked / notified（本人への制限の通知）/ alerted（管理者への知らせ）
+ * 判定には直近 24 時間、保持は 30 日
+ */
+export const otpEvents = pgTable(
+  "otp_events",
+  {
+    id: text("id").primaryKey(),
+    emailHash: text("email_hash"),
+    ip: text("ip").notNull(),
+    kind: text("kind").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("otp_events_email_kind_created_idx").on(table.emailHash, table.kind, table.createdAt),
+    index("otp_events_email_ip_kind_created_idx").on(
+      table.emailHash,
+      table.ip,
+      table.kind,
+      table.createdAt
+    ),
+    // 全体の送信数の監視と、古い行の削除に使う
+    index("otp_events_kind_created_idx").on(table.kind, table.createdAt),
+    check(
+      "otp_events_kind_check",
+      sql`${table.kind} in ('sent', 'attempted', 'locked', 'unlocked', 'notified', 'alerted')`
+    ),
+    check("otp_events_email_hash_check", sql`${table.kind} = 'alerted' or ${table.emailHash} is not null`),
+  ]
 )
 
 /**
@@ -178,12 +326,14 @@ export const items = pgTable(
     groupId: text("group_id").references(() => groups.id, { onDelete: "set null" }),
     purchasedAt: timestamp("purchased_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    ...syncColumns(),
   },
   (table) => [
     index("items_user_idx").on(table.userId),
     index("items_group_idx").on(table.groupId),
     index("items_purchased_idx").on(table.purchasedAt),
+    index("items_group_updated_idx").on(table.groupId, table.updatedAt),
+    index("items_user_updated_idx").on(table.userId, table.updatedAt),
   ]
 )
 
@@ -201,11 +351,13 @@ export const tags = pgTable(
     userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
     groupId: text("group_id").references(() => groups.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    ...syncColumns(),
   },
   (table) => [
     index("tags_user_idx").on(table.userId),
     index("tags_group_idx").on(table.groupId),
+    index("tags_group_updated_idx").on(table.groupId, table.updatedAt),
+    index("tags_user_updated_idx").on(table.userId, table.updatedAt),
   ]
 )
 
@@ -248,12 +400,15 @@ export const shoppingLists = pgTable(
     completedAt: timestamp("completed_at"),
     purchasedAt: timestamp("purchased_at"), // 購入日時（購入履歴として表示）
     location: text("location"), // 購入場所
+    ...syncColumns(),
   },
   (table) => [
     index("shopping_lists_user_idx").on(table.userId),
     index("shopping_lists_group_idx").on(table.groupId),
     index("shopping_lists_status_idx").on(table.status),
     index("shopping_lists_purchased_idx").on(table.purchasedAt),
+    index("shopping_lists_group_updated_idx").on(table.groupId, table.updatedAt),
+    index("shopping_lists_user_updated_idx").on(table.userId, table.updatedAt),
   ]
 )
 
@@ -277,10 +432,13 @@ export const listItems = pgTable(
     groupId: text("group_id"),
     checked: boolean("checked").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    ...syncColumns(),
   },
   (table) => [
     index("list_items_list_idx").on(table.listId),
     index("list_items_user_idx").on(table.userId),
+    index("list_items_group_updated_idx").on(table.groupId, table.updatedAt),
+    index("list_items_user_updated_idx").on(table.userId, table.updatedAt),
   ]
 )
 

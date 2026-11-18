@@ -249,3 +249,17 @@ describe("catalog のタグ", () => {
     expect(svc.deleteTag).toHaveBeenCalledWith(IID, "user-1")
   })
 })
+
+describe("catalog の作成時のクライアント ID（#62 O3b）", () => {
+  it("createItem / createTag は、id があればその id で作り、なければサーバーで採番する", async () => {
+    await caller().createItem({ name: "牛乳", id: IID })
+    expect(svc.createItem).toHaveBeenCalledWith(expect.objectContaining({ id: IID }), "user-1")
+    await caller().createTag({ name: "食品", id: IID })
+    expect(svc.createTag).toHaveBeenCalledWith(expect.objectContaining({ id: IID }), "user-1")
+
+    await caller().createItem({ name: "卵" })
+    const generated = svc.createItem.mock.calls[1][0].id
+    expect(generated).toMatch(/^[0-9a-f-]{36}$/)
+    expect(generated).not.toBe(IID)
+  })
+})

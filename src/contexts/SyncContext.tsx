@@ -1,174 +1,115 @@
 "use client"
 
-import {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useCallback,
-  type ReactNode,
-} from "react"
-import { syncEngine } from "@/infrastructure/sync/SyncEngine"
+import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react"
+import { useAuth } from "@/contexts/AuthContext"
+import { useDataMerge } from "@/contexts/DataMergeContext"
+import { trpc } from "@/infrastructure/trpc/client"
+import { SyncEngine, type SyncEngineState, type SyncTransport } from "@/infrastructure/sync/SyncEngine"
+import { getUserDb } from "@/lib/db/userDb"
+import { isLocalFirstEnabled } from "@/lib/featureFlags"
 
 /**
- * 同期状態
+ * 同期の状態とエンジンを提供する（offline-support.md「SyncProvider」。#62 O6）
+ *
+ * ログイン中で、ゲストのデータの merge が終わったら、ユーザーの DB の同期エンジンを動かす。
+ * NEXT_PUBLIC_LOCAL_FIRST が false なら drain モード（未送信のキューを送り切るだけ。pull はしない）。
+ * 同期のきっかけ: 起動、online、前面に戻ったとき（前回から 30 秒以上空いたら）、手動、書き込みの後（requestSync）
  */
-interface SyncState {
-  isOnline: boolean
-  isSyncing: boolean
-  pendingCount: number
-  lastSyncAt: Date | null
-  error: Error | null
-}
 
-/**
- * 同期コンテキストの値
- */
-interface SyncContextValue extends SyncState {
-  /** 手動で同期を実行 */
+/** 前面に戻ったときに同期する、前回の同期からの間隔 */
+export const RESUME_SYNC_INTERVAL_MS = 30_000
+
+export interface SyncContextValue extends SyncEngineState {
+  /** ログイン中の同期エンジン（ゲスト・merge の前は null） */
+  engine: SyncEngine | null
+  /** 手動で同期する（push → pull） */
   sync: () => Promise<void>
-  /** サーバーから変更をプル */
-  pull: () => Promise<void>
-  /** 初回ログイン時のマージ */
-  mergeLocalData: () => Promise<void>
+  /** ローカルへの書き込みの後に呼ぶ（2 秒のデバウンスで同期） */
+  requestSync: () => void
 }
+
+const IDLE_STATE: SyncEngineState = {
+  isOnline: true,
+  isSyncing: false,
+  pendingCount: 0,
+  failedCount: 0,
+  lastSyncAt: null,
+  sessionExpired: false,
+  clientTooOld: false,
+}
+
+const noopSubscribe = () => () => {}
+const idleSnapshot = () => IDLE_STATE
 
 const SyncContext = createContext<SyncContextValue | null>(null)
 
-interface SyncProviderProps {
-  children: ReactNode
-}
+export function SyncProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  const { isMergeCompleted } = useDataMerge()
+  const utils = trpc.useUtils()
+  const userId = user?.id ?? null
 
-/**
- * 同期コンテキストプロバイダー
- * 同期状態と操作を提供
- */
-export function SyncProvider({ children }: SyncProviderProps) {
-  const [state, setState] = useState<SyncState>({
-    isOnline: syncEngine.getIsOnline(),
-    isSyncing: syncEngine.getIsSyncing(),
-    pendingCount: 0,
-    lastSyncAt: null,
-    error: null,
-  })
-
-  // 初期化とリスナー登録
-  useEffect(() => {
-    // 初期状態を取得
-    const initializeState = async () => {
-      const pendingCount = await syncEngine.getPendingCount()
-      const lastSyncAtStr = localStorage.getItem("lastSyncAt")
-
-      setState((prev) => ({
-        ...prev,
-        isOnline: syncEngine.getIsOnline(),
-        isSyncing: syncEngine.getIsSyncing(),
-        pendingCount,
-        lastSyncAt: lastSyncAtStr ? new Date(lastSyncAtStr) : null,
-      }))
+  // エンジンの作成は副作用がない（DB を開くのも通信も start / sync から）。動かすのは effect で行う
+  const engine = useMemo(() => {
+    if (!userId || !isMergeCompleted) return null
+    const transport: SyncTransport = {
+      push: (input) => utils.client.sync.push.mutate(input),
+      pull: (input) => utils.client.sync.pull.query(input),
+      // 所属グループのキャッシュ（full モードの pull の後。#62 O7）
+      getGroups: () => utils.client.identity.getGroups.query(),
     }
-
-    initializeState()
-
-    // SyncEngineの状態変更を監視
-    const unsubscribe = syncEngine.subscribe(() => {
-      syncEngine.getPendingCount().then((pendingCount) => {
-        setState((prev) => ({
-          ...prev,
-          isOnline: syncEngine.getIsOnline(),
-          isSyncing: syncEngine.getIsSyncing(),
-          pendingCount,
-        }))
-      })
+    return new SyncEngine({
+      db: getUserDb(userId),
+      transport,
+      mode: isLocalFirstEnabled() ? "full" : "drain",
+      lockName: `shopping-memos-sync-${userId}`,
     })
+  }, [userId, isMergeCompleted, utils.client])
 
+  useEffect(() => {
+    if (!engine) return
+    const instance = engine
+    instance
+      .start()
+      .then(() => instance.sync())
+      .catch((error) => console.error("Sync start failed:", error))
+
+    const handleOnline = () => {
+      instance.setOnline(true)
+      void instance.sync()
+    }
+    const handleOffline = () => instance.setOnline(false)
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return
+      const last = instance.getState().lastSyncAt
+      if (!last || Date.now() - last.getTime() >= RESUME_SYNC_INTERVAL_MS) void instance.sync()
+    }
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+    document.addEventListener("visibilitychange", handleVisibility)
     return () => {
-      unsubscribe()
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+      document.removeEventListener("visibilitychange", handleVisibility)
+      instance.stop()
     }
-  }, [])
+  }, [engine])
 
-  // 手動同期
+  const state = useSyncExternalStore(
+    engine?.subscribe ?? noopSubscribe,
+    engine?.getState ?? idleSnapshot,
+    idleSnapshot
+  )
   const sync = useCallback(async () => {
-    try {
-      setState((prev) => ({ ...prev, error: null }))
+    await engine?.sync()
+  }, [engine])
+  const requestSync = useCallback(() => engine?.requestSync(), [engine])
 
-      // TODO: tRPCクライアントを使用してpushFnを提供
-      // 現在はSyncEngineがtRPCクライアントを受け取る設計になっているため
-      // ここではエラーなく呼び出せるようにする
-      await syncEngine.syncPendingOperations()
-
-      const lastSyncAtStr = localStorage.getItem("lastSyncAt")
-      setState((prev) => ({
-        ...prev,
-        lastSyncAt: lastSyncAtStr ? new Date(lastSyncAtStr) : null,
-      }))
-    } catch (error) {
-      setState((prev) => ({
-        ...prev,
-        error: error instanceof Error ? error : new Error("同期に失敗しました"),
-      }))
-    }
-  }, [])
-
-  // プル
-  const pull = useCallback(async () => {
-    try {
-      setState((prev) => ({ ...prev, error: null }))
-
-      // TODO: tRPCクライアントを使用してpullFnを提供
-      // await syncEngine.pullChanges(...)
-
-      const lastSyncAtStr = localStorage.getItem("lastSyncAt")
-      setState((prev) => ({
-        ...prev,
-        lastSyncAt: lastSyncAtStr ? new Date(lastSyncAtStr) : null,
-      }))
-    } catch (error) {
-      setState((prev) => ({
-        ...prev,
-        error: error instanceof Error ? error : new Error("プルに失敗しました"),
-      }))
-    }
-  }, [])
-
-  // 初回ログイン時のマージ
-  const mergeLocalData = useCallback(async () => {
-    try {
-      setState((prev) => ({ ...prev, error: null }))
-
-      // TODO: tRPCクライアントを使用してmergeFnを提供
-      // await syncEngine.mergeLocalData(...)
-
-      const lastSyncAtStr = localStorage.getItem("lastSyncAt")
-      setState((prev) => ({
-        ...prev,
-        lastSyncAt: lastSyncAtStr ? new Date(lastSyncAtStr) : null,
-      }))
-    } catch (error) {
-      setState((prev) => ({
-        ...prev,
-        error: error instanceof Error ? error : new Error("マージに失敗しました"),
-      }))
-    }
-  }, [])
-
-  const value: SyncContextValue = {
-    ...state,
-    sync,
-    pull,
-    mergeLocalData,
-  }
-
-  return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>
+  return <SyncContext.Provider value={{ ...state, engine, sync, requestSync }}>{children}</SyncContext.Provider>
 }
 
-/**
- * 同期コンテキストを使用するフック
- */
 export function useSync(): SyncContextValue {
   const context = useContext(SyncContext)
-  if (!context) {
-    throw new Error("useSync must be used within a SyncProvider")
-  }
+  if (!context) throw new Error("useSync must be used within a SyncProvider")
   return context
 }

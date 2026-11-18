@@ -1,6 +1,15 @@
-import { eq, and, or, inArray, isNull, isNotNull, desc } from "drizzle-orm"
+import { eq, and, or, inArray, isNull, isNotNull, desc, type SQL } from "drizzle-orm"
+import type { PgUpdateSetSource } from "drizzle-orm/pg-core"
 import { db } from "@/infrastructure/db/drizzle/client"
-import { canAccessScope } from "@/infrastructure/db/ownership"
+import { accessibleByUser, canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
+import { RowNotFoundError, rethrowDuplicateId } from "@/infrastructure/db/errors"
+import {
+  createdFieldTimes,
+  definedFields,
+  notDeleted,
+  softDeleteValues,
+  touchFields,
+} from "@/infrastructure/db/syncColumns"
 import {
   shoppingLists,
   listItems,
@@ -23,15 +32,44 @@ import type {
 } from "../../domain/entities/ListItem"
 import { ListStatus } from "../../domain/value-objects/ListStatus"
 
+/** field_modified_at に記録するフィールド（API のフィールド名） */
+const LIST_FIELDS = ["name", "status", "completedAt", "purchasedAt", "location"] as const
+const LIST_ITEM_FIELDS = ["name", "quantity", "memo", "tagIds", "checked"] as const
+
+/** 更新・削除の対象: 論理削除されておらず、操作したユーザーが使えるリスト（#73-1） */
+function writableList(id: string, actorUserId: string) {
+  return and(eq(shoppingLists.id, id), notDeleted(shoppingLists), accessibleByUser(shoppingLists, actorUserId))
+}
+
+/**
+ * 更新・削除の対象: 論理削除されておらず、操作したユーザーが使えるリストのアイテム。
+ * リストのアイテムの user_id は入っていないことがあるので、親のリストで判定する
+ */
+function writableListItem(id: string, actorUserId: string) {
+  return and(
+    eq(listItems.id, id),
+    notDeleted(listItems),
+    inArray(
+      listItems.listId,
+      db
+        .select({ id: shoppingLists.id })
+        .from(shoppingLists)
+        .where(and(notDeleted(shoppingLists), accessibleByUser(shoppingLists, actorUserId)))
+    )
+  )
+}
+
 /**
  * Drizzleを使用した買い物リストリポジトリ実装
+ *
+ * 削除は論理削除（deleted_at）。取得系は削除済みを返さない。更新・削除は updated_at / field_modified_at を
+ * DB の now() で更新し、WHERE に操作したユーザーのスコープを付ける（#62 O3b）
  */
 export class DrizzleShoppingListRepository implements ShoppingListRepository {
   // === リスト操作 ===
 
   async create(input: CreateShoppingListInput): Promise<ShoppingList> {
-    const now = new Date()
-
+    // created_at / updated_at は DB の既定値（now()）にする
     const [list] = await db
       .insert(shoppingLists)
       .values({
@@ -40,9 +78,10 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
         status: ListStatus.IN_PROGRESS,
         userId: input.userId,
         groupId: input.groupId ?? null,
-        createdAt: now,
+        fieldModifiedAt: createdFieldTimes(LIST_FIELDS),
       })
       .returning()
+      .catch((error: unknown) => rethrowDuplicateId(error, "shopping_lists", "リスト"))
 
     return {
       ...list,
@@ -54,7 +93,7 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     const result = await db
       .select()
       .from(shoppingLists)
-      .where(eq(shoppingLists.id, id))
+      .where(and(eq(shoppingLists.id, id), notDeleted(shoppingLists)))
 
     if (result.length === 0) {
       return null
@@ -71,7 +110,8 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
   }
 
   async findMany(query: GetShoppingListsQuery): Promise<ShoppingListWithItems[]> {
-    const conditions = []
+    // 論理削除済みは返さない
+    const conditions: (SQL | undefined)[] = [notDeleted(shoppingLists)]
 
     // groupIdフィルタ:
     // - includeAllGroups: true → アクセス可能なグループ + 個人リストのみ
@@ -134,8 +174,10 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     return result
   }
 
-  async update(input: UpdateShoppingListInput): Promise<ShoppingList> {
-    const updateData: Partial<typeof shoppingLists.$inferInsert> = {}
+  async update(input: UpdateShoppingListInput, actorUserId: string): Promise<ShoppingList> {
+    const updateData: PgUpdateSetSource<typeof shoppingLists> = {
+      ...touchFields(shoppingLists, definedFields(input, [...LIST_FIELDS])),
+    }
 
     if (input.name !== undefined) {
       updateData.name = input.name
@@ -156,8 +198,11 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     const [updated] = await db
       .update(shoppingLists)
       .set(updateData)
-      .where(eq(shoppingLists.id, input.id))
+      .where(writableList(input.id, actorUserId))
       .returning()
+    if (!updated) {
+      throw new RowNotFoundError("リスト")
+    }
 
     return {
       ...updated,
@@ -165,15 +210,34 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     }
   }
 
-  async delete(id: string): Promise<void> {
-    await db.delete(shoppingLists).where(eq(shoppingLists.id, id))
+  async delete(id: string, actorUserId: string, executor?: DbExecutor): Promise<void> {
+    // リストとリストのアイテムを論理削除する（物理削除の cascade の代わり）。
+    // executor を渡すと、そのトランザクションの中で行う（履歴の削除で、カタログのアイテムの削除とまとめるため）
+    if (executor) {
+      return this.softDeleteWithItems(executor, id, actorUserId)
+    }
+    await db.transaction((tx) => this.softDeleteWithItems(tx, id, actorUserId))
+  }
+
+  private async softDeleteWithItems(executor: DbExecutor, id: string, actorUserId: string): Promise<void> {
+    const deleted = await executor
+      .update(shoppingLists)
+      .set(softDeleteValues())
+      .where(writableList(id, actorUserId))
+      .returning({ id: shoppingLists.id })
+    if (deleted.length === 0) {
+      throw new RowNotFoundError("リスト")
+    }
+    await executor
+      .update(listItems)
+      .set(softDeleteValues())
+      .where(and(eq(listItems.listId, id), notDeleted(listItems)))
   }
 
   // === リストアイテム操作 ===
 
   async addItem(input: CreateListItemInput): Promise<ListItem> {
-    const now = new Date()
-
+    // created_at / updated_at は DB の既定値（now()）にする
     const [item] = await db
       .insert(listItems)
       .values({
@@ -185,15 +249,18 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
         tagIds: input.tagIds ?? null,
         groupId: input.groupId ?? null,
         checked: false,
-        createdAt: now,
+        fieldModifiedAt: createdFieldTimes(LIST_ITEM_FIELDS),
       })
       .returning()
+      .catch((error: unknown) => rethrowDuplicateId(error, "list_items", "リストのアイテム"))
 
     return item
   }
 
-  async updateItem(input: UpdateListItemInput): Promise<ListItem> {
-    const updateData: Partial<typeof listItems.$inferInsert> = {}
+  async updateItem(input: UpdateListItemInput, actorUserId: string): Promise<ListItem> {
+    const updateData: PgUpdateSetSource<typeof listItems> = {
+      ...touchFields(listItems, definedFields(input, ["checked"])),
+    }
 
     if (input.checked !== undefined) {
       updateData.checked = input.checked
@@ -202,21 +269,31 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     const [updated] = await db
       .update(listItems)
       .set(updateData)
-      .where(eq(listItems.id, input.id))
+      .where(writableListItem(input.id, actorUserId))
       .returning()
+    if (!updated) {
+      throw new RowNotFoundError("リストのアイテム")
+    }
 
     return updated
   }
 
-  async removeItem(id: string): Promise<void> {
-    await db.delete(listItems).where(eq(listItems.id, id))
+  async removeItem(id: string, actorUserId: string, executor: DbExecutor = db): Promise<void> {
+    const removed = await executor
+      .update(listItems)
+      .set(softDeleteValues())
+      .where(writableListItem(id, actorUserId))
+      .returning({ id: listItems.id })
+    if (removed.length === 0) {
+      throw new RowNotFoundError("リストのアイテム")
+    }
   }
 
   async findItemById(id: string): Promise<ListItem | null> {
     const result = await db
       .select()
       .from(listItems)
-      .where(eq(listItems.id, id))
+      .where(and(eq(listItems.id, id), notDeleted(listItems)))
 
     return result[0] ?? null
   }
@@ -227,7 +304,7 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     const list = await db
       .select({ groupId: shoppingLists.groupId, ownerId: shoppingLists.userId })
       .from(shoppingLists)
-      .where(eq(shoppingLists.id, listId))
+      .where(and(eq(shoppingLists.id, listId), notDeleted(shoppingLists)))
 
     if (list.length === 0) {
       return false
@@ -249,7 +326,7 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
   // === 購入履歴操作 ===
 
   async findPurchaseHistory(query: GetPurchaseHistoryQuery): Promise<ShoppingListWithItems[]> {
-    const conditions = [isNotNull(shoppingLists.purchasedAt)]
+    const conditions = [isNotNull(shoppingLists.purchasedAt), notDeleted(shoppingLists)]
 
     if (query.groupId !== undefined) {
       conditions.push(eq(shoppingLists.groupId, query.groupId))
@@ -290,7 +367,7 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     return result
   }
 
-  async markAsPurchased(id: string, location?: string): Promise<ShoppingList> {
+  async markAsPurchased(id: string, actorUserId: string, location?: string): Promise<ShoppingList> {
     const now = new Date()
 
     const [updated] = await db
@@ -300,9 +377,13 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
         location: location ?? null,
         status: ListStatus.COMPLETED,
         completedAt: now,
+        ...touchFields(shoppingLists, ["purchasedAt", "location", "status", "completedAt"]),
       })
-      .where(eq(shoppingLists.id, id))
+      .where(writableList(id, actorUserId))
       .returning()
+    if (!updated) {
+      throw new RowNotFoundError("リスト")
+    }
 
     return {
       ...updated,
@@ -310,7 +391,7 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     }
   }
 
-  async markAsUnpurchased(id: string): Promise<ShoppingList> {
+  async markAsUnpurchased(id: string, actorUserId: string): Promise<ShoppingList> {
     const [updated] = await db
       .update(shoppingLists)
       .set({
@@ -318,9 +399,13 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
         location: null,
         status: ListStatus.IN_PROGRESS,
         completedAt: null,
+        ...touchFields(shoppingLists, ["purchasedAt", "location", "status", "completedAt"]),
       })
-      .where(eq(shoppingLists.id, id))
+      .where(writableList(id, actorUserId))
       .returning()
+    if (!updated) {
+      throw new RowNotFoundError("リスト")
+    }
 
     return {
       ...updated,
@@ -334,7 +419,7 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
     const itemsResult = await db
       .select()
       .from(listItems)
-      .where(eq(listItems.listId, listId))
+      .where(and(eq(listItems.listId, listId), notDeleted(listItems)))
       .orderBy(listItems.createdAt)
 
     const result: ListItemWithTags[] = []
@@ -345,7 +430,7 @@ export class DrizzleShoppingListRepository implements ShoppingListRepository {
         const tagsResult = await db
           .select({ id: tags.id, name: tags.name })
           .from(tags)
-          .where(inArray(tags.id, item.tagIds))
+          .where(and(inArray(tags.id, item.tagIds), notDeleted(tags)))
 
         itemTags = tagsResult
       }

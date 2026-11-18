@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest"
-import { checkEntityAccess } from "../infrastructure/entityAccess"
+import type { SQL } from "drizzle-orm"
+import { PgDialect } from "drizzle-orm/pg-core"
+import { checkEntityAccess, findEntityScope } from "../infrastructure/entityAccess"
 import { canAccessScope, type DbExecutor } from "@/infrastructure/db/ownership"
 
 /**
@@ -67,5 +69,43 @@ describe("checkEntityAccess", () => {
   it("所属グループの履歴は allowed", async () => {
     const executor = createExecutor([[{ userId: "u2", groupId: "g1" }], [{ id: "m1" }]])
     expect(await checkEntityAccess(executor, "history", "l1", "u1")).toBe("allowed")
+  })
+})
+
+describe("findEntityScope の論理削除の扱い（#62 O3b）", () => {
+  /** where に渡された条件を SQL にして記録する executor */
+  function recordingExecutor() {
+    const wheres: string[] = []
+    const dialect = new PgDialect()
+    const chain: Record<string, unknown> = {}
+    chain.from = () => chain
+    chain.innerJoin = () => chain
+    chain.where = (where: SQL) => {
+      wheres.push(dialect.sqlToQuery(where).sql)
+      return Promise.resolve([])
+    }
+    return { executor: { select: () => chain } as unknown as DbExecutor, wheres }
+  }
+
+  it("既定では、どのエンティティも削除済みを対象にしない（listItem はリストも）", async () => {
+    const { executor, wheres } = recordingExecutor()
+    for (const entity of ["item", "tag", "list", "listItem"] as const) {
+      await findEntityScope(executor, entity, "x")
+    }
+    expect(wheres[0]).toContain('"items"."deleted_at" is null')
+    expect(wheres[1]).toContain('"tags"."deleted_at" is null')
+    expect(wheres[2]).toContain('"shopping_lists"."deleted_at" is null')
+    expect(wheres[3]).toContain('"list_items"."deleted_at" is null')
+    expect(wheres[3]).toContain('"shopping_lists"."deleted_at" is null')
+  })
+
+  it("includeDeleted のときは削除済みも対象にする（ID の重なりの判定用）", async () => {
+    const { executor, wheres } = recordingExecutor()
+    for (const entity of ["item", "tag", "list", "listItem"] as const) {
+      await findEntityScope(executor, entity, "x", { includeDeleted: true })
+    }
+    for (const where of wheres) {
+      expect(where).not.toContain("deleted_at")
+    }
   })
 })
