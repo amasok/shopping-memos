@@ -1,13 +1,16 @@
 import { createHmac, randomUUID } from "node:crypto"
-import { and, desc, eq, gt, lt, sql } from "drizzle-orm"
+import { and, count, desc, eq, gt, isNull, lt, lte, sql } from "drizzle-orm"
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js"
 import { normalizeEmail } from "@/shared/schemas/email"
 import * as schema from "@/infrastructure/db/drizzle/schema"
-import { otpEvents } from "@/infrastructure/db/drizzle/schema"
+import { otpEvents, users } from "@/infrastructure/db/drizzle/schema"
 import {
   OTP_POLICY,
   decideSend,
   decideVerify,
+  shouldAlert,
+  shouldNotify,
+  type AddressCounts,
   type OtpEventKind,
   type OtpEventRecord,
   type SendDecision,
@@ -18,6 +21,8 @@ type Db = PostgresJsDatabase<typeof schema>
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
 
 const DAY = 24 * 60 * 60 * 1000
+/** IP に結びつかない記録（notified・alerted）の ip */
+const UNKNOWN_IP_KEY = "unknown"
 /**
  * 1 つの「アドレス × IP」の直近 24 時間の記録の読み込みの上限。IP ごとの上限（送信 5 通・照合 10 回でロック）があるので、
  * 通常は数十件。アドレス全体の行は読まない（別の IP の行を積まれても、この IP の locked が読み込みから落ちないように）
@@ -88,6 +93,82 @@ export class OtpEventRepository {
     await this.db.transaction(async (tx) => {
       await this.lock(tx, emailHash)
       await this.insert(tx, emailHash, ip, "unlocked", now)
+    })
+  }
+
+  /**
+   * アドレス全体（IP を問わない）の数（A3b のチャレンジの判定）。登録の有無は見ない
+   * - sentLast24h: 直近 24 時間の sent（unlocked で区切らない）
+   * - failuresSinceUnlockLast24h: 直近 24 時間かつ最後の unlocked の後の attempted
+   */
+  async addressCounts(email: string, now: Date = new Date()): Promise<AddressCounts> {
+    const emailHash = this.hashEmail(email)
+    const since = new Date(now.getTime() - OTP_POLICY.windowMs)
+    const ofAddress = eq(otpEvents.emailHash, emailHash)
+    const [lastUnlocked] = await this.db
+      .select({ createdAt: otpEvents.createdAt })
+      .from(otpEvents)
+      .where(and(ofAddress, eq(otpEvents.kind, "unlocked")))
+      .orderBy(desc(otpEvents.createdAt))
+      .limit(1)
+    const failuresSince = lastUnlocked && lastUnlocked.createdAt > since ? lastUnlocked.createdAt : since
+    const [sent] = await this.db
+      .select({ n: count() })
+      .from(otpEvents)
+      .where(and(ofAddress, eq(otpEvents.kind, "sent"), gt(otpEvents.createdAt, since)))
+    const [failures] = await this.db
+      .select({ n: count() })
+      .from(otpEvents)
+      .where(and(ofAddress, eq(otpEvents.kind, "attempted"), gt(otpEvents.createdAt, failuresSince)))
+    return { sentLast24h: sent?.n ?? 0, failuresSinceUnlockLast24h: failures?.n ?? 0 }
+  }
+
+  /**
+   * 本人への制限の通知を送るなら notified を記録して true を返す（A3b）。
+   * 登録済みのアドレスだけ、直近 24 時間に 1 通まで。アドレスの advisory lock の中で判定するので、同時でも 1 通
+   */
+  async notifyOnce(email: string, now: Date = new Date()): Promise<boolean> {
+    const emailHash = this.hashEmail(email)
+    return this.db.transaction(async (tx) => {
+      await this.lock(tx, emailHash)
+      const [user] = await tx.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1)
+      const [last] = await tx
+        .select({ createdAt: otpEvents.createdAt })
+        .from(otpEvents)
+        .where(and(eq(otpEvents.emailHash, emailHash), eq(otpEvents.kind, "notified")))
+        .orderBy(desc(otpEvents.createdAt))
+        .limit(1)
+      if (!shouldNotify({ registered: !!user, lastNotifiedAt: last?.createdAt, now })) return false
+      await this.insert(tx, emailHash, UNKNOWN_IP_KEY, "notified", now)
+      return true
+    })
+  }
+
+  /**
+   * 送信数の監視（A3b）。直近 24 時間の送信が 70 通を超え、直近 24 時間に知らせていなければ、alerted を記録して
+   * { alert: true } を返す。固定のキーの advisory lock の中で判定するので、同時の送信でも 1 回だけ
+   */
+  async checkAlert(now: Date = new Date()): Promise<{ alert: boolean; sentLast24h: number }> {
+    const since = new Date(now.getTime() - OTP_POLICY.windowMs)
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('otp-events:alert', 0))`)
+      const [sent] = await tx
+        .select({ n: count() })
+        .from(otpEvents)
+        .where(and(eq(otpEvents.kind, "sent"), gt(otpEvents.createdAt, since), lte(otpEvents.createdAt, now)))
+      const sentLast24h = sent?.n ?? 0
+      const [last] = await tx
+        .select({ createdAt: otpEvents.createdAt })
+        .from(otpEvents)
+        // 判定の時刻より後の行は見ない（本番ではない。テストで時計を進めたときに混ざらないように）
+        .where(and(eq(otpEvents.kind, "alerted"), isNull(otpEvents.emailHash), lte(otpEvents.createdAt, now)))
+        .orderBy(desc(otpEvents.createdAt))
+        .limit(1)
+      if (!shouldAlert({ sentLast24h, lastAlertedAt: last?.createdAt, now })) return { alert: false, sentLast24h }
+      await tx
+        .insert(otpEvents)
+        .values({ id: randomUUID(), emailHash: null, ip: UNKNOWN_IP_KEY, kind: "alerted", createdAt: now })
+      return { alert: true, sentLast24h }
     })
   }
 

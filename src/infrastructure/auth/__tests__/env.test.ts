@@ -17,6 +17,8 @@ const PROD_ENV = {
   OTP_EVENT_HMAC_KEY: HMAC,
   TURNSTILE_SECRET_KEY: "0x4AAAAAAA-real-secret",
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: "0x4AAAAAAA-real-site",
+  TURNSTILE_CHALLENGE_SECRET_KEY: "0x4AAAAAAA-real-challenge-secret",
+  NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY: "0x4AAAAAAA-real-challenge-site",
 }
 
 describe("認証の環境変数の確認（#61 A3a 0.3）", () => {
@@ -26,7 +28,12 @@ describe("認証の環境変数の確認（#61 A3a 0.3）", () => {
       baseURL: "https://shopping.counoco.net",
       trustedOrigins: ["https://shopping.counoco.net"],
       otpEventHmacKey: HMAC,
-      turnstile: { secretKey: "0x4AAAAAAA-real-secret", siteKey: "0x4AAAAAAA-real-site" },
+      turnstile: {
+        secretKey: "0x4AAAAAAA-real-secret",
+        siteKey: "0x4AAAAAAA-real-site",
+        challengeSecretKey: "0x4AAAAAAA-real-challenge-secret",
+        challengeSiteKey: "0x4AAAAAAA-real-challenge-site",
+      },
     })
   })
 
@@ -36,6 +43,8 @@ describe("認証の環境変数の確認（#61 A3a 0.3）", () => {
     "OTP_EVENT_HMAC_KEY",
     "TURNSTILE_SECRET_KEY",
     "NEXT_PUBLIC_TURNSTILE_SITE_KEY",
+    "TURNSTILE_CHALLENGE_SECRET_KEY",
+    "NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY",
   ])("本番で %s が欠けると、名前を挙げてエラーにする", (name) => {
     expect(() => resolveAuthEnv({ ...PROD_ENV, [name]: "" })).toThrow(
       new RegExp(name)
@@ -76,6 +85,8 @@ describe("認証の環境変数の確認（#61 A3a 0.3）", () => {
       VERCEL_ENV: "preview",
       TURNSTILE_SECRET_KEY: TURNSTILE_TEST_SECRET_KEY,
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: TURNSTILE_TEST_SITE_KEY,
+      TURNSTILE_CHALLENGE_SECRET_KEY: TURNSTILE_TEST_SECRET_KEY,
+      NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY: TURNSTILE_TEST_SITE_KEY,
       BETTER_AUTH_TRUSTED_ORIGINS: " https://a-shopping-memos.vercel.app , https://b-shopping-memos.vercel.app/ ,",
     })
     expect(env.trustedOrigins).toEqual([
@@ -118,6 +129,19 @@ describe("認証の環境変数の確認（#61 A3a 0.3）", () => {
     expect(() =>
       resolveAuthEnv({ ...PROD_ENV, NEXT_PUBLIC_TURNSTILE_SITE_KEY: TURNSTILE_TEST_SITE_KEY })
     ).toThrow(/NEXT_PUBLIC_TURNSTILE_SITE_KEY/)
+    expect(() =>
+      resolveAuthEnv({ ...PROD_ENV, TURNSTILE_CHALLENGE_SECRET_KEY: TURNSTILE_TEST_SECRET_KEY })
+    ).toThrow(/TURNSTILE_CHALLENGE_SECRET_KEY/)
+    expect(() =>
+      resolveAuthEnv({ ...PROD_ENV, NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY: TURNSTILE_TEST_SITE_KEY })
+    ).toThrow(/NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY/)
+  })
+
+  it.each([
+    ["TURNSTILE_CHALLENGE_SECRET_KEY", "0x4AAAAAAA-real-secret"],
+    ["NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY", "0x4AAAAAAA-real-site"],
+  ])("本番では、対話型のウィジェット（%s）が非表示のものと同じ値ならエラーにする（#61 A3b）", (name, value) => {
+    expect(() => resolveAuthEnv({ ...PROD_ENV, [name]: value })).toThrow(new RegExp(name))
   })
 
   it("ローカルの開発で欠けていれば、開発用の値と Turnstile のテスト用のキーにする", () => {
@@ -127,7 +151,12 @@ describe("認証の環境変数の確認（#61 A3a 0.3）", () => {
     expect(env.secret.length).toBeGreaterThanOrEqual(32)
     expect(env.otpEventHmacKey.length).toBeGreaterThanOrEqual(32)
     expect(env.otpEventHmacKey).not.toBe(env.secret)
-    expect(env.turnstile).toEqual({ secretKey: TURNSTILE_TEST_SECRET_KEY, siteKey: TURNSTILE_TEST_SITE_KEY })
+    expect(env.turnstile).toEqual({
+      secretKey: TURNSTILE_TEST_SECRET_KEY,
+      siteKey: TURNSTILE_TEST_SITE_KEY,
+      challengeSecretKey: TURNSTILE_TEST_SECRET_KEY,
+      challengeSiteKey: TURNSTILE_TEST_SITE_KEY,
+    })
   })
 
   it("ローカルの開発でも、設定した値はそのまま使う", () => {

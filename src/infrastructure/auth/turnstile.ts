@@ -23,7 +23,7 @@ interface SiteverifyResult {
 export interface VerifyTurnstileInput {
   token: string | null
   remoteIp: string
-  /** 対話型のチャレンジの段階か（A3b。A3a では常に false） */
+  /** 対話型のチャレンジの段階か（A3b）。true ならチャレンジ用のウィジェットの secret でだけ確かめる */
   challenge: boolean
   env: Pick<AuthEnv, "turnstile" | "trustedOrigins">
   fetch?: typeof fetch
@@ -32,11 +32,13 @@ export interface VerifyTurnstileInput {
 export async function verifyTurnstileToken({
   token,
   remoteIp,
+  challenge,
   env,
   fetch: fetchImpl = fetch,
 }: VerifyTurnstileInput): Promise<boolean> {
   if (!token || token.length > TOKEN_MAX_LENGTH) return false
-  const secret = env.turnstile.secretKey
+  // チャレンジの段階では、非表示のウィジェットのトークンを受け付けない（その secret で確かめない）
+  const secret = challenge ? env.turnstile.challengeSecretKey : env.turnstile.secretKey
 
   if (/^[123]x0000/.test(secret)) return secret.startsWith("1x")
 

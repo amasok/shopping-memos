@@ -7,6 +7,7 @@ import { emailOTP } from "better-auth/plugins/email-otp"
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js"
 import { and, count, eq, gt } from "drizzle-orm"
 import * as schema from "@/infrastructure/db/drizzle/schema"
+import { OTP_POLICY, requiresChallenge } from "@/modules/identity/domain/services/otpAbusePolicy"
 import { OtpEventRepository } from "@/modules/identity/infrastructure/OtpEventRepository"
 import { createEmailSender, resolveEmailConfig, type EmailSender } from "./email"
 import { resolveAuthEnv, type AuthEnv } from "./env"
@@ -72,6 +73,8 @@ export interface AuthDeps {
   emailSender: EmailSender
   otpEvents: OtpEventRepository
   verifyTurnstile: TurnstileCheck
+  /** 送信数の監視の知らせの宛先（OTP_ALERT_EMAIL。A3b）。なければログの警告だけ */
+  alertEmail?: string
   /** EMAIL_RECIPIENT_ALLOWLIST（Preview だけ）。外のアドレスには黙って送らない（新しいコードも作らない） */
   recipientAllowlist?: ReadonlySet<string>
   /** メールの送信を応答と切り離す（Next.js の after）。なければ送り終わるまで待つ */
@@ -131,6 +134,38 @@ export function createAuth(deps: AuthDeps) {
     return row?.n ?? 0
   }
 
+  /** 応答と切り離して動かす（runInBackground がなければ終わるまで待つ）。失敗はログに出すだけ */
+  async function runDetached(label: string, work: () => Promise<void>): Promise<void> {
+    const task = work().catch((error: unknown) => {
+      console.error(`[auth] ${label}に失敗しました`, error)
+    })
+    if (deps.runInBackground) deps.runInBackground(task)
+    else await task
+  }
+
+  /** 本人への制限の通知（A3b）。登録済みのアドレスに 24 時間に 1 通まで（notifyOnce が判定して記録する） */
+  async function notifyRestricted(email: string): Promise<void> {
+    if (!(await deps.otpEvents.notifyOnce(email, now()))) return
+    await runDetached("制限の通知の送信", () =>
+      deps.emailSender.sendNotice({ to: email, notice: { kind: "otp-locked" } })
+    )
+  }
+
+  /** 送信数の監視（A3b）。実際に送った後に呼ぶ */
+  async function checkSendVolume(): Promise<void> {
+    const { alert, sentLast24h } = await deps.otpEvents.checkAlert(now())
+    if (!alert) return
+    console.warn(`[auth] 直近 24 時間のログインコードの送信が ${sentLast24h} 通になりました（しきい値 ${OTP_POLICY.alertSendsAbove} 通）`)
+    const to = deps.alertEmail
+    if (!to) return
+    await runDetached("送信数の知らせの送信", () =>
+      deps.emailSender.sendNotice({
+        to,
+        notice: { kind: "otp-alert", sentCount: sentLast24h, threshold: OTP_POLICY.alertSendsAbove },
+      })
+    )
+  }
+
   const before = createAuthMiddleware(async (ctx) => {
     if (ctx.path === SEND_OTP_PATH) {
       if (typeof ctx.body !== "object" || ctx.body === null) badRequest("INVALID_EMAIL", "Invalid email")
@@ -141,14 +176,22 @@ export function createAuth(deps: AuthDeps) {
 
       const headers = ctx.headers ?? new Headers()
       const ip = clientIpKey(headers)
-      // アドレスに依存しない理由（Turnstile・IP の上限）は、その旨を返してよい（specs「送信の結果でアドレスの存在が分からない」）
+      // 狙われたアドレス（送信 20 通・失敗 30 回。IP を問わず、登録の有無も見ない）は、対話型のチャレンジの段階（A3b）。
+      // 止めずに、チャレンジ用のウィジェットの secret でだけ確かめる。本人に通知する
+      const challenge = requiresChallenge(await deps.otpEvents.addressCounts(email, now()))
+      if (challenge) await notifyRestricted(email)
+      // アドレスに依存しない理由（Turnstile・IP の上限）は、その旨を返してよい（specs「送信の結果でアドレスの存在が分からない」）。
+      // チャレンジの段階かどうかは登録の有無によらないので、TURNSTILE_CHALLENGE_REQUIRED も登録の有無を明かさない
       // Cloudflare には丸める前の訪問者の IP を渡す（/64 に丸めたキーではなく）
       const turnstileOk = await deps.verifyTurnstile({
         token: headers.get(TURNSTILE_TOKEN_HEADER),
         remoteIp: clientIpForTurnstile(headers),
-        challenge: false,
+        challenge,
       })
       if (!turnstileOk) {
+        if (challenge) {
+          throw new APIError("FORBIDDEN", { code: "TURNSTILE_CHALLENGE_REQUIRED", message: "Interactive challenge required" })
+        }
         throw new APIError("FORBIDDEN", { code: "TURNSTILE_FAILED", message: "Bot check failed" })
       }
       if ((await sentFromIpToday(ip)) >= IP_LIMITS.sendPerDay) {
@@ -160,6 +203,8 @@ export function createAuth(deps: AuthDeps) {
       if (deps.recipientAllowlist && !deps.recipientAllowlist.has(email)) return silent
       const decision = await deps.otpEvents.guardSend(email, ip, now())
       if (decision.kind === "silent") return silent
+      // 監視は応答と切り離す（送ったときだけトランザクションが増え、見送ったときとの時間の差が広がらないように）
+      await runDetached("送信数の監視", checkSendVolume)
 
       replaceBody(ctx, { email, type: "sign-in" })
       return
@@ -184,6 +229,10 @@ export function createAuth(deps: AuthDeps) {
         }
         // 1 つのコードの 3 回を超えた: Better Auth の 3 回まちがえたときと同じ応答
         throw new APIError("FORBIDDEN", { code: "TOO_MANY_ATTEMPTS", message: "Too many attempts" })
+      }
+      // ロックされた、または失敗が 30 回に達してチャレンジの段階に入ったら、本人に通知する（A3b）
+      if (decision.locksAfter || requiresChallenge(await deps.otpEvents.addressCounts(email, now()))) {
+        await notifyRestricted(email)
       }
       // name・image などは受け付けない（新しいユーザーは name ''。表示名は A4）
       replaceBody(ctx, { email, otp })
@@ -280,6 +329,7 @@ export async function getAuth(): Promise<Auth> {
     otpEvents: new OtpEventRepository(db, env.otpEventHmacKey),
     verifyTurnstile: (input) => verifyTurnstileToken({ ...input, env }),
     recipientAllowlist: emailConfig.allowlist,
+    alertEmail: emailConfig.alertEmail,
     runInBackground: (task) => {
       try {
         after(task)

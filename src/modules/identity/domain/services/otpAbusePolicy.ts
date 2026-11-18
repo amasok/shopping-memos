@@ -5,7 +5,8 @@
  * 呼ぶ側（OtpEventRepository）は、アドレスの advisory lock の中で「読む → 判定 → 進むときだけ記録する」の順に行う。
  * 同じアドレスのリクエストは直列になるので、同時の照合でも数えもれがない。照合として扱わなかったもの（断ったもの）は記録しない
  *
- * A3b（61-a3b-otp-abuse-escalation）で、チャレンジの段階と、ログインの成功でのロックの解除を足す
+ * A3b（61-a3b-otp-abuse-escalation）: 狙われたアドレスへの対話型のチャレンジ、ログインの成功でのロックの解除、
+ * 本人への通知と管理者への知らせの判定
  */
 
 export type OtpEventKind = "sent" | "attempted" | "locked" | "unlocked" | "notified" | "alerted"
@@ -35,6 +36,16 @@ export const OTP_POLICY = {
   windowMs: DAY,
   /** 記録の保持期間 */
   retentionMs: 30 * DAY,
+  /** アドレスへの送信（IP を問わない、直近 24 時間）がこの数に達したら、対話型のチャレンジが要る（A3b） */
+  challengeSendsPerAddress: 20,
+  /** アドレスの照合の失敗（IP を問わない、直近 24 時間かつ最後の unlocked の後）がこの数に達したら、対話型のチャレンジが要る（A3b） */
+  challengeFailuresPerAddress: 30,
+  /** 本人への制限の通知は、この間に 1 通まで（A3b） */
+  noticeIntervalMs: DAY,
+  /** 直近 24 時間の送信（全体）がこの数を超えたら、管理者に知らせる（A3b） */
+  alertSendsAbove: 70,
+  /** 管理者への知らせは、この間に 1 回まで（A3b） */
+  alertIntervalMs: DAY,
 } as const
 
 export type SendDecision =
@@ -60,8 +71,16 @@ function latest(events: readonly OtpEventRecord[], kind: OtpEventKind): OtpEvent
   return found
 }
 
+/** この「アドレス × IP」がロック中か。ロックの後にログインの成功（unlocked。IP を問わない）があれば解けている（A3b） */
 function isLocked(events: readonly OtpEventRecord[], ip: string, now: Date): boolean {
-  return events.some((e) => e.kind === "locked" && e.ip === ip && within(e, now, OTP_POLICY.lockDurationMs))
+  const lastUnlocked = latest(events, "unlocked")
+  return events.some(
+    (e) =>
+      e.kind === "locked" &&
+      e.ip === ip &&
+      within(e, now, OTP_POLICY.lockDurationMs) &&
+      (!lastUnlocked || e.createdAt > lastUnlocked.createdAt)
+  )
 }
 
 /** 累積ロックに数える照合（同じ IP、直近 24 時間、最後の unlocked の後） */
@@ -108,6 +127,34 @@ export function decideVerify(events: readonly OtpEventRecord[], ip: string, now:
   }
 
   return { kind: "verify", locksAfter: towardLock + 1 >= OTP_POLICY.attemptsPerAddressIpBeforeLock }
+}
+
+/** アドレス全体（IP を問わない）の数。登録の有無は含めない（列挙対策） */
+export interface AddressCounts {
+  /** 直近 24 時間の sent */
+  sentLast24h: number
+  /** 直近 24 時間かつ最後の unlocked の後の attempted（照合の失敗の数） */
+  failuresSinceUnlockLast24h: number
+}
+
+/** 対話型のチャレンジが要るか（A3b）。送信の数は unlocked で区切らない（送信の枠を守るため） */
+export function requiresChallenge(counts: AddressCounts): boolean {
+  return (
+    counts.sentLast24h >= OTP_POLICY.challengeSendsPerAddress ||
+    counts.failuresSinceUnlockLast24h >= OTP_POLICY.challengeFailuresPerAddress
+  )
+}
+
+/** 本人に制限の通知を送るか（A3b）。登録済みのアドレスだけ、直近 24 時間に 1 通まで */
+export function shouldNotify(input: { registered: boolean; lastNotifiedAt: Date | undefined; now: Date }): boolean {
+  if (!input.registered) return false
+  return !input.lastNotifiedAt || input.now.getTime() - input.lastNotifiedAt.getTime() >= OTP_POLICY.noticeIntervalMs
+}
+
+/** 管理者に送信数の知らせを送るか（A3b）。直近 24 時間の送信が 70 通を超え、直近 24 時間に知らせていないとき */
+export function shouldAlert(input: { sentLast24h: number; lastAlertedAt: Date | undefined; now: Date }): boolean {
+  if (input.sentLast24h <= OTP_POLICY.alertSendsAbove) return false
+  return !input.lastAlertedAt || input.now.getTime() - input.lastAlertedAt.getTime() >= OTP_POLICY.alertIntervalMs
 }
 
 /** 保持期間（30 日）を過ぎた記録か */

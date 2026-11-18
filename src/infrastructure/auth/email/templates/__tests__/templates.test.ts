@@ -97,7 +97,8 @@ describe("通知のメール", () => {
 
   it("ロックの通知は、心当たりがなければ問題ないと伝える", () => {
     const mail = renderNoticeEmail({ kind: "otp-locked" })
-    expect(mail.text).toContain("ログインの試行が繰り返されたため一時的に制限しました")
+    // specs（61-a3b「制限の通知と解除」）の文言
+    expect(mail.text).toContain("ログインの試行が繰り返されたため、一時的に制限しました。心当たりがなければ問題ありません")
     expect(mail.text).toContain("心当たりがなければ問題ありません")
   })
 

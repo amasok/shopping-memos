@@ -22,7 +22,8 @@ export interface AuthEnv {
   /** baseURL と BETTER_AUTH_TRUSTED_ORIGINS（Preview のホストなど） */
   trustedOrigins: string[]
   otpEventHmacKey: string
-  turnstile: { secretKey: string; siteKey: string }
+  /** 非表示のウィジェット（secretKey・siteKey）と、狙われたアドレス用の対話型のウィジェット（challenge*。A3b） */
+  turnstile: { secretKey: string; siteKey: string; challengeSecretKey: string; challengeSiteKey: string }
 }
 
 export class AuthConfigError extends Error {
@@ -85,6 +86,8 @@ const envSchema = z.object({
   OTP_EVENT_HMAC_KEY: blankToUndefined.pipe(z.string().min(KEY_MIN_LENGTH).optional()),
   TURNSTILE_SECRET_KEY: blankToUndefined,
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: blankToUndefined,
+  TURNSTILE_CHALLENGE_SECRET_KEY: blankToUndefined,
+  NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY: blankToUndefined,
 })
 
 function baseURLIsHttps(url: string | undefined): boolean {
@@ -110,6 +113,8 @@ export function resolveAuthEnv(env: Env): AuthEnv {
       OTP_EVENT_HMAC_KEY: v.OTP_EVENT_HMAC_KEY,
       TURNSTILE_SECRET_KEY: v.TURNSTILE_SECRET_KEY,
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: v.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
+      TURNSTILE_CHALLENGE_SECRET_KEY: v.TURNSTILE_CHALLENGE_SECRET_KEY,
+      NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY: v.NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY,
     }
     const missing = Object.entries(required)
       .filter(([, value]) => !value)
@@ -128,15 +133,30 @@ export function resolveAuthEnv(env: Env): AuthEnv {
   const turnstile = {
     secretKey: v.TURNSTILE_SECRET_KEY ?? TURNSTILE_TEST_SECRET_KEY,
     siteKey: v.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? TURNSTILE_TEST_SITE_KEY,
+    challengeSecretKey: v.TURNSTILE_CHALLENGE_SECRET_KEY ?? TURNSTILE_TEST_SECRET_KEY,
+    challengeSiteKey: v.NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY ?? TURNSTILE_TEST_SITE_KEY,
   }
   if (env.VERCEL_ENV === "production") {
     const testKeys = [
       ["TURNSTILE_SECRET_KEY", turnstile.secretKey],
       ["NEXT_PUBLIC_TURNSTILE_SITE_KEY", turnstile.siteKey],
+      ["TURNSTILE_CHALLENGE_SECRET_KEY", turnstile.challengeSecretKey],
+      ["NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY", turnstile.challengeSiteKey],
     ].filter(([, key]) => TURNSTILE_TEST_KEY_PATTERN.test(key))
     if (testKeys.length > 0) {
       throw new AuthConfigError(
         `本番では Turnstile のテスト用のキーを使えません: ${testKeys.map(([name]) => name).join(", ")}`
+      )
+    }
+    // 対話型のウィジェットは、非表示のものと別のウィジェットにする。同じだと、チャレンジの段階でも
+    // 非表示のウィジェットのトークンが通ってしまう（61-a3b「チャレンジの段階では非表示のウィジェットのトークンを受け付けない」）
+    const sameWidget = [
+      turnstile.challengeSecretKey === turnstile.secretKey ? "TURNSTILE_CHALLENGE_SECRET_KEY" : null,
+      turnstile.challengeSiteKey === turnstile.siteKey ? "NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY" : null,
+    ].filter((name): name is string => name !== null)
+    if (sameWidget.length > 0) {
+      throw new AuthConfigError(
+        `本番では、対話型のウィジェットを非表示のものと別にしてください: ${sameWidget.join(", ")}`
       )
     }
   }

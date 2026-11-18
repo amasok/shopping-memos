@@ -12,6 +12,8 @@ const PROD_AUTH_ENV = {
   OTP_EVENT_HMAC_KEY: "h".repeat(32),
   TURNSTILE_SECRET_KEY: "0x4AAAAAAA-real-secret",
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: "0x4AAAAAAA-real-site",
+  TURNSTILE_CHALLENGE_SECRET_KEY: "0x4AAAAAAA-real-challenge-secret",
+  NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY: "0x4AAAAAAA-real-challenge-site",
 }
 
 describe("起動時の環境変数の確認（#61 A3a 0.3）", () => {
@@ -31,6 +33,7 @@ describe("起動時の環境変数の確認（#61 A3a 0.3）", () => {
         ...PROD_AUTH_ENV,
         RESEND_API_KEY: "re_dummy",
         EMAIL_FROM: "noreply@mail.counoco.net",
+        OTP_ALERT_EMAIL: "admin@example.com",
       })
     ).not.toThrow()
   })

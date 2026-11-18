@@ -11,6 +11,7 @@ describe("ログイン画面のエラーの文言（#61 A3a 4.3）", () => {
     [{ status: 429, code: "RATE_LIMITED" }, "しばらく時間をおいてからお試しください"],
     [{ status: 429 }, "しばらく時間をおいてからお試しください"],
     [{ status: 403, code: "TURNSTILE_FAILED" }, LOGIN_MESSAGES.botCheckFailed],
+    [{ status: 403, code: "TURNSTILE_CHALLENGE_REQUIRED" }, "確認のため、下の確認を完了してから送信してください"],
     [{ status: 400, code: "INVALID_EMAIL" }, "メールアドレスの形式が正しくありません"],
     [{ status: 500 }, LOGIN_MESSAGES.unknown],
     [null, LOGIN_MESSAGES.unknown],

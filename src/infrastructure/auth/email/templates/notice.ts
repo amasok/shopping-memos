@@ -35,7 +35,7 @@ export function renderNoticeEmail(notice: EmailNotice): EmailContent {
       ])
     case "otp-locked":
       return buildContent("ログインを一時的に制限しました", [
-        "ログインの試行が繰り返されたため一時的に制限しました。心当たりがなければ問題ありません。",
+        "ログインの試行が繰り返されたため、一時的に制限しました。心当たりがなければ問題ありません。",
         "ご本人がパスキーでログインするか、ふだん使っている端末からメールのコードでログインすると、制限は解除されます。",
       ])
     case "otp-alert":

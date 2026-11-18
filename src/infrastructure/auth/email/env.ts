@@ -109,6 +109,10 @@ export function resolveEmailConfig(
 
   if (RESEND_API_KEY) {
     if (!EMAIL_FROM) throw new EmailConfigError("RESEND_API_KEY を使うには EMAIL_FROM が必要です")
+    // 本番は送信数の監視の知らせ（A3b）の宛先が要る。Preview は任意
+    if (env.VERCEL_ENV === "production" && !OTP_ALERT_EMAIL) {
+      throw new EmailConfigError("本番では OTP_ALERT_EMAIL が必要です")
+    }
     return { mode: "resend", apiKey: RESEND_API_KEY, from: EMAIL_FROM, ...extras }
   }
 

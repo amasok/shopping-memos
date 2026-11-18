@@ -69,6 +69,8 @@ describe("CI ワークフローの E2E ジョブ", () => {
     expect(e2e.env?.OTP_EVENT_HMAC_KEY).not.toBe(e2e.env?.BETTER_AUTH_SECRET)
     expect(e2e.env?.TURNSTILE_SECRET_KEY).toMatch(/^1x0000/)
     expect(e2e.env?.NEXT_PUBLIC_TURNSTILE_SITE_KEY).toMatch(/^1x0000/)
+    expect(e2e.env?.TURNSTILE_CHALLENGE_SECRET_KEY).toMatch(/^1x0000/)
+    expect(e2e.env?.NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY).toMatch(/^1x0000/)
   })
 
   it("E2E 実行前にマイグレーションを適用する", () => {

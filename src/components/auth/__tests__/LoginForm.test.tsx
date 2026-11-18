@@ -19,6 +19,19 @@ vi.mock("@/infrastructure/auth/client", () => ({
 vi.mock("../useTurnstile", () => ({
   useTurnstile: () => ({ containerRef: { current: null }, getToken: state.getToken }),
 }))
+// 対話型のウィジェットの代わり。押すとトークンを渡す
+vi.mock("../TurnstileChallenge", () => ({
+  TurnstileChallenge: ({ onToken, onError }: { onToken: (token: string) => void; onError: () => void }) => (
+    <>
+      <button type="button" data-testid="challenge-solve" onClick={() => onToken("challenge-token")}>
+        solve
+      </button>
+      <button type="button" data-testid="challenge-error" onClick={() => onError()}>
+        error
+      </button>
+    </>
+  ),
+}))
 
 import { LoginForm, RESEND_COOLDOWN_SECONDS } from "../LoginForm"
 
@@ -165,6 +178,78 @@ describe("ログイン画面", () => {
     await submitEmail()
     fireEvent.click(screen.getByTestId("login-change-email"))
     expect(screen.getByTestId("login-email")).toBeInTheDocument()
+  })
+
+  it("チャレンジが要るアドレスでは、対話型のウィジェットを出し、通ったらそのトークンで送り直す（#61 A3b）", async () => {
+    state.send
+      .mockResolvedValueOnce({ data: null, error: { status: 403, code: "TURNSTILE_CHALLENGE_REQUIRED" } })
+      .mockResolvedValueOnce({ data: { success: true }, error: null })
+    render(<LoginForm callbackUrl={null} />)
+    await submitEmail()
+    expect(screen.getByTestId("login-challenge")).toBeInTheDocument()
+    expect(screen.getByTestId("login-error")).toHaveTextContent("確認のため、下の確認を完了してから送信してください")
+    expect(screen.queryByTestId("login-code-sent")).toBeNull()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("challenge-solve"))
+    })
+    expect(state.send).toHaveBeenLastCalledWith(
+      { email: "taro@example.com", type: "sign-in" },
+      { headers: { "x-turnstile-token": "challenge-token" } }
+    )
+    expect(screen.getByTestId("login-code-sent")).toBeInTheDocument()
+    expect(screen.queryByTestId("login-challenge")).toBeNull()
+  })
+
+  it("チャレンジを通したトークンでも、もう一度チャレンジが要ると言われたら、ウィジェットを出し直さずに読み込み直しを案内する", async () => {
+    state.send.mockResolvedValue({ data: null, error: { status: 403, code: "TURNSTILE_CHALLENGE_REQUIRED" } })
+    render(<LoginForm callbackUrl={null} />)
+    await submitEmail()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("challenge-solve"))
+    })
+    expect(state.send).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId("login-challenge")).toBeNull()
+    expect(screen.getByTestId("login-error")).toHaveTextContent(
+      "確認に失敗しました。ページを読み込み直してから、もう一度お試しください"
+    )
+  })
+
+  it("対話型のウィジェットがエラーになったら、読み込み直しを案内する", async () => {
+    state.send.mockResolvedValueOnce({ data: null, error: { status: 403, code: "TURNSTILE_CHALLENGE_REQUIRED" } })
+    render(<LoginForm callbackUrl={null} />)
+    await submitEmail()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("challenge-error"))
+    })
+    expect(screen.queryByTestId("login-challenge")).toBeNull()
+    expect(screen.getByTestId("login-error")).toHaveTextContent(
+      "確認に失敗しました。ページを読み込み直してから、もう一度お試しください"
+    )
+  })
+
+  it("再送信でチャレンジが要ると言われたときも、対話型のウィジェットを出す", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false })
+    render(<LoginForm callbackUrl={null} />)
+    await submitEmail()
+    for (let i = 0; i < RESEND_COOLDOWN_SECONDS; i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(1000)
+      })
+    }
+    state.send.mockResolvedValueOnce({ data: null, error: { status: 403, code: "TURNSTILE_CHALLENGE_REQUIRED" } })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("login-resend"))
+    })
+    expect(screen.getByTestId("login-challenge")).toBeInTheDocument()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("challenge-solve"))
+    })
+    expect(state.send).toHaveBeenLastCalledWith(
+      { email: "taro@example.com", type: "sign-in" },
+      { headers: { "x-turnstile-token": "challenge-token" } }
+    )
+    expect(screen.queryByTestId("login-challenge")).toBeNull()
   })
 
   it("オフラインではコードを送れない", async () => {

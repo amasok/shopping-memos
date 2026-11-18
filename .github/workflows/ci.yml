@@ -86,6 +86,7 @@ jobs:
           DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
           # クライアントに埋め込まれる Turnstile のサイトキー。Cloudflare のテスト用のキー（#61 A3a）
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"
+          NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY: "1x00000000000000000000AA"
 
   migrate:
     name: Migrate Production DB
@@ -232,6 +233,8 @@ jobs:
       # Cloudflare の Turnstile のテスト用のキー（常に成功）
       TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA"
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"
+      TURNSTILE_CHALLENGE_SECRET_KEY: "1x0000000000000000000000000000000AA"
+      NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY: "1x00000000000000000000AA"
 
     steps:
       - name: Checkout

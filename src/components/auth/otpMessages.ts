@@ -9,6 +9,8 @@ export const LOGIN_MESSAGES = {
   expired: "コードの有効期限が切れました。再送信してください",
   rateLimited: "しばらく時間をおいてからお試しください",
   botCheckFailed: "確認に失敗しました。ページを読み込み直してから、もう一度お試しください",
+  /** 狙われたアドレスの対話型のチャレンジ（#61 A3b） */
+  challenge: "確認のため、下の確認を完了してから送信してください",
   invalidEmail: "メールアドレスの形式が正しくありません",
   unknown: "エラーが発生しました。もう一度お試しください",
   migration: "ログイン方法が変わりました。以前 Google で使っていた Gmail のアドレスを入力してください",
@@ -33,6 +35,8 @@ export function otpErrorMessage(error: AuthErrorLike | null | undefined): string
       return LOGIN_MESSAGES.rateLimited
     case "TURNSTILE_FAILED":
       return LOGIN_MESSAGES.botCheckFailed
+    case "TURNSTILE_CHALLENGE_REQUIRED":
+      return LOGIN_MESSAGES.challenge
     case "INVALID_EMAIL":
       return LOGIN_MESSAGES.invalidEmail
   }

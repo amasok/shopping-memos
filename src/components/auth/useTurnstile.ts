@@ -13,17 +13,17 @@ import { useCallback, useEffect, useRef } from "react"
 export const TURNSTILE_SCRIPT_URL = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
 export const TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA"
 export const TURNSTILE_DUMMY_TOKEN = "XXXX.DUMMY.TOKEN.XXXX"
-const ACTION = "send-otp"
+export const TURNSTILE_ACTION = "send-otp"
 const TOKEN_TIMEOUT_MS = 30_000
 
-interface TurnstileApi {
+export interface TurnstileApi {
   render(
     container: HTMLElement,
     options: {
       sitekey: string
       action: string
-      execution: "execute"
-      appearance: "interaction-only"
+      execution: "execute" | "render"
+      appearance: "interaction-only" | "always"
       callback: (token: string) => void
       "error-callback": () => void
       "expired-callback": () => void
@@ -44,6 +44,11 @@ export function turnstileSiteKey(): string {
   return process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || TURNSTILE_TEST_SITE_KEY
 }
 
+/** 狙われたアドレス用の対話型のウィジェットのサイトキー（#61 A3b） */
+export function turnstileChallengeSiteKey(): string {
+  return process.env.NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY || TURNSTILE_TEST_SITE_KEY
+}
+
 /** スクリプトを読まずにダミーのトークンを返すか（E2E のビルドでテスト用のキーのときだけ） */
 export function usesDummyTurnstile(siteKey: string, e2eBuild = process.env.E2E_BUILD === "true"): boolean {
   return e2eBuild && /^[123]x0000/.test(siteKey)
@@ -51,7 +56,7 @@ export function usesDummyTurnstile(siteKey: string, e2eBuild = process.env.E2E_B
 
 let scriptPromise: Promise<TurnstileApi> | null = null
 
-function loadScript(): Promise<TurnstileApi> {
+export function loadTurnstileScript(): Promise<TurnstileApi> {
   if (window.turnstile) return Promise.resolve(window.turnstile)
   scriptPromise ??= new Promise((resolve, reject) => {
     const script = document.createElement("script")
@@ -76,7 +81,7 @@ export function useTurnstile(siteKey: string = turnstileSiteKey()) {
   useEffect(() => {
     if (dummy) return
     let cancelled = false
-    loadScript()
+    loadTurnstileScript()
       .then((api) => {
         if (cancelled || !containerRef.current || widgetId.current) return
         const settle = (token: string | null) => {
@@ -85,7 +90,7 @@ export function useTurnstile(siteKey: string = turnstileSiteKey()) {
         }
         widgetId.current = api.render(containerRef.current, {
           sitekey: siteKey,
-          action: ACTION,
+          action: TURNSTILE_ACTION,
           execution: "execute",
           appearance: "interaction-only",
           callback: (token) => settle(token),
