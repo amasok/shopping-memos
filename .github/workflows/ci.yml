@@ -54,7 +54,7 @@ jobs:
         run: npm run test:coverage
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage/
@@ -269,7 +269,7 @@ jobs:
         run: E2E_OFFLINE=true npx playwright test --project=offline
 
       - name: Upload E2E report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-report
