@@ -62,6 +62,7 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
   function setup(origin = "http://localhost:3000") {
     const env = { ...resolveAuthEnv({}), baseURL: origin, trustedOrigins: [origin] }
     const mails: { to: string; otp: string }[] = []
+    let clock = Date.now()
     const auth = server.createAuth({
       db,
       env,
@@ -73,6 +74,7 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
       },
       otpEvents: new Repo(db, env.otpEventHmacKey),
       verifyTurnstile: async () => true,
+      now: () => new Date(clock),
     })
     current.auth = auth
     const route = createAuthRouteHandler({ handle: (r) => auth.handler(r), trustedOrigins: () => env.trustedOrigins })
@@ -99,7 +101,7 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
 
     async function login(): Promise<{ cookie: string; setCookie: string; userId: string }> {
       expect((await call("POST", server.SEND_OTP_PATH, { email, type: "sign-in" })).status).toBe(200)
-      const otp = mails.find((m) => m.to === email)!.otp
+      const otp = [...mails].reverse().find((m) => m.to === email)!.otp
       const res = await call("POST", server.SIGN_IN_OTP_PATH, { email, otp })
       expect(res.status).toBe(200)
       const setCookie = res.headers.get("set-cookie")!
@@ -110,7 +112,12 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
     const contextWith = (cookie: string) =>
       createContext({ req: new Request(`${origin}/api/trpc/x`, { headers: { cookie } }) })
 
-    return { call, login, contextWith, email, route }
+    /** 同じアドレスへの再送の間隔（60 秒）を越える */
+    const advance = (ms: number) => {
+      clock += ms
+    }
+
+    return { call, login, contextWith, email, route, advance }
   }
 
   it("許可したパスは動く（送信 → ログイン → セッションの取得 → ログアウト）", async () => {
@@ -147,6 +154,23 @@ describe.skipIf(!TEST_DB_URL)("セッションと認証の route（実 DB）", (
     expect((await t.contextWith(cookie)).userId).toBeDefined()
     expect((await t.call("POST", "/sign-out", {}, cookie)).status).toBe(200)
     expect(await t.contextWith(cookie)).toEqual({})
+  })
+
+  it("すべての端末からログアウトすると、ほかの端末のセッションも使えなくなる（#61 A4）", async () => {
+    const t = setup()
+    const deviceA = await t.login()
+    // もう一方の端末で、同じユーザーとしてログインする
+    t.advance(61 * 1000)
+    const deviceB = await t.login()
+    expect(deviceB.userId).toBe(deviceA.userId)
+    expect((await t.contextWith(deviceB.cookie)).userId).toBe(deviceA.userId)
+
+    const res = await t.call("POST", "/revoke-sessions", {}, deviceA.cookie)
+    expect(res.status).toBe(200)
+    expect(await t.contextWith(deviceB.cookie)).toEqual({})
+    expect(await t.contextWith(deviceA.cookie)).toEqual({})
+    const rest = await db.select().from(schema.authSessions).where(drizzle.eq(schema.authSessions.userId, deviceA.userId))
+    expect(rest).toHaveLength(0)
   })
 
   it("DB からセッションを消すと、すぐ使えなくなる（cookieCache を使わない）", async () => {

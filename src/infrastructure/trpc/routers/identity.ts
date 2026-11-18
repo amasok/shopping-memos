@@ -11,8 +11,10 @@ import {
   joinByInviteCodeSchema,
   removeMemberSchema,
   getGroupMembersQuerySchema,
+  updateProfileSchema,
 } from "@/shared/schemas"
 import { groupRepository } from "@/modules/identity/infrastructure/repositories/DrizzleGroupRepository"
+import { userProfileRepository } from "@/modules/identity/infrastructure/repositories/DrizzleUserProfileRepository"
 import { isUniqueViolation } from "@/infrastructure/db/errors"
 import {
   INVITE_LINK_EXPIRY_DAYS,
@@ -45,6 +47,17 @@ function generateInviteToken(): string {
  * 認証・認可・グループ管理
  */
 export const identityRouter = router({
+  // === プロフィール（#61 A4） ===
+
+  /**
+   * 自分の表示名を保存する。入力は name だけで、変えるのは ctx.userId の行だけ（他人の表示名は変えられない）
+   */
+  updateProfile: protectedProcedure.input(updateProfileSchema).mutation(async ({ ctx, input }) => {
+    const saved = await userProfileRepository.updateDisplayName(ctx.userId, input.name)
+    if (!saved) throw new TRPCError({ code: "NOT_FOUND", message: "ユーザーが見つかりません" })
+    return saved
+  }),
+
   // === グループ ===
 
   /** ユーザーが所属するグループ一覧を取得 */

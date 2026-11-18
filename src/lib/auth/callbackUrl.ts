@@ -23,7 +23,12 @@ export function safeCallbackPath(value: string | null | undefined, origin: strin
   }
 }
 
+/** 今いる画面を戻り先（callbackUrl）にした URL。ホームなら戻り先を付けない */
+export function withCallbackUrl(path: string, currentPath: string): string {
+  return currentPath && currentPath !== "/" ? `${path}?callbackUrl=${encodeURIComponent(currentPath)}` : path
+}
+
 /** ログイン画面の URL（今いる画面を戻り先にする） */
 export function loginUrl(currentPath: string): string {
-  return currentPath && currentPath !== "/" ? `/login?callbackUrl=${encodeURIComponent(currentPath)}` : "/login"
+  return withCallbackUrl("/login", currentPath)
 }

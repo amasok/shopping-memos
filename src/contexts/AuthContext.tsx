@@ -28,6 +28,10 @@ interface AuthContextType {
   /** ログイン画面へ移る（今いる画面を戻り先にする） */
   login: () => Promise<void>
   logout: () => Promise<void>
+  /** この端末を含む、すべての端末のセッションを無効にする（#61 A4） */
+  logoutAllDevices: () => Promise<void>
+  /** セッションを取り直す（表示名を保存した後に、user.name を新しい値にする。#61 A4） */
+  refresh: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -38,7 +42,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
  * Better Auth のクライアントの useSession を包む。tRPC の Context と useAuth() の使い方は変えない
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const { data, isPending, error } = authClient.useSession()
+  const { data, isPending, error, refetch } = authClient.useSession()
 
   const user: User | null = data?.user
     ? {
@@ -58,6 +62,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     window.location.assign(loginUrl(`${window.location.pathname}${window.location.search}`))
   }, [])
 
+  const logoutAllDevices = useCallback(async () => {
+    // 今の logout と同じく、ログイン中だけの状態を消してから、すべてのセッションを無効にする
+    // authClient はエラーで例外を投げず { error } を返すので、結果を見る。失敗したらホームに移らず例外にし、画面で知らせる
+    // （端末をなくしたときに使う操作なので、黙って失敗させない）
+    if (await ensureGuestDataMigrated()) clearLoginScopedState()
+    const result = await authClient.revokeSessions()
+    if (result?.error) throw new Error(`すべての端末からのログアウトに失敗しました: ${result.error.status ?? ""}`)
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/")
+  }, [])
+
+  const refresh = useCallback(async () => {
+    await refetch()
+  }, [refetch])
+
   const logout = useCallback(async () => {
     // ログイン中だけの状態（merge 済みの印・選んでいたグループ）を消してからログアウトする。
     // ゲストのデータは merge が全部成功したときに空になっているので、ログアウト後は空のゲストになる
@@ -70,7 +89,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, status, isLoading: status === "loading", sessionKnown, login, logout }}>
+    <AuthContext.Provider
+      value={{ user, status, isLoading: status === "loading", sessionKnown, login, logout, logoutAllDevices, refresh }}
+    >
       {children}
     </AuthContext.Provider>
   )

@@ -27,6 +27,8 @@ describe("useDataSource ロジック", () => {
         sessionKnown: true,
         login: vi.fn(),
         logout: vi.fn(),
+        logoutAllDevices: vi.fn(),
+        refresh: vi.fn(),
       })
       mockUseGroup.mockReturnValue({
         selectedGroupId: "group-1",
@@ -56,6 +58,8 @@ describe("useDataSource ロジック", () => {
         sessionKnown: true,
         login: vi.fn(),
         logout: vi.fn(),
+        logoutAllDevices: vi.fn(),
+        refresh: vi.fn(),
       })
       mockUseGroup.mockReturnValue({
         selectedGroupId: undefined,
@@ -85,6 +89,8 @@ describe("useDataSource ロジック", () => {
         sessionKnown: true,
         login: vi.fn(),
         logout: vi.fn(),
+        logoutAllDevices: vi.fn(),
+        refresh: vi.fn(),
       })
       mockUseGroup.mockReturnValue({
         selectedGroupId: "group-1", // グループが選択されていても
@@ -112,6 +118,8 @@ describe("useDataSource ロジック", () => {
         sessionKnown: true,
         login: vi.fn(),
         logout: vi.fn(),
+        logoutAllDevices: vi.fn(),
+        refresh: vi.fn(),
       })
 
       const { isLoading } = mockUseAuth()

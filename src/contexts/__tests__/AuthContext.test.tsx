@@ -5,8 +5,14 @@ import { render, screen, act } from "@testing-library/react"
  * AuthContext（#61 A3a 4.1）: Better Auth の useSession を包み、status・login・logout を出す
  */
 const state = vi.hoisted(() => ({
-  session: { data: null as unknown, isPending: false, error: null as unknown },
+  session: { data: null, isPending: false, error: null } as {
+    data: unknown
+    isPending: boolean
+    error: unknown
+    refetch?: () => Promise<void>
+  },
   signOut: vi.fn(async () => {}),
+  revokeSessions: vi.fn(async () => {}),
   calls: [] as string[],
 }))
 
@@ -14,6 +20,7 @@ vi.mock("@/infrastructure/auth/client", () => ({
   authClient: {
     useSession: () => state.session,
     signOut: state.signOut,
+    revokeSessions: state.revokeSessions,
   },
 }))
 vi.mock("@/lib/db/guestData", () => ({
@@ -30,6 +37,12 @@ beforeEach(() => {
   state.signOut.mockReset().mockImplementation(async () => {
     state.calls.push("signOut")
   })
+  state.revokeSessions.mockReset().mockImplementation(async () => {
+    state.calls.push("revokeSessions")
+  })
+  state.session.refetch = vi.fn(async () => {
+    state.calls.push("refetch")
+  })
   assign = vi.fn((url: string) => state.calls.push(`assign:${url}`))
   Object.defineProperty(window, "location", {
     configurable: true,
@@ -38,7 +51,7 @@ beforeEach(() => {
 })
 
 function Probe() {
-  const { user, status, isLoading, sessionKnown, login, logout } = useAuth()
+  const { user, status, isLoading, sessionKnown, login, logout, logoutAllDevices, refresh } = useAuth()
   return (
     <div>
       <span data-testid="status">{status}</span>
@@ -47,7 +60,17 @@ function Probe() {
       <span data-testid="user">{user ? `${user.id}:${user.name}:${user.email}` : "none"}</span>
       <button onClick={() => void login()}>login</button>
       <button onClick={() => void logout()}>logout</button>
+      <button onClick={() => void logoutAllDevices()}>logout-all</button>
+      <button onClick={() => void refresh()}>refresh</button>
     </div>
+  )
+}
+
+/** logoutAllDevices の失敗（例外）を受け取る */
+function LogoutAllProbe() {
+  const { logoutAllDevices } = useAuth()
+  return (
+    <button onClick={() => void logoutAllDevices().catch(() => state.calls.push("rejected"))}>logout-all-catch</button>
   )
 }
 
@@ -120,6 +143,50 @@ describe("AuthContext", () => {
     renderProbe()
     expect(screen.getByTestId("status")).toHaveTextContent("authenticated")
     expect(screen.getByTestId("known")).toHaveTextContent("true")
+  })
+
+  it("すべての端末からログアウトすると、この端末はゲストに戻る（ログイン中だけの状態を消し、すべてのセッションを無効にし、ホームを読み込み直す）", async () => {
+    state.session = { ...state.session, data: { user: { id: "u1", name: "A", email: "a@example.com" } }, isPending: false, error: null }
+    renderProbe()
+    await act(async () => screen.getByText("logout-all").click())
+    expect(state.calls).toEqual(["clear", "revokeSessions", "assign:/"])
+  })
+
+  it("すべての端末からログアウトに失敗したら（サーバーがエラーを返す）、ホームに移らず、例外にする", async () => {
+    state.session = { ...state.session, data: { user: { id: "u1", name: "A", email: "a@example.com" } }, isPending: false, error: null }
+    state.revokeSessions.mockImplementation(async () => {
+      state.calls.push("revokeSessions")
+      return { data: null, error: { status: 500 } } as never
+    })
+    render(
+      <AuthProvider>
+        <LogoutAllProbe />
+      </AuthProvider>
+    )
+    await act(async () => screen.getByText("logout-all-catch").click())
+    expect(state.calls).toEqual(["clear", "revokeSessions", "rejected"])
+  })
+
+  it("すべての端末からログアウトの通信が切れたら、ホームに移らず、例外にする", async () => {
+    state.session = { ...state.session, data: { user: { id: "u1", name: "A", email: "a@example.com" } }, isPending: false, error: null }
+    state.revokeSessions.mockImplementation(async () => {
+      throw new TypeError("Failed to fetch")
+    })
+    render(
+      <AuthProvider>
+        <LogoutAllProbe />
+      </AuthProvider>
+    )
+    await act(async () => screen.getByText("logout-all-catch").click())
+    expect(state.calls).toEqual(["clear", "rejected"])
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it("refresh はセッションを取り直す（表示名を保存した後に使う）", async () => {
+    state.session = { ...state.session, data: { user: { id: "u1", name: "", email: "a@example.com" } }, isPending: false, error: null }
+    renderProbe()
+    await act(async () => screen.getByText("refresh").click())
+    expect(state.calls).toEqual(["refetch"])
   })
 
   it("login はログイン画面へ移り、今いる画面を戻り先にする", async () => {

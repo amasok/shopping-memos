@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/contexts/ThemeContext"
 import { DBProvider } from "@/lib/db/provider"
 import { TRPCProvider } from "@/infrastructure/trpc/provider"
 import { DataMergeStatus } from "@/components/features/sync/DataMergeStatus"
+import { OnboardingGate } from "@/components/auth/OnboardingGate"
 import { type ReactNode } from "react"
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -21,6 +22,7 @@ export function Providers({ children }: { children: ReactNode }) {
                 <DBProvider>
                   {children}
                   <DataMergeStatus />
+                  <OnboardingGate />
                 </DBProvider>
               </GroupProvider>
             </SyncProvider>

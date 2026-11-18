@@ -4,6 +4,7 @@ import { useState } from "react"
 import { AppLayout } from "@/components/layouts/AppLayout"
 import { Header } from "@/components/layouts/Header"
 import { Button, ConfirmDialog, PageContainer } from "@/components/ui"
+import { AccountActions } from "@/components/features/settings/AccountActions"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme, THEMES, type ThemeType } from "@/contexts/ThemeContext"
 import { InstallPrompt } from "@/components/pwa/InstallPrompt"
@@ -90,13 +91,15 @@ export default function SettingsPage() {
                   </div>
                 )}
                 <div className="flex-1">
-                  <p className="font-semibold text-gray-900">{user.name}</p>
-                  <p className="text-sm text-gray-500">{user.email}</p>
+                  <p className="font-semibold text-gray-900" data-testid="account-name">{user.name}</p>
+                  <p className="text-sm text-gray-500" data-testid="account-email">{user.email}</p>
                 </div>
               </div>
+              {/* 表示名の変更・すべての端末からログアウト（#61 A4） */}
+              <AccountActions />
               <Button
                 variant="ghost"
-                className="mt-4 w-full text-red-600 hover:bg-red-50 hover:text-red-700"
+                className="mt-2 w-full text-red-600 hover:bg-red-50 hover:text-red-700"
                 data-testid="logout-button"
                 onClick={handleLogoutClick}
               >

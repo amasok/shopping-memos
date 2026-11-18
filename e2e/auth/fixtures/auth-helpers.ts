@@ -51,7 +51,11 @@ async function readOtp(page: Page, email: string): Promise<OtpState> {
  * 同じアドレスに 60 秒以内に送ると、サーバーは黙って送らない（再送の間隔）。そのときは残りの時間だけ待ってから送る。
  * merge 済みの印は付けないので、次に画面を開くと DataMergeContext がゲストのデータを merge する
  */
-export async function loginWithOtp(page: Page, email: string): Promise<void> {
+export async function loginWithOtp(
+  page: Page,
+  email: string,
+  options: { displayName?: string | null } = {}
+): Promise<void> {
   const ip = nextTestIp()
   const headers = { "content-type": "application/json", origin: E2E_ORIGIN, "x-real-ip": ip }
 
@@ -84,6 +88,17 @@ export async function loginWithOtp(page: Page, email: string): Promise<void> {
     data: { email, otp },
   })
   if (!signIn.ok()) throw new Error(`コードでのログインに失敗しました: ${signIn.status()} ${await signIn.text()}`)
+
+  // 表示名を入れる（#61 A4）。入れないと、表示名が空のユーザーは画面を開くたびに /onboarding へ誘導される。
+  // tRPC の mutation なので、オリジンの確認（#61 A3a の D6）を通るよう Origin を付ける。null なら入れない（表示名の設定の E2E）
+  const displayName = options.displayName === undefined ? `E2E ${email.split("@")[0].slice(0, 40)}` : options.displayName
+  if (displayName !== null) {
+    const res = await page.request.post(`${E2E_ORIGIN}/api/trpc/identity.updateProfile`, {
+      headers: { "content-type": "application/json", origin: E2E_ORIGIN },
+      data: { json: { name: displayName } },
+    })
+    if (!res.ok()) throw new Error(`表示名の保存に失敗しました: ${res.status()} ${await res.text()}`)
+  }
 }
 
 export async function loginAndSaveState(
