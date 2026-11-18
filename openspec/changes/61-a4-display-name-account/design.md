@@ -12,19 +12,22 @@ A3 で Better Auth に切り替え、新しいユーザーは `name: ''` で作�
 
 ### D1. 表示名の検証は shared の schema に置く
 
-- `src/shared/schemas/profile.ts`（新規）に `displayNameSchema`（NFKC → 前後の空白を除く → 1〜50 文字 → 改行・制御文字を拒否）を置き、画面（`/onboarding`・設定の変更）とサーバー（`identity.updateProfile`）で共用する。domain の純粋な規則で、Drizzle・tRPC を import しない
-- 上限の値は `TEXT_LIMITS.displayName`（50）に足す
+- `src/shared/schemas/profile.ts`（新規）に `displayNameSchema`（NFKC → 前後の空白を除く → 1〜50 文字 → 改行・制御文字（C0・C1）と Unicode の書式の文字（一般カテゴリ Cf。U+200B〜200D・U+202A〜202E・U+2066〜2069・U+FEFF など）を拒否）を置き、画面（`/onboarding`・設定の変更）とサーバー（`identity.updateProfile`）で共用する。domain の純粋な規則で、Drizzle・tRPC を import しない
+- 上限の値は `TEXT_LIMITS.displayName`（50）に足す。数えるのはコードポイント（`[...s].length`。絵文字 1 つが 1 文字）。画面の入力欄の上限も同じ数え方にする（`maxLength` は UTF-16 で数えるので使わず、schema の検証で知らせる）
+- NFKC は書式の文字を消さないので、正規化とは別に `\p{Cf}` で確かめる（グループのメンバー一覧で、表示を崩したり、ほかの家族の名前に見せかけたりできないように）
 
 ### D2. 保存は tRPC の `identity.updateProfile`
 
-- `protectedProcedure` で、`ctx.userId` の行の `users.name`・`updated_at` だけを更新する（入力に userId を取らないので、他人の表示名は変えられない）。返り値は保存した表示名
+- `protectedProcedure` で、`ctx.userId` の行の `users.name`・`updated_at` だけを更新する（入力の schema は `{ name }` だけで、`userId` などの余計なキーは捨てる。他人の表示名は変えられない）。返り値は保存した表示名
 - Better Auth の `/update-user` は開かない（許可リストに入れない。`image` などほかの項目を利用者が書き換えられないように）
 - 保存の後、クライアントは `authClient` のセッションを取り直す（`useSession` の `refetch`）。`AuthContext` の `user.name` が新しい値になり、誘導が止まる
 
 ### D3. 表示名の設定への誘導は、画面の共通の部品で行う
 
 - `OnboardingGate`（`src/components/auth/`）を `AuthProvider` の内側に置く。`status === "authenticated"` かつ `user.name === ""` で、今のパスが `/onboarding` でなければ、`/onboarding?callbackUrl=<今のパス>` に `router.replace` する
+- 誘導しないパス: `/onboarding` と、オフラインのフォールバック（`/~offline`）。オフラインでは `user` が null（A3a の sessionKnown）なので、そもそも誘導されない
 - `/onboarding` は、ログインしていない・表示名がある人が開いたら、戻り先（`safeCallbackPath`）かホームに移す
+- `/onboarding` に「ログアウト」を置く（`AuthContext.logout`。ログイン中だけの状態を消してゲストに戻る）。まちがったアドレスでログインした人や、共有の端末で始めた人が、表示名を決めずに抜けられるように
 - サーバー側（tRPC）は表示名が空でも動かす（誘導は画面だけ）。表示名が空のまま API を呼ばれても、データの整合は崩れない
 - ログインの成功の後は今までどおり戻り先を読み込み直し、そこで `OnboardingGate` が誘導する（ログイン画面に分岐を持たない）
 - ゲストの DB の取り込み（`DataMergeContext`）は、`/onboarding` でも今までどおり動く
@@ -41,7 +44,7 @@ A3 で Better Auth に切り替え、新しいユーザーは `name: ''` で作�
 
 ### D6. E2E
 
-- ログインのヘルパー（`loginWithOtp`・`loginAndSaveState`）は、ログインの後に `identity.updateProfile` で表示名を入れる（入れないと、既存の E2E が `/onboarding` に誘導される）
+- ログインのヘルパー（`loginWithOtp`・`loginAndSaveState`）は、ログインの後に `identity.updateProfile` で表示名を入れる（入れないと、既存の E2E が `/onboarding` に誘導される）。tRPC の mutation なので、A3a の D6 のオリジンの確認がかかる。`Origin` ヘッダを付けて呼ぶ
 - 表示名の設定の画面の E2E は、ヘルパーを使わずに画面からログインして確かめる
 
 ## Risks / Trade-offs
