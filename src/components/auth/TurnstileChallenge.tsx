@@ -18,16 +18,21 @@ import {
  */
 export function TurnstileChallenge({
   onToken,
+  onError,
   siteKey = turnstileChallengeSiteKey(),
 }: {
   onToken: (token: string) => void
+  /** ウィジェットがエラーになった・読み込めなかった（利用者に読み込み直しを案内する） */
+  onError?: () => void
   siteKey?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const onTokenRef = useRef(onToken)
+  const onErrorRef = useRef(onError)
   useEffect(() => {
     onTokenRef.current = onToken
-  }, [onToken])
+    onErrorRef.current = onError
+  }, [onToken, onError])
 
   useEffect(() => {
     if (usesDummyTurnstile(siteKey)) {
@@ -45,12 +50,12 @@ export function TurnstileChallenge({
           execution: "render",
           appearance: "always",
           callback: (token) => onTokenRef.current(token),
-          "error-callback": () => {},
+          "error-callback": () => onErrorRef.current?.(),
           "expired-callback": () => {},
         })
       })
       .catch(() => {
-        // 読み込めなければ確認を終えられないので、送り直しは起きない（画面の文言は出たまま）
+        if (!cancelled) onErrorRef.current?.()
       })
     return () => {
       cancelled = true

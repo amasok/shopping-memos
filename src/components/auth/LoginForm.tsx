@@ -53,6 +53,11 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string | null }) {
         { headers: { [TURNSTILE_TOKEN_HEADER]: token ?? "" } }
       )
       if (sendError) {
+        if (sendError.code === "TURNSTILE_CHALLENGE_REQUIRED" && challengeToken) {
+          // チャレンジを通したトークンでも断られた: ウィジェットを出し直すと送信が続くので、読み込み直しを案内する
+          setError(LOGIN_MESSAGES.botCheckFailed)
+          return
+        }
         if (sendError.code === "TURNSTILE_CHALLENGE_REQUIRED") setChallengeEmail(target)
         setError(otpErrorMessage(sendError))
         return
@@ -187,7 +192,14 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string | null }) {
       )}
       {challengeEmail && (
         <div data-testid="login-challenge">
-          <TurnstileChallenge key={challengeEmail} onToken={(token) => void sendCode(challengeEmail, token)} />
+          <TurnstileChallenge
+            key={challengeEmail}
+            onToken={(token) => void sendCode(challengeEmail, token)}
+            onError={() => {
+              setChallengeEmail(null)
+              setError(LOGIN_MESSAGES.botCheckFailed)
+            }}
+          />
         </div>
       )}
       <div ref={containerRef} />

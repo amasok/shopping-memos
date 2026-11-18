@@ -14,6 +14,23 @@ describe("対話型の Turnstile（#61 A3b）", () => {
     expect(document.querySelector('script[src*="challenges.cloudflare.com"]')).toBeNull()
   })
 
+  it("ウィジェットがエラーになったら onError を呼ぶ", async () => {
+    vi.stubEnv("E2E_BUILD", "false")
+    const onError = vi.fn()
+    window.turnstile = {
+      render: (_el, options) => {
+        options["error-callback"]()
+        return "w1"
+      },
+      execute: () => {},
+      reset: () => {},
+      remove: () => {},
+    }
+    render(<TurnstileChallenge siteKey="0x4AAAAAAA-real-challenge-site" onToken={vi.fn()} onError={onError} />)
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
+    delete window.turnstile
+  })
+
   it("本物のサイトキーなら、Turnstile のスクリプトを読み込み、すぐにはトークンを渡さない", () => {
     vi.stubEnv("E2E_BUILD", "false")
     const onToken = vi.fn()

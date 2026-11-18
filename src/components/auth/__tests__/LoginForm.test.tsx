@@ -21,10 +21,15 @@ vi.mock("../useTurnstile", () => ({
 }))
 // 対話型のウィジェットの代わり。押すとトークンを渡す
 vi.mock("../TurnstileChallenge", () => ({
-  TurnstileChallenge: ({ onToken }: { onToken: (token: string) => void }) => (
-    <button type="button" data-testid="challenge-solve" onClick={() => onToken("challenge-token")}>
-      solve
-    </button>
+  TurnstileChallenge: ({ onToken, onError }: { onToken: (token: string) => void; onError: () => void }) => (
+    <>
+      <button type="button" data-testid="challenge-solve" onClick={() => onToken("challenge-token")}>
+        solve
+      </button>
+      <button type="button" data-testid="challenge-error" onClick={() => onError()}>
+        error
+      </button>
+    </>
   ),
 }))
 
@@ -194,6 +199,33 @@ describe("ログイン画面", () => {
     )
     expect(screen.getByTestId("login-code-sent")).toBeInTheDocument()
     expect(screen.queryByTestId("login-challenge")).toBeNull()
+  })
+
+  it("チャレンジを通したトークンでも、もう一度チャレンジが要ると言われたら、ウィジェットを出し直さずに読み込み直しを案内する", async () => {
+    state.send.mockResolvedValue({ data: null, error: { status: 403, code: "TURNSTILE_CHALLENGE_REQUIRED" } })
+    render(<LoginForm callbackUrl={null} />)
+    await submitEmail()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("challenge-solve"))
+    })
+    expect(state.send).toHaveBeenCalledTimes(2)
+    expect(screen.queryByTestId("login-challenge")).toBeNull()
+    expect(screen.getByTestId("login-error")).toHaveTextContent(
+      "確認に失敗しました。ページを読み込み直してから、もう一度お試しください"
+    )
+  })
+
+  it("対話型のウィジェットがエラーになったら、読み込み直しを案内する", async () => {
+    state.send.mockResolvedValueOnce({ data: null, error: { status: 403, code: "TURNSTILE_CHALLENGE_REQUIRED" } })
+    render(<LoginForm callbackUrl={null} />)
+    await submitEmail()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("challenge-error"))
+    })
+    expect(screen.queryByTestId("login-challenge")).toBeNull()
+    expect(screen.getByTestId("login-error")).toHaveTextContent(
+      "確認に失敗しました。ページを読み込み直してから、もう一度お試しください"
+    )
   })
 
   it("再送信でチャレンジが要ると言われたときも、対話型のウィジェットを出す", async () => {
