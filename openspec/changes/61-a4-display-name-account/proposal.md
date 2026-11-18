@@ -2,7 +2,7 @@
 
 Issue: #61（https://github.com/amasok/shopping-memos/issues/61）
 
-**状態: 承認待ち**（末尾の「ユーザーに決めてほしいこと」を参照）
+**状態: 承認済み（2026-11-18）**。ユーザーが末尾の「ユーザーに決めてほしいこと」の 6 点を、すべて提案どおりで承認した（回答「提案どおり承認」。表示名の文字数は 50 のまま）
 
 ## Why
 
@@ -43,7 +43,7 @@ A3（`61-a3-email-otp-login`・`61-a3b-otp-abuse-escalation`）で、メール�
 - 変更: `src/shared/schemas`（表示名の検証）、`src/infrastructure/trpc/routers/identity.ts`（`updateProfile`）、`src/infrastructure/auth/route.ts`（許可リスト）、`src/contexts/AuthContext.tsx`、`src/app/onboarding/page.tsx`（新規）、表示名の設定へ誘導する部品、`src/app/settings/page.tsx`、E2E のログインのヘルパー（ログインの後に表示名を入れる）
 - DB の migration: なし（`users.name` は A2 で NULL を `''` にしてある。NOT NULL は A6）
 
-## ユーザーに決めてほしいこと（提案つき）
+## ユーザーに決めてほしいこと（提案つき。2026-11-18 にすべて提案どおりで承認）
 
 1. **表示名を必須にするか**: 提案は「必須（スキップできない）」。設計書の決定事項 5（2026-11-16）のとおり
 2. **表示名の文字数**: 提案は「1〜50 文字」（設計書のテスト計画どおり）。グループのメンバー一覧の 1 行に収めたいなら 20 文字も考えられる

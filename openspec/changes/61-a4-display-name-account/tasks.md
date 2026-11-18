@@ -1,6 +1,6 @@
 # Tasks
 
-承認の前に実装に入らない。各タスクは RED → GREEN → REFACTOR の順に進める。かっこ内は、そのタスクでテストを書く specs の Scenario。
+承認済み（2026-11-18）。各タスクは RED → GREEN → REFACTOR の順に進める。かっこ内は、そのタスクでテストを書く specs の Scenario。
 
 ## 1. 表示名の検証と保存
 
