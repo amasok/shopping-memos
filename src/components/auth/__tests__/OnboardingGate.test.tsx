@@ -8,9 +8,11 @@ const state = vi.hoisted(() => ({
   auth: { user: null as null | { id: string; name: string; email: string }, status: "unauthenticated" },
   pathname: "/",
   replace: vi.fn(),
+  merge: { isMergeCompleted: true, error: null as string | null },
 }))
 
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => state.auth }))
+vi.mock("@/contexts/DataMergeContext", () => ({ useDataMerge: () => state.merge }))
 vi.mock("next/navigation", () => ({
   usePathname: () => state.pathname,
   useRouter: () => ({ replace: state.replace }),
@@ -20,6 +22,7 @@ import { OnboardingGate } from "../OnboardingGate"
 
 beforeEach(() => {
   state.replace.mockReset()
+  state.merge = { isMergeCompleted: true, error: null }
   Object.defineProperty(window, "location", { configurable: true, value: { ...window.location, search: "" } })
 })
 
@@ -53,6 +56,22 @@ describe("OnboardingGate", () => {
     state.pathname = path
     render(<OnboardingGate />)
     expect(state.replace).not.toHaveBeenCalled()
+  })
+
+  it("ゲストのデータの取り込み（merge。終わると画面を読み込み直す）が片づくまでは誘導しない（入れかけた表示名が消えないように）", () => {
+    state.auth = { user: newUser, status: "authenticated" }
+    state.pathname = "/"
+    state.merge = { isMergeCompleted: false, error: null }
+    render(<OnboardingGate />)
+    expect(state.replace).not.toHaveBeenCalled()
+  })
+
+  it("取り込みがエラーになっても誘導する", () => {
+    state.auth = { user: newUser, status: "authenticated" }
+    state.pathname = "/"
+    state.merge = { isMergeCompleted: false, error: "マージに失敗しました" }
+    render(<OnboardingGate />)
+    expect(state.replace).toHaveBeenCalledWith("/onboarding")
   })
 
   it("表示名のあるユーザーは表示名の設定に進まない", () => {

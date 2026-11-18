@@ -12,7 +12,7 @@ A3 で Better Auth に切り替え、新しいユーザーは `name: ''` で作�
 
 ### D1. 表示名の検証は shared の schema に置く
 
-- `src/shared/schemas/profile.ts`（新規）に `displayNameSchema`（NFKC → 前後の空白を除く → 1〜50 文字 → 改行・制御文字（C0・C1）と Unicode の書式の文字（一般カテゴリ Cf。U+200B〜200D・U+202A〜202E・U+2066〜2069・U+FEFF など）を拒否）を置き、画面（`/onboarding`・設定の変更）とサーバー（`identity.updateProfile`）で共用する。domain の純粋な規則で、Drizzle・tRPC を import しない
+- `src/shared/schemas/profile.ts`（新規）に `displayNameSchema`（NFKC → 前後の空白を除く → 1〜50 文字 → 改行・制御文字（C0・C1、行と段落の区切りの U+2028・U+2029）と Unicode の書式の文字（一般カテゴリ Cf。U+200B〜200D・U+202A〜202E・U+2066〜2069・U+FEFF など）を拒否）を置き、画面（`/onboarding`・設定の変更）とサーバー（`identity.updateProfile`）で共用する。domain の純粋な規則で、Drizzle・tRPC を import しない
 - 上限の値は `TEXT_LIMITS.displayName`（50）に足す。数えるのはコードポイント（`[...s].length`。絵文字 1 つが 1 文字）。画面の入力欄の上限も同じ数え方にする（`maxLength` は UTF-16 で数えるので使わず、schema の検証で知らせる）
 - NFKC は書式の文字を消さないので、正規化とは別に `\p{Cf}` で確かめる（グループのメンバー一覧で、表示を崩したり、ほかの家族の名前に見せかけたりできないように）
 
@@ -30,7 +30,7 @@ A3 で Better Auth に切り替え、新しいユーザーは `name: ''` で作�
 - `/onboarding` に「ログアウト」を置く（`AuthContext.logout`。ログイン中だけの状態を消してゲストに戻る）。まちがったアドレスでログインした人や、共有の端末で始めた人が、表示名を決めずに抜けられるように
 - サーバー側（tRPC）は表示名が空でも動かす（誘導は画面だけ）。表示名が空のまま API を呼ばれても、データの整合は崩れない
 - ログインの成功の後は今までどおり戻り先を読み込み直し、そこで `OnboardingGate` が誘導する（ログイン画面に分岐を持たない）
-- ゲストの DB の取り込み（`DataMergeContext`）は、`/onboarding` でも今までどおり動く
+- ゲストの DB の取り込み（`DataMergeContext`）が片づく（`isMergeCompleted` か `error`）まで、誘導しない。merge は終わると画面を読み込み直すので、先に誘導すると入れかけた表示名が消える（E2E で見つけた。ゲストのデータがなければすぐ片づく）
 
 ### D4. すべての端末からログアウト
 

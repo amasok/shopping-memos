@@ -57,6 +57,19 @@ async function enterCode(page: Page, otp: string) {
   await page.getByTestId("login-submit").click()
 }
 
+/** 新しいユーザーは、ログインの後に表示名の設定（#61 A4）を通る。表示名を入れて戻り先へ進む */
+async function completeOnboarding(page: Page, name = "E2E ユーザー") {
+  await page.waitForURL(/\/onboarding/)
+  await page.getByTestId("display-name-input").fill(name)
+  await page.getByTestId("display-name-submit").click()
+}
+
+/** 新しいユーザーとしてコードを入れ、表示名の設定を済ませる */
+async function enterCodeAsNewUser(page: Page, otp: string) {
+  await enterCode(page, otp)
+  await completeOnboarding(page)
+}
+
 /** ゲストの DB の準備（以前の仕組みからの移行と初期タグ）が終わるまで待ってから、ゲストのデータを入れる */
 async function seedGuestItem(page: Page, name: string) {
   await page.goto("/")
@@ -90,7 +103,7 @@ test("新しいアドレスでログインすると、ホームに移り、そ�
   const otp = await sendCodeFromScreen(page, email)
   // 再送信は 60 秒たつまで押せない
   await expect(page.getByTestId("login-resend")).toBeDisabled()
-  await enterCode(page, otp)
+  await enterCodeAsNewUser(page, otp)
   await page.waitForURL(`${E2E_ORIGIN}/`)
   expect(await sessionEmail(page)).toBe(email)
 })
@@ -99,7 +112,7 @@ test("既存のユーザーでもう一度ログインできる（同じユー�
   test.slow() // 同じアドレスへの 2 回目の送信は、再送の間隔（60 秒）を待つ
   const email = uniqueEmail("existing")
   await page.goto("/login")
-  await enterCode(page, await sendCodeFromScreen(page, email))
+  await enterCodeAsNewUser(page, await sendCodeFromScreen(page, email))
   await page.waitForURL(`${E2E_ORIGIN}/`)
   const first = await page.request.get(`${E2E_ORIGIN}/api/auth/get-session`).then((r) => r.json())
 
@@ -131,7 +144,7 @@ test("3 回まちがえるとコードが無効になり、60 秒たってから
   await expect(page.getByTestId("login-resend")).toBeEnabled({ timeout: 70_000 })
   await page.getByTestId("login-resend").click()
   const next = await waitForNewOtp(page, email, sentAt)
-  await enterCode(page, next)
+  await enterCodeAsNewUser(page, next)
   await page.waitForURL(`${E2E_ORIGIN}/`)
   expect(await sessionEmail(page)).toBe(email)
 })
@@ -141,7 +154,7 @@ test("ログインの前にいた画面に戻る", async ({ page }) => {
   await page.goto("/groups")
   await page.getByRole("button", { name: "ログイン" }).click()
   await page.waitForURL(/\/login\?callbackUrl=%2Fgroups/)
-  await enterCode(page, await sendCodeFromScreen(page, email))
+  await enterCodeAsNewUser(page, await sendCodeFromScreen(page, email))
   await page.waitForURL(`${E2E_ORIGIN}/groups`)
 })
 
@@ -149,7 +162,7 @@ for (const evil of ["https://evil.example/", "//evil.example/", "/\\evil.example
   test(`戻り先に別のサイトは指定できない（${JSON.stringify(evil)}）`, async ({ page }) => {
     const email = uniqueEmail("evil")
     await page.goto(`/login?callbackUrl=${encodeURIComponent(evil)}`)
-    await enterCode(page, await sendCodeFromScreen(page, email))
+    await enterCodeAsNewUser(page, await sendCodeFromScreen(page, email))
     await page.waitForURL(`${E2E_ORIGIN}/`)
     expect(new URL(page.url()).origin).toBe(E2E_ORIGIN)
   })
@@ -160,7 +173,7 @@ test("ログインするとゲストのデータが取り込まれる", async ({
   const name = `ゲストの商品-${Date.now()}`
   await seedGuestItem(page, name)
   await page.goto("/login")
-  await enterCode(page, await sendCodeFromScreen(page, email))
+  await enterCodeAsNewUser(page, await sendCodeFromScreen(page, email))
   await page.waitForURL(`${E2E_ORIGIN}/`)
   await expect
     .poll(
@@ -182,7 +195,7 @@ test("ログアウトするとゲストに戻り、保護されたデータが�
   const name = `ログイン中の商品-${Date.now()}`
   await seedGuestItem(page, name)
   await page.goto("/login")
-  await enterCode(page, await sendCodeFromScreen(page, email))
+  await enterCodeAsNewUser(page, await sendCodeFromScreen(page, email))
   await page.waitForURL(`${E2E_ORIGIN}/`)
   await expect(page.getByText(name)).toBeVisible({ timeout: 30_000 })
 
