@@ -3,7 +3,12 @@ import { describe, it, expect, vi } from "vitest"
 import { SITEVERIFY_URL, TURNSTILE_ACTION, verifyTurnstileToken } from "../turnstile"
 
 const REAL_ENV = {
-  turnstile: { secretKey: "0x4AAAAAAA-real-secret", siteKey: "0x4AAAAAAA-real-site" },
+  turnstile: {
+    secretKey: "0x4AAAAAAA-real-secret",
+    siteKey: "0x4AAAAAAA-real-site",
+    challengeSecretKey: "0x4AAAAAAA-challenge-secret",
+    challengeSiteKey: "0x4AAAAAAA-challenge-site",
+  },
   trustedOrigins: ["https://shopping.counoco.net", "https://preview-shopping-memos.vercel.app"],
 }
 
@@ -27,6 +32,18 @@ describe("Turnstile の siteverify（#61 A3a 2.4）", () => {
     expect(form.get("response")).toBe("tok")
     expect(form.get("remoteip")).toBe("203.0.113.1")
     expect(init!.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it("チャレンジの段階では、チャレンジ用の secret でだけ確かめる（#61 A3b）", async () => {
+    const fetchMock = siteverify(OK)
+    await verifyTurnstileToken({ token: "tok", remoteIp: "unknown", challenge: true, env: REAL_ENV, fetch: fetchMock })
+    expect((fetchMock.mock.calls[0][1]!.body as URLSearchParams).get("secret")).toBe("0x4AAAAAAA-challenge-secret")
+  })
+
+  it("チャレンジの段階でなければ、非表示のウィジェットの secret で確かめる", async () => {
+    const fetchMock = siteverify(OK)
+    await verifyTurnstileToken({ token: "tok", remoteIp: "unknown", challenge: false, env: REAL_ENV, fetch: fetchMock })
+    expect((fetchMock.mock.calls[0][1]!.body as URLSearchParams).get("secret")).toBe("0x4AAAAAAA-real-secret")
   })
 
   it("Preview のホストのトークンも受け付ける（trustedOrigins のホスト）", async () => {
@@ -86,7 +103,10 @@ describe("Turnstile の siteverify（#61 A3a 2.4）", () => {
 
   it("テスト用の secret は、ネットワークに出ずに Cloudflare の決まりどおりに返す（1x は成功、2x・3x は失敗）", async () => {
     const fetchMock = siteverify(OK)
-    const env = (secretKey: string) => ({ ...REAL_ENV, turnstile: { secretKey, siteKey: "1x00000000000000000000AA" } })
+    const env = (secretKey: string) => ({
+      ...REAL_ENV,
+      turnstile: { ...REAL_ENV.turnstile, secretKey, siteKey: "1x00000000000000000000AA" },
+    })
     await expect(
       verifyTurnstileToken({ token: "XXXX.DUMMY.TOKEN.XXXX", remoteIp: "unknown", challenge: false, env: env("1x0000000000000000000000000000000AA"), fetch: fetchMock })
     ).resolves.toBe(true)

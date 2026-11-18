@@ -17,6 +17,16 @@
 - 監視は送信の後に、直近 24 時間の `sent` が 70 件を超え、直近 24 時間に `alerted` がなければ、`alerted` を記録して管理者に送る。同時の送信で 2 通送らないよう、`alerted` の判定も A3a と同じ advisory lock（キーは固定の値）の中で行う
 - テスト用のキーは常に成功するので、チャレンジの Scenario はユニットテスト（siteverify の `fetch` を差し替える）で確かめる
 
+## 実装で決めたこと（2026-11-18）
+
+- 送信の hooks の順: 種類 → 正規化 → **チャレンジの段階かを読む（`addressCounts` → `requiresChallenge`）。段階なら本人に通知** → 段階に応じた secret で Turnstile（`verifyTurnstileToken` の `challenge`）→ IP の 24 時間 → 許可リスト → `guardSend` → 送ったら監視（`checkAlert`）
+- チャレンジの段階で確かめられなければ 403 `TURNSTILE_CHALLENGE_REQUIRED`（段階でなければ今までどおり `TURNSTILE_FAILED`）。段階は登録の有無を見ない数だけで決まるので、応答で登録の有無は分からない。ログイン画面はこのコードで対話型のウィジェットを出す
+- 照合の hooks: `guardVerify` が照合に進めたとき、ロックを記録した（`locksAfter`）か、失敗が 30 回に達してチャレンジの段階になったら、本人に通知する
+- 通知は `OtpEventRepository.notifyOnce`（アドレスの advisory lock の中で、`users` で登録済みかを見て、直近 24 時間の `notified` がなければ記録）。監視は `checkAlert`（固定のキー `otp-events:alert` の advisory lock の中で、直近 24 時間の `sent` を数え、直近 24 時間の `alerted` がなければ記録。`alerted` の `email_hash` は NULL）。メールは `runInBackground`（Next.js の `after()`）で送り、失敗はログだけ
+- ロックの解除: `isLocked` は、最後の `unlocked` より後の `locked` だけをロック中とする。`unlocked` は A3a からログインの成功のたびに記録している
+- 本番は `OTP_ALERT_EMAIL` を必須にした（`resolveEmailConfig`）。Turnstile のチャレンジ用の secret とサイトキーは、本番・Vercel で必須、本番ではテスト用のキーを拒否
+- 通知の文面は specs の文言（「ログインの試行が繰り返されたため、一時的に制限しました。心当たりがなければ問題ありません」）に合わせた
+
 ## Risks / Trade-offs
 
 - [通知で第三者に迷惑をかける] → 登録済みのアドレスだけ、24 時間に 1 通まで

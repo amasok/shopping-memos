@@ -48,11 +48,20 @@ describe("メールの環境変数の検証と送り方の選択", () => {
   })
 
   it("RESEND_API_KEY と EMAIL_FROM があれば Resend", () => {
-    expect(resolveEmailConfig({ RESEND_API_KEY: KEY, EMAIL_FROM: FROM, VERCEL_ENV: "production" })).toEqual({
+    expect(resolveEmailConfig({ RESEND_API_KEY: KEY, EMAIL_FROM: FROM, VERCEL_ENV: "preview" })).toEqual({
       mode: "resend",
       apiKey: KEY,
       from: FROM,
     })
+  })
+
+  it("本番では OTP_ALERT_EMAIL（送信数の監視の知らせの宛先。#61 A3b）が要る", () => {
+    expect(() => resolveEmailConfig({ RESEND_API_KEY: KEY, EMAIL_FROM: FROM, VERCEL_ENV: "production" })).toThrow(
+      /OTP_ALERT_EMAIL/
+    )
+    expect(
+      resolveEmailConfig({ RESEND_API_KEY: KEY, EMAIL_FROM: FROM, VERCEL_ENV: "production", OTP_ALERT_EMAIL: "admin@example.com" })
+    ).toMatchObject({ mode: "resend", alertEmail: "admin@example.com" })
   })
 
   it("EMAIL_FROM はアドレスだけでもよい", () => {

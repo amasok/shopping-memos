@@ -241,10 +241,12 @@ AR1b（A3a・A3b・A4）のリリースの前に、次をそろえる。Google O
 | `OTP_EVENT_HMAC_KEY` | `openssl rand -base64 32`（`BETTER_AUTH_SECRET` と別の値） | ○ | ○ |
 | `TURNSTILE_SECRET_KEY` | Turnstile の非表示のウィジェットの secret | ○（テスト用のキーは起動時に拒否） | テスト用のキー `1x0000000000000000000000000000000AA` |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | 同じウィジェットのサイトキー（ビルド時に埋め込まれる） | ○ | テスト用のキー `1x00000000000000000000AA` |
+| `TURNSTILE_CHALLENGE_SECRET_KEY` | 狙われたアドレス用の対話型のウィジェットの secret（A3b） | ○（テスト用のキーは起動時に拒否） | テスト用のキー `1x0000000000000000000000000000000AA` |
+| `NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY` | 同じ対話型のウィジェットのサイトキー（ビルド時に埋め込まれる。A3b） | ○ | テスト用のキー `1x00000000000000000000AA` |
 | `RESEND_API_KEY` | Resend の API キー（送信だけの権限） | ○ | ○ |
 | `EMAIL_FROM` | `買い物メモ <noreply@mail.counoco.net>` | ○ | ○ |
 | `EMAIL_RECIPIENT_ALLOWLIST` | 家族と開発者のアドレス（カンマ区切り） | 設定しない | ○（必須） |
-| `OTP_ALERT_EMAIL` | 送信数のアラートの宛先（A3b） | ○ | 任意 |
+| `OTP_ALERT_EMAIL` | 送信数のアラートの宛先（A3b） | ○（必須。起動時に確かめる） | 任意 |
 
 - 欠けていると、サーバーの起動時（`src/instrumentation.ts`）に AuthConfigError / EmailConfigError で止まり、**ゲストの画面も含めてサイト全体が 500 になる**。Vercel の環境変数を入れてからデプロイする。落ちたら、前のデプロイに Promote で戻してから値を直す
 - Vercel（Production・Preview）では、`BETTER_AUTH_URL`・`BETTER_AUTH_TRUSTED_ORIGINS` は https だけ、`BETTER_AUTH_SECRET`・`OTP_EVENT_HMAC_KEY` に CI・開発用のダミー（`not-for-production`・`dev-only` などを含む値）は使えない
@@ -252,7 +254,7 @@ AR1b（A3a・A3b・A4）のリリースの前に、次をそろえる。Google O
 
 ### ユーザーの作業
 
-- [ ] Cloudflare で Turnstile のウィジェット（非表示）を作り、ホストに `shopping.counoco.net` を入れる。Preview はテスト用のキーを使う
+- [ ] Cloudflare で Turnstile のウィジェットを 2 つ作り、ホストに `shopping.counoco.net` を入れる。1 つは非表示（Invisible）、もう 1 つは狙われたアドレス用の対話型（Managed など。A3b）。Preview はテスト用のキーを使う
 - [ ] Resend に `mail.counoco.net` を追加し、表示される SPF・DKIM と DMARC（`p=none` から）を Cloudflare の DNS に登録して、検証を通す
 - [ ] Preview に Deployment Protection（Vercel Authentication）をかける（Preview は Turnstile がテスト用のキーで常に通るため）
 - [ ] `shopping.counoco.net` の CNAME は DNS only（プロキシ OFF）のままにする。プロキシを ON にすると、IP がすべて Cloudflare のものになり、IP ごとの上限が全員で 1 つになる

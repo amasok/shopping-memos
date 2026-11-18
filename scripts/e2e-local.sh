@@ -160,6 +160,8 @@ main() {
   export OTP_EVENT_HMAC_KEY="e2e-local-$(node -e 'console.log(require("crypto").randomBytes(24).toString("hex"))')"
   export TURNSTILE_SECRET_KEY="1x0000000000000000000000000000000AA"
   export NEXT_PUBLIC_TURNSTILE_SITE_KEY="1x00000000000000000000AA"
+  export TURNSTILE_CHALLENGE_SECRET_KEY="1x0000000000000000000000000000000AA"
+  export NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY="1x00000000000000000000AA"
   export E2E_SEED_TOKEN="$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
   export E2E_PORT="$PORT"
   export E2E_OFFLINE_PORT="$OFFLINE_PORT"
