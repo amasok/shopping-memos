@@ -18,6 +18,8 @@ export const TEXT_LIMITS = {
   location: 100,
   memo: 2000,
   quantityMax: 9999,
+  /** 表示名（コードポイントで数える。#61 A4） */
+  displayName: 50,
 } as const
 
 /** マージ入力の上限（巨大なペイロードで DB の容量や処理時間を消費されないようにする） */
