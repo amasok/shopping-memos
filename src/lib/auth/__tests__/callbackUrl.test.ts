@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest"
-import { loginUrl, safeCallbackPath } from "../callbackUrl"
+import { loginUrl, safeCallbackPath, withCallbackUrl } from "../callbackUrl"
 
 const ORIGIN = "https://shopping.counoco.net"
 
@@ -37,6 +37,11 @@ describe("ログインの後の戻り先（#61 A3a 4.2）", () => {
 
   it("ログイン画面には戻さない", () => {
     expect(safeCallbackPath("/login?callbackUrl=/x", ORIGIN)).toBe("/")
+  })
+
+  it("任意の画面の URL に、今いる画面を戻り先として付ける（#61 A4 の表示名の設定）", () => {
+    expect(withCallbackUrl("/onboarding", "/groups")).toBe("/onboarding?callbackUrl=%2Fgroups")
+    expect(withCallbackUrl("/onboarding", "/")).toBe("/onboarding")
   })
 
   it("ログイン画面の URL に、今いる画面を戻り先として付ける", () => {
