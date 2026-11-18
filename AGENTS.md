@@ -24,7 +24,7 @@ AI コーディングエージェント向けのプロジェクトガイド。`C
 - **スタイリング**: Tailwind CSS v4、lucide-react
 - **PWA**: `src/app/manifest.ts` + Serwist の Service Worker（`src/app/sw.ts` を `@serwist/turbopack` で `/serwist/sw.js` として配る。アプリシェルのプリキャッシュ、`/api/**` はキャッシュしない。kill switch あり）。`public/sw.js` は古いインストールを解除するためだけに残す（O11 で削除）
 - **テスト**: Vitest + Testing Library（jsdom）/ Playwright
-- **ランタイム**: Node.js 22.22.0（`.tool-versions`、asdf）※ CI は Node 20
+- **ランタイム**: Node.js 22.22.0（`.tool-versions`、asdf）。CI・Vercel も Node 22（`.nvmrc`・`engines`）
 - **ホスティング**: Vercel
 
 ## 開発コマンド
