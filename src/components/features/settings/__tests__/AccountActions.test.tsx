@@ -77,6 +77,19 @@ describe("設定画面のアカウント欄", () => {
     expect(state.auth.logoutAllDevices).toHaveBeenCalledTimes(1)
   })
 
+  it("すべての端末からログアウトに失敗したら、知らせる", async () => {
+    state.auth.logoutAllDevices.mockRejectedValue(new Error("revoke failed"))
+    render(<AccountActions />)
+    expect(screen.queryByTestId("logout-all-devices-error")).toBeNull()
+    fireEvent.click(screen.getByTestId("logout-all-devices-button"))
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "ログアウトする" }))
+    })
+    expect(screen.getByTestId("logout-all-devices-error")).toHaveTextContent(
+      "ログアウトできませんでした。通信を確かめてもう一度お試しください"
+    )
+  })
+
   it("確認でキャンセルすると、すべての端末からログアウトしない", async () => {
     render(<AccountActions />)
     fireEvent.click(screen.getByTestId("logout-all-devices-button"))

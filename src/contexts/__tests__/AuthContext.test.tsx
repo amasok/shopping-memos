@@ -66,6 +66,14 @@ function Probe() {
   )
 }
 
+/** logoutAllDevices の失敗（例外）を受け取る */
+function LogoutAllProbe() {
+  const { logoutAllDevices } = useAuth()
+  return (
+    <button onClick={() => void logoutAllDevices().catch(() => state.calls.push("rejected"))}>logout-all-catch</button>
+  )
+}
+
 function renderProbe() {
   return render(
     <AuthProvider>
@@ -142,6 +150,36 @@ describe("AuthContext", () => {
     renderProbe()
     await act(async () => screen.getByText("logout-all").click())
     expect(state.calls).toEqual(["clear", "revokeSessions", "assign:/"])
+  })
+
+  it("すべての端末からログアウトに失敗したら（サーバーがエラーを返す）、ホームに移らず、例外にする", async () => {
+    state.session = { ...state.session, data: { user: { id: "u1", name: "A", email: "a@example.com" } }, isPending: false, error: null }
+    state.revokeSessions.mockImplementation(async () => {
+      state.calls.push("revokeSessions")
+      return { data: null, error: { status: 500 } } as never
+    })
+    render(
+      <AuthProvider>
+        <LogoutAllProbe />
+      </AuthProvider>
+    )
+    await act(async () => screen.getByText("logout-all-catch").click())
+    expect(state.calls).toEqual(["clear", "revokeSessions", "rejected"])
+  })
+
+  it("すべての端末からログアウトの通信が切れたら、ホームに移らず、例外にする", async () => {
+    state.session = { ...state.session, data: { user: { id: "u1", name: "A", email: "a@example.com" } }, isPending: false, error: null }
+    state.revokeSessions.mockImplementation(async () => {
+      throw new TypeError("Failed to fetch")
+    })
+    render(
+      <AuthProvider>
+        <LogoutAllProbe />
+      </AuthProvider>
+    )
+    await act(async () => screen.getByText("logout-all-catch").click())
+    expect(state.calls).toEqual(["clear", "rejected"])
+    expect(assign).not.toHaveBeenCalled()
   })
 
   it("refresh はセッションを取り直す（表示名を保存した後に使う）", async () => {

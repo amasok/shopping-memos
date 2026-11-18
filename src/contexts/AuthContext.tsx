@@ -64,8 +64,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logoutAllDevices = useCallback(async () => {
     // 今の logout と同じく、ログイン中だけの状態を消してから、すべてのセッションを無効にする
+    // authClient はエラーで例外を投げず { error } を返すので、結果を見る。失敗したらホームに移らず例外にし、画面で知らせる
+    // （端末をなくしたときに使う操作なので、黙って失敗させない）
     if (await ensureGuestDataMigrated()) clearLoginScopedState()
-    await authClient.revokeSessions()
+    const result = await authClient.revokeSessions()
+    if (result?.error) throw new Error(`すべての端末からのログアウトに失敗しました: ${result.error.status ?? ""}`)
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign("/")
   }, [])
