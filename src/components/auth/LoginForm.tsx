@@ -8,6 +8,7 @@ import { authClient } from "@/infrastructure/auth/client"
 import { safeCallbackPath } from "@/lib/auth/callbackUrl"
 import { normalizeEmail } from "@/shared/schemas/email"
 import { LOGIN_MESSAGES, otpErrorMessage } from "./otpMessages"
+import { TurnstileChallenge } from "./TurnstileChallenge"
 import { useTurnstile } from "./useTurnstile"
 
 /** 再送信できるまでの秒数（サーバーの再送の間隔と同じ） */
@@ -31,6 +32,8 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string | null }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [cooldown, setCooldown] = useState(0)
+  /** 対話型のチャレンジが要るアドレス（#61 A3b）。確認を終えたら、そのトークンでこのアドレスに送り直す */
+  const [challengeEmail, setChallengeEmail] = useState<string | null>(null)
 
   useEffect(() => {
     if (cooldown <= 0) return
@@ -38,16 +41,19 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string | null }) {
     return () => clearTimeout(timer)
   }, [cooldown])
 
-  async function sendCode(target: string) {
+  /** challengeToken があれば（対話型のチャレンジを終えた）そのトークンで、なければ非表示のウィジェットのトークンで送る */
+  async function sendCode(target: string, challengeToken?: string) {
     setBusy(true)
     setError(null)
     try {
-      const token = await getToken()
+      const token = challengeToken ?? (await getToken())
+      setChallengeEmail(null)
       const { error: sendError } = await authClient.emailOtp.sendVerificationOtp(
         { email: target, type: "sign-in" },
         { headers: { [TURNSTILE_TOKEN_HEADER]: token ?? "" } }
       )
       if (sendError) {
+        if (sendError.code === "TURNSTILE_CHALLENGE_REQUIRED") setChallengeEmail(target)
         setError(otpErrorMessage(sendError))
         return
       }
@@ -178,6 +184,11 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string | null }) {
         <p role="alert" className="text-sm font-semibold text-red-600" data-testid="login-error">
           {error}
         </p>
+      )}
+      {challengeEmail && (
+        <div data-testid="login-challenge">
+          <TurnstileChallenge key={challengeEmail} onToken={(token) => void sendCode(challengeEmail, token)} />
+        </div>
       )}
       <div ref={containerRef} />
     </div>
