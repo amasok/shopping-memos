@@ -19,4 +19,4 @@
 
 ## 4. 確認
 
-- [ ] 4.1 `npm run lint`・`npm run test:run`・`npm run test:db`・`npm run build`・`npm run test:e2e:local` が通る
+- [x] 4.1 `npm run lint`・`npm run test:run`・`npm run test:db`・`npm run build`・`npm run test:e2e:local` が通る
