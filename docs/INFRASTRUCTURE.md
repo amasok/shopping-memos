@@ -254,7 +254,9 @@ AR1b（A3a・A3b・A4）のリリースの前に、次をそろえる。Google O
 
 ### ユーザーの作業
 
-- [ ] Cloudflare で Turnstile のウィジェットを 2 つ作り、ホストに `shopping.counoco.net` を入れる。1 つは非表示（Invisible）、もう 1 つは狙われたアドレス用の対話型（Managed など。A3b）。Preview はテスト用のキーを使う
+- [ ] Cloudflare で Turnstile のウィジェットを 2 つ作り、ホストに `shopping.counoco.net` を入れる。Preview はテスト用のキーを使う
+  - 1 つ目: 非表示（Invisible）。`TURNSTILE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_SITE_KEY`
+  - 2 つ目: 狙われたアドレス用の対話型（A3b）。**1 つ目とは別のウィジェットとして作り、モードは Managed（必要なときに操作を求める）にする。Invisible にしない**（モードは Cloudflare の管理画面でしか決まらず、コードからは確かめられない）。`TURNSTILE_CHALLENGE_SECRET_KEY`・`NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY`。本番で 1 つ目と同じ値を入れると、起動時に止まる
 - [ ] Resend に `mail.counoco.net` を追加し、表示される SPF・DKIM と DMARC（`p=none` から）を Cloudflare の DNS に登録して、検証を通す
 - [ ] Preview に Deployment Protection（Vercel Authentication）をかける（Preview は Turnstile がテスト用のキーで常に通るため）
 - [ ] `shopping.counoco.net` の CNAME は DNS only（プロキシ OFF）のままにする。プロキシを ON にすると、IP がすべて Cloudflare のものになり、IP ごとの上限が全員で 1 つになる

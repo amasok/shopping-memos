@@ -137,6 +137,13 @@ describe("認証の環境変数の確認（#61 A3a 0.3）", () => {
     ).toThrow(/NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY/)
   })
 
+  it.each([
+    ["TURNSTILE_CHALLENGE_SECRET_KEY", "0x4AAAAAAA-real-secret"],
+    ["NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY", "0x4AAAAAAA-real-site"],
+  ])("本番では、対話型のウィジェット（%s）が非表示のものと同じ値ならエラーにする（#61 A3b）", (name, value) => {
+    expect(() => resolveAuthEnv({ ...PROD_ENV, [name]: value })).toThrow(new RegExp(name))
+  })
+
   it("ローカルの開発で欠けていれば、開発用の値と Turnstile のテスト用のキーにする", () => {
     const env = resolveAuthEnv({ NODE_ENV: "development" })
     expect(env.baseURL).toBe(DEV_AUTH_URL)

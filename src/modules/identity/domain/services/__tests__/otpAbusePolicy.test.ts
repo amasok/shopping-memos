@@ -201,8 +201,12 @@ describe("otpAbusePolicy: 本人への通知・管理者への知らせ（#61 A3
   it("直近 24 時間の送信が 70 通を超え、24 時間に知らせていなければ管理者に知らせる", () => {
     expect(shouldAlert({ sentLast24h: 70, lastAlertedAt: undefined, now: NOW })).toBe(false)
     expect(shouldAlert({ sentLast24h: 71, lastAlertedAt: undefined, now: NOW })).toBe(true)
-    expect(shouldAlert({ sentLast24h: 72, lastAlertedAt: ago(HOUR), now: NOW })).toBe(false)
     expect(shouldAlert({ sentLast24h: 72, lastAlertedAt: ago(24 * HOUR), now: NOW })).toBe(true)
+  })
+
+  it("直近 24 時間に管理者に知らせていれば、もう知らせない（1 回だけ）", () => {
+    expect(shouldAlert({ sentLast24h: 72, lastAlertedAt: ago(HOUR), now: NOW })).toBe(false)
+    expect(shouldAlert({ sentLast24h: 500, lastAlertedAt: ago(23 * HOUR), now: NOW })).toBe(false)
   })
 })
 

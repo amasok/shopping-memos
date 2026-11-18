@@ -134,10 +134,10 @@ export function createAuth(deps: AuthDeps) {
     return row?.n ?? 0
   }
 
-  /** メールを応答と切り離して送る（runInBackground がなければ送り終わるまで待つ）。失敗はログに出すだけ */
-  async function sendInBackground(label: string, send: () => Promise<void>): Promise<void> {
-    const task = send().catch((error: unknown) => {
-      console.error(`[auth] ${label}の送信に失敗しました`, error)
+  /** 応答と切り離して動かす（runInBackground がなければ終わるまで待つ）。失敗はログに出すだけ */
+  async function runDetached(label: string, work: () => Promise<void>): Promise<void> {
+    const task = work().catch((error: unknown) => {
+      console.error(`[auth] ${label}に失敗しました`, error)
     })
     if (deps.runInBackground) deps.runInBackground(task)
     else await task
@@ -146,7 +146,7 @@ export function createAuth(deps: AuthDeps) {
   /** 本人への制限の通知（A3b）。登録済みのアドレスに 24 時間に 1 通まで（notifyOnce が判定して記録する） */
   async function notifyRestricted(email: string): Promise<void> {
     if (!(await deps.otpEvents.notifyOnce(email, now()))) return
-    await sendInBackground("制限の通知", () =>
+    await runDetached("制限の通知の送信", () =>
       deps.emailSender.sendNotice({ to: email, notice: { kind: "otp-locked" } })
     )
   }
@@ -158,7 +158,7 @@ export function createAuth(deps: AuthDeps) {
     console.warn(`[auth] 直近 24 時間のログインコードの送信が ${sentLast24h} 通になりました（しきい値 ${OTP_POLICY.alertSendsAbove} 通）`)
     const to = deps.alertEmail
     if (!to) return
-    await sendInBackground("送信数の知らせ", () =>
+    await runDetached("送信数の知らせの送信", () =>
       deps.emailSender.sendNotice({
         to,
         notice: { kind: "otp-alert", sentCount: sentLast24h, threshold: OTP_POLICY.alertSendsAbove },
@@ -203,7 +203,8 @@ export function createAuth(deps: AuthDeps) {
       if (deps.recipientAllowlist && !deps.recipientAllowlist.has(email)) return silent
       const decision = await deps.otpEvents.guardSend(email, ip, now())
       if (decision.kind === "silent") return silent
-      await checkSendVolume()
+      // 監視は応答と切り離す（送ったときだけトランザクションが増え、見送ったときとの時間の差が広がらないように）
+      await runDetached("送信数の監視", checkSendVolume)
 
       replaceBody(ctx, { email, type: "sign-in" })
       return

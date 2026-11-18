@@ -311,7 +311,8 @@ describe.skipIf(!TEST_DB_URL)("狙われたアドレスへのチャレンジ・�
         .where(
           drizzle.and(
             drizzle.eq(schema.otpEvents.kind, "alerted"),
-            drizzle.gt(schema.otpEvents.createdAt, new Date(t.now() - HOUR))
+            drizzle.gt(schema.otpEvents.createdAt, new Date(t.now() - HOUR)),
+            drizzle.lte(schema.otpEvents.createdAt, new Date(t.now()))
           )
         )
       expect(alerted).toHaveLength(1)

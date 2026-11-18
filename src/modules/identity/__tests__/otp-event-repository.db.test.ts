@@ -178,6 +178,30 @@ describe.skipIf(!TEST_DB_URL)("OtpEventRepository（実 DB）", () => {
     expect(left).toEqual([recent.getTime()])
   })
 
+  it("同時に通知を判定しても、通知を送るのは 1 回だけ（#61 A3b）", async () => {
+    const { repo, email } = setup()
+    await ctx.db.insert(ctx.schema.users).values({ id: crypto.randomUUID(), email, name: "家族" })
+    const results = await Promise.all(Array.from({ length: 5 }, () => repo.notifyOnce(email)))
+    expect(results.filter(Boolean)).toHaveLength(1)
+    expect((await rows(repo, email)).filter((r) => r.kind === "notified")).toHaveLength(1)
+    await ctx.db.delete(ctx.schema.users).where(ctx.drizzle.eq(ctx.schema.users.email, email))
+  })
+
+  it("同時に送信数を判定しても、管理者への知らせは 1 回だけ（#61 A3b）", async () => {
+    const { repo } = setup()
+    // 並列のほかのテストの送信を数えないよう、3 日先の時計で判定する（30 日の掃除にも当たらない）
+    const now = new Date(Date.now() + 3 * DAY)
+    const filler = Array.from({ length: 71 }, (_, i) => {
+      const email = `${crypto.randomUUID()}@example.com`
+      hashes.push(repo.hashEmail(email))
+      return { id: crypto.randomUUID(), emailHash: repo.hashEmail(email), ip: IP, kind: "sent", createdAt: new Date(now.getTime() - (i + 1) * MIN) }
+    })
+    await ctx.db.insert(ctx.schema.otpEvents).values(filler)
+    const results = await Promise.all(Array.from({ length: 5 }, () => repo.checkAlert(now)))
+    expect(results.filter((r) => r.alert)).toHaveLength(1)
+    expect(results[0].sentLast24h).toBe(71)
+  })
+
   it("掃除は、送信のついでにプロセス（インスタンス）ごとに 1 日 1 回だけ呼ぶ", async () => {
     // 同じ DB をほかのテストのファイルも並列に使うので、DB の行ではなく呼び出しの回数で確かめる
     const { repo, email } = setup()

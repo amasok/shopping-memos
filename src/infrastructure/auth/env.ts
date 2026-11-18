@@ -148,6 +148,17 @@ export function resolveAuthEnv(env: Env): AuthEnv {
         `本番では Turnstile のテスト用のキーを使えません: ${testKeys.map(([name]) => name).join(", ")}`
       )
     }
+    // 対話型のウィジェットは、非表示のものと別のウィジェットにする。同じだと、チャレンジの段階でも
+    // 非表示のウィジェットのトークンが通ってしまう（61-a3b「チャレンジの段階では非表示のウィジェットのトークンを受け付けない」）
+    const sameWidget = [
+      turnstile.challengeSecretKey === turnstile.secretKey ? "TURNSTILE_CHALLENGE_SECRET_KEY" : null,
+      turnstile.challengeSiteKey === turnstile.siteKey ? "NEXT_PUBLIC_TURNSTILE_CHALLENGE_SITE_KEY" : null,
+    ].filter((name): name is string => name !== null)
+    if (sameWidget.length > 0) {
+      throw new AuthConfigError(
+        `本番では、対話型のウィジェットを非表示のものと別にしてください: ${sameWidget.join(", ")}`
+      )
+    }
   }
 
   if (env.VERCEL_ENV === "production" || env.VERCEL_ENV === "preview") {

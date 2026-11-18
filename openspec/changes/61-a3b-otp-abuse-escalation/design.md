@@ -25,6 +25,8 @@
 - 通知は `OtpEventRepository.notifyOnce`（アドレスの advisory lock の中で、`users` で登録済みかを見て、直近 24 時間の `notified` がなければ記録）。監視は `checkAlert`（固定のキー `otp-events:alert` の advisory lock の中で、直近 24 時間の `sent` を数え、直近 24 時間の `alerted` がなければ記録。`alerted` の `email_hash` は NULL）。メールは `runInBackground`（Next.js の `after()`）で送り、失敗はログだけ
 - ロックの解除: `isLocked` は、最後の `unlocked` より後の `locked` だけをロック中とする。`unlocked` は A3a からログインの成功のたびに記録している
 - 本番は `OTP_ALERT_EMAIL` を必須にした（`resolveEmailConfig`）。Turnstile のチャレンジ用の secret とサイトキーは、本番・Vercel で必須、本番ではテスト用のキーを拒否
+- 本番では、対話型のウィジェットの secret・サイトキーが非表示のものと同じ値なら起動時にエラー（同じだと、チャレンジの段階でも非表示のトークンが通るため）。ウィジェットのモード（対話型は Managed）は Cloudflare の管理画面でしか決まらないので、INFRASTRUCTURE.md のユーザーの作業に書いた
+- 監視（`checkAlert`）も応答と切り離して `after()` で動かす（送ったときだけトランザクションが増えて、見送ったときとの時間の差が広がらないように）。判定の時刻より後の行は数えない
 - 通知の文面は specs の文言（「ログインの試行が繰り返されたため、一時的に制限しました。心当たりがなければ問題ありません」）に合わせた
 
 ## Risks / Trade-offs

@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto"
-import { and, count, desc, eq, gt, isNull, lt, sql } from "drizzle-orm"
+import { and, count, desc, eq, gt, isNull, lt, lte, sql } from "drizzle-orm"
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js"
 import { normalizeEmail } from "@/shared/schemas/email"
 import * as schema from "@/infrastructure/db/drizzle/schema"
@@ -155,12 +155,13 @@ export class OtpEventRepository {
       const [sent] = await tx
         .select({ n: count() })
         .from(otpEvents)
-        .where(and(eq(otpEvents.kind, "sent"), gt(otpEvents.createdAt, since)))
+        .where(and(eq(otpEvents.kind, "sent"), gt(otpEvents.createdAt, since), lte(otpEvents.createdAt, now)))
       const sentLast24h = sent?.n ?? 0
       const [last] = await tx
         .select({ createdAt: otpEvents.createdAt })
         .from(otpEvents)
-        .where(and(eq(otpEvents.kind, "alerted"), isNull(otpEvents.emailHash)))
+        // 判定の時刻より後の行は見ない（本番ではない。テストで時計を進めたときに混ざらないように）
+        .where(and(eq(otpEvents.kind, "alerted"), isNull(otpEvents.emailHash), lte(otpEvents.createdAt, now)))
         .orderBy(desc(otpEvents.createdAt))
         .limit(1)
       if (!shouldAlert({ sentLast24h, lastAlertedAt: last?.createdAt, now })) return { alert: false, sentLast24h }
